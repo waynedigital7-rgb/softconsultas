@@ -455,6 +455,45 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
   redirecionar(res, '/admin/produtos?ok=1');
 }));
 
+rota('GET', '/admin/produtos/importar', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Importar', PD.adminImportar({}), usuario)));
+
+rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req, 500000);
+  const texto = String(f.texto || '');
+  const linhas = texto.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  const erros = [];
+  let criadas = 0, atualizadas = 0;
+  const tipos = ['cpf', 'cnpj', 'cpf_cnpj', 'placa'];
+  const slugDe = (n) => n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'consulta';
+  db.exec('BEGIN');
+  try {
+    linhas.forEach((linha, i) => {
+      const [nome, endpoint, custoTxt, categoria, documento, descricao] = linha.split(';').map((x) => (x || '').trim());
+      const custo = centavos(custoTxt);
+      if (!nome || !endpoint || !Number.isFinite(custo) || custo <= 0) { erros.push(`Linha ${i + 1}: preencha nome, endpoint e custo.`); return; }
+      if (!/^[\w.-]+$/.test(endpoint)) { erros.push(`Linha ${i + 1}: endpoint inválido (${endpoint}).`); return; }
+      const doc = tipos.includes(documento) ? documento : 'cpf_cnpj';
+      const cat = categoria || 'Dívidas e Crédito';
+      const campo = doc === 'placa' ? 'placa' : 'document';
+      const existente = db.prepare('SELECT id FROM produtos WHERE endpoint = ?').get(endpoint);
+      if (existente) {
+        db.prepare('UPDATE produtos SET nome=?, categoria=?, documento=?, custo_centavos=?, preco_centavos=?, descricao=COALESCE(NULLIF(?, \'\'), descricao) WHERE id=?')
+          .run(nome, cat, doc, custo, precoDe(custo), descricao || '', existente.id);
+        atualizadas++;
+      } else {
+        let slug = slugDe(nome);
+        while (db.prepare('SELECT 1 FROM produtos WHERE slug = ?').get(slug)) slug += '-2';
+        db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ativo, ordem)
+          VALUES (?,?,?,?,?,?,?,?,?,?,1,100)`).run(slug, nome, cat, descricao || '', doc, endpoint, endpoint, campo, custo, precoDe(custo));
+        criadas++;
+      }
+    });
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  const resultado = `${criadas} consulta(s) criada(s) e ${atualizadas} atualizada(s).`;
+  pagina(res, 'Admin · Importar', PD.adminImportar({ texto: erros.length ? texto : '', resultado, erro: erros.slice(0, 15).join(' ') }), usuario);
+}));
+
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
   minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
@@ -527,6 +566,11 @@ const servidor = http.createServer(async (req, res) => {
     if (req.method === 'POST' && !url.pathname.startsWith('/webhook/') && !origemValida(req)) return pagina(res, 'Erro', P.paginaEmBreve('Envio bloqueado', 'Recarregue a página e tente de novo.'), null, 403);
     const token = cookies(req)[A.COOKIE];
     const usuario = A.usuarioDaSessao(token);
+    // Quem tem o e-mail do ADMIN_EMAIL vira administrador (mesmo se a conta foi criada antes da variável)
+    if (usuario && !usuario.admin && process.env.ADMIN_EMAIL && usuario.email === process.env.ADMIN_EMAIL.trim().toLowerCase()) {
+      db.prepare('UPDATE usuarios SET admin = 1 WHERE id = ?').run(usuario.id);
+      usuario.admin = 1;
+    }
     await fn({ req, res, url, token, usuario, params });
   } catch (e) {
     console.error('erro:', e);

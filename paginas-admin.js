@@ -33,7 +33,7 @@ export function adminProdutos({ produtos, markup, ok }) {
     <td>${p.ativo && p.endpoint ? '<span style="color:var(--ok);font-weight:700">Ativa</span>' : '<span class="muted">Inativa</span>'}</td>
     <td><a href="/admin/produtos/editar?id=${p.id}">Editar</a></td></tr>`).join('')}
 </table></div>
-<a class="btn" href="/admin/produtos/editar" style="margin-top:16px">+ Nova consulta</a></div>`;
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px"><a class="btn" href="/admin/produtos/editar">+ Nova consulta</a><a class="btn sec" href="/admin/produtos/importar">Importar em lote</a></div></div>`;
 }
 
 export function adminProdutoForm({ p = {}, markup, erro }) {
@@ -105,4 +105,26 @@ export function adminRecargas({ recargas }) {
   ${recargas.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td>${esc(r.cliente)}</td><td>${reais(r.valor_centavos)}</td><td>${reais(r.bonus_centavos)}</td>
     <td>${r.status === 'paga' ? '<span style="color:var(--ok);font-weight:700">Paga</span>' : 'Pendente'}</td><td>${dt(r.pago_em)}</td></tr>`).join('')}
 </table></div></div>`;
+}
+
+export function adminImportar({ texto = '', resultado, erro }) {
+  return `<h1 style="font-size:1.7rem">Importar consultas em lote</h1>${menu('/admin/produtos')}${aviso('', erro)}
+${resultado ? `<div class="aviso ok">${esc(resultado)}</div>` : ''}
+<div class="cartao" style="margin-bottom:18px">
+  <h3>Como preencher</h3>
+  <p class="muted">Uma consulta por linha, com os campos separados por ponto e vírgula (;). Os três primeiros são obrigatórios:</p>
+  <p><code>Nome; Endpoint; Custo; Categoria; Documento; Descrição</code></p>
+  <ul class="muted">
+    <li><strong>Custo:</strong> valor na APIFull, ex.: <code>5,83</code>. O preço de venda é calculado sozinho.</li>
+    <li><strong>Categoria</strong> (opcional): ex.: Dívidas e Crédito, Veículos, Empresas, Dados. Padrão: Dívidas e Crédito.</li>
+    <li><strong>Documento</strong> (opcional): <code>cpf_cnpj</code> (padrão), <code>cpf</code>, <code>cnpj</code> ou <code>placa</code>.</li>
+    <li>Se o endpoint já estiver cadastrado, a consulta é <strong>atualizada</strong> (nome, custo, categoria). Se não, é criada <strong>já ativa</strong>.</li>
+  </ul>
+  <p class="muted" style="margin:0">Exemplo:<br><code>Serasa Premium; serasa-premium; 15,72; Dívidas e Crédito; cpf_cnpj; Score e negativações Serasa</code><br><code>Consulta Veicular Completa; veiculo-completo; 12,50; Veículos; placa</code></p>
+</div>
+<form class="cartao" method="post" action="/admin/produtos/importar">
+  <label for="texto">Cole a lista aqui</label>
+  <textarea id="texto" name="texto" rows="14" style="width:100%;font:inherit;font-family:monospace;font-size:.9rem;padding:12px;border:1.5px solid #D6CCE0;border-radius:12px;margin:8px 0 14px">${esc(texto)}</textarea>
+  <button class="btn" type="submit">Importar</button>
+</form>`;
 }
