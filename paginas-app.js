@@ -12,40 +12,86 @@ export const FINALIDADES = [
   'Prevenção a fraudes',
 ];
 
-export function paginaCatalogo({ produtos, saldo, busca = '', categoria = '' }) {
-  const cats = [...new Set(produtos.map((p) => p.categoria))];
-  const filtrados = produtos.filter((p) => (!categoria || p.categoria === categoria)
-    && (!busca || `${p.nome} ${p.descricao}`.toLowerCase().includes(busca.toLowerCase())));
-  return `
-<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px">
-  <div><h1 style="font-size:1.8rem;margin:0">Consultas</h1><p class="muted" style="margin:4px 0 0">Escolha o que você precisa consultar.</p></div>
-  <div class="tag" style="font-size:.9rem;padding:8px 14px">Saldo: ${reais(saldo)}</div>
-</div>
-<form method="get" action="/consultas" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px">
-  <input type="text" name="busca" value="${esc(busca)}" placeholder="Buscar consulta..." aria-label="Buscar consulta" style="flex:1 1 220px">
-  <button class="btn" type="submit">Buscar</button>
-</form>
-<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px" aria-label="Categorias">
-  <a class="btn ${categoria ? 'sec' : ''}" style="min-height:40px;padding:8px 18px" href="/consultas">Todas</a>
-  ${cats.map((c) => `<a class="btn ${c === categoria ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="/consultas?categoria=${encodeURIComponent(c)}">${esc(c)}</a>`).join('')}
-</nav>
-${filtrados.length ? `<div class="grade">${filtrados.map((p) => `
+// Ícones por categoria (SVG simples, sem dependências)
+const ICONES = {
+  'dividas-e-credito': '<path d="M12 2v20M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  'veiculos': '<path d="M5 17h14M3 13l2-6h14l2 6v4h-2M3 13v4h2M3 13h18"/><circle cx="7.5" cy="17" r="1.5"/><circle cx="16.5" cy="17" r="1.5"/>',
+  'dados': '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="11" r="2.5"/><path d="M5.5 17c.8-2 2-3 3.5-3s2.7 1 3.5 3M14 9h4M14 13h4"/>',
+  'certidoes': '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h4"/>',
+  'compliance': '<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/>',
+  'juridico': '<path d="M12 3v18M5 21h14M6 7h12M6 7l-3 7h6zM18 7l-3 7h6z"/>',
+  'empresas': '<path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1"/>',
+  'ferramentas': '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
+};
+export const slugCategoria = (c) => String(c).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const icone = (cat, tam = 40) => `<svg width="${tam}" height="${tam}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONES[slugCategoria(cat)] || '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/>'}</svg>`;
+
+const cartaoProduto = (p) => `
   <a class="cartao" href="/consultas/${esc(p.slug)}" style="text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:10px">
-    <span class="tag">${esc(p.categoria)}</span>
     <h3 style="margin:0">${esc(p.nome)}</h3>
     <p class="muted" style="margin:0;flex:1">${esc(p.descricao)}</p>
     <div style="display:flex;justify-content:space-between;align-items:center">
       <strong style="font-family:Montserrat;font-size:1.25rem">${reais(p.preco_centavos)}</strong>
       <span class="muted" style="font-size:.85rem">${ROTULO_DOC[p.documento]}</span>
     </div>
-  </a>`).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta encontrada.</div>'}`;
+  </a>`;
+
+const cabecalho = (titulo, sub, saldo) => `
+<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px">
+  <div><h1 style="font-size:1.8rem;margin:0">${titulo}</h1><p class="muted" style="margin:4px 0 0">${sub}</p></div>
+  <div class="tag" style="font-size:.9rem;padding:8px 14px">Saldo: ${reais(saldo)}</div>
+</div>`;
+
+const ORDEM_CATEGORIAS = ['Dívidas e Crédito', 'Veículos', 'Dados', 'Empresas', 'Certidões', 'Compliance', 'Jurídico', 'Ferramentas'];
+
+// Página inicial do catálogo: categorias + busca geral
+export function paginaCategorias({ produtos, saldo, busca = '' }) {
+  const form = `<form method="get" action="/consultas" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:22px">
+    <input type="text" name="busca" value="${esc(busca)}" placeholder="Buscar em todas as consultas (ex.: placa, Serasa, CNH)..." aria-label="Buscar consulta" style="flex:1 1 260px">
+    <button class="btn" type="submit">Buscar</button></form>`;
+  if (busca) {
+    const t = busca.toLowerCase();
+    const achados = produtos.filter((p) => `${p.nome} ${p.descricao} ${p.categoria}`.toLowerCase().includes(t));
+    return cabecalho('Consultas', `Resultados para "${esc(busca)}"`, saldo) + form
+      + `<p><a href="/consultas">← Ver todas as categorias</a></p>`
+      + (achados.length ? `<div class="grade">${achados.map(cartaoProduto).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta encontrada.</div>');
+  }
+  const grupos = {};
+  for (const p of produtos) (grupos[p.categoria] ||= []).push(p);
+  const cats = Object.keys(grupos).sort((a, b) => {
+    const ia = ORDEM_CATEGORIAS.indexOf(a), ib = ORDEM_CATEGORIAS.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+  });
+  return cabecalho('Consultas', 'Escolha uma categoria.', saldo) + form
+    + (cats.length ? `<div class="grade">${cats.map((c) => {
+      const lista = grupos[c];
+      const menor = Math.min(...lista.map((p) => p.preco_centavos));
+      return `<a class="cartao" href="/consultas/categoria/${slugCategoria(c)}" style="text-decoration:none;color:inherit;display:flex;flex-direction:column;align-items:flex-start;gap:12px">
+        <span style="color:var(--roxo);background:var(--fundo);border-radius:16px;padding:12px;display:inline-flex">${icone(c)}</span>
+        <h3 style="margin:0">${esc(c)}</h3>
+        <span class="muted">${lista.length} ${lista.length === 1 ? 'consulta' : 'consultas'} · a partir de ${reais(menor)}</span>
+      </a>`;
+    }).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta disponível no momento.</div>');
+}
+
+// Página de uma categoria
+export function paginaCategoria({ categoria, produtos, saldo, busca = '' }) {
+  const t = busca.toLowerCase();
+  const lista = produtos.filter((p) => !busca || `${p.nome} ${p.descricao}`.toLowerCase().includes(t));
+  return `<p style="margin:0 0 10px"><a href="/consultas" style="text-decoration:none">← Todas as categorias</a></p>`
+    + `<div style="display:flex;align-items:center;gap:14px;margin-bottom:6px"><span style="color:var(--roxo)">${icone(categoria, 34)}</span></div>`
+    + cabecalho(esc(categoria), `${produtos.length} ${produtos.length === 1 ? 'consulta disponível' : 'consultas disponíveis'}`, saldo)
+    + `<form method="get" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px">
+      <input type="text" name="busca" value="${esc(busca)}" placeholder="Buscar em ${esc(categoria)}..." aria-label="Buscar nesta categoria" style="flex:1 1 220px">
+      <button class="btn" type="submit">Buscar</button></form>`
+    + (lista.length ? `<div class="grade">${lista.map(cartaoProduto).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta encontrada nesta categoria.</div>');
 }
 
 export function paginaConsultar({ produto, saldo, erro, v = {} }) {
   const falta = Math.max(0, produto.preco_centavos - saldo);
   return `
 <div class="cartao estreito" style="max-width:560px">
-  <a href="/consultas" class="muted" style="text-decoration:none">← Voltar às consultas</a>
+  <a href="/consultas/categoria/${slugCategoria(produto.categoria)}" class="muted" style="text-decoration:none">← Voltar para ${esc(produto.categoria)}</a>
   <h1 style="font-size:1.6rem;margin-top:12px">${esc(produto.nome)}</h1>
   <p class="muted">${esc(produto.descricao)}</p>
   <div style="display:flex;justify-content:space-between;background:var(--fundo);border-radius:14px;padding:14px 16px;margin:16px 0">

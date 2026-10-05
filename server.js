@@ -312,9 +312,19 @@ function validarValor(tipo, bruto) {
   return { v };
 }
 
-rota('GET', '/consultas', exigeLogin(({ res, usuario, url }) => pagina(res, 'Consultas', PA.paginaCatalogo({
-  produtos: produtosAtivos(), saldo: saldoCentavos(usuario.id), busca: url.searchParams.get('busca') || '', categoria: url.searchParams.get('categoria') || '',
-}), usuario)));
+rota('GET', '/consultas', exigeLogin(({ res, usuario, url }) => {
+  // compatibilidade com links antigos ?categoria=
+  const cat = url.searchParams.get('categoria');
+  if (cat) return redirecionar(res, `/consultas/categoria/${PA.slugCategoria(cat)}`);
+  pagina(res, 'Consultas', PA.paginaCategorias({ produtos: produtosAtivos(), saldo: saldoCentavos(usuario.id), busca: url.searchParams.get('busca') || '' }), usuario);
+}));
+
+rota('GET', '/consultas/categoria/:cat', exigeLogin(({ res, usuario, url, params }) => {
+  const todos = produtosAtivos();
+  const produtos = todos.filter((p) => PA.slugCategoria(p.categoria) === params.cat);
+  if (!produtos.length) return redirecionar(res, '/consultas');
+  pagina(res, produtos[0].categoria, PA.paginaCategoria({ categoria: produtos[0].categoria, produtos, saldo: saldoCentavos(usuario.id), busca: url.searchParams.get('busca') || '' }), usuario);
+}));
 
 rota('GET', '/consultas/:slug', exigeLogin(({ res, usuario, params }) => {
   const produto = produtosAtivos().find((p) => p.slug === params.slug);
