@@ -28,7 +28,7 @@ export function adminProdutos({ produtos, markup, ok }) {
 <p class="muted">Preço de venda = custo APIFull + ${markup}% (ajuste a porcentagem em Configurações). Só aparecem para os clientes as consultas <strong>ativas</strong> e com endpoint preenchido.</p>
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>Consulta</th><th>Categoria</th><th>Endpoint</th><th>Custo</th><th>Preço</th><th>Status</th><th></th></tr>
-  ${produtos.map((p) => `<tr><td><strong>${esc(p.nome)}</strong></td><td>${esc(p.categoria)}</td><td><code>${esc(p.endpoint || '—')}</code></td>
+  ${produtos.map((p) => `<tr><td><strong>${esc(p.nome)}</strong>${p.custo_centavos ? '' : ' <span class="tag" style="color:var(--erro)">sem custo</span>'}</td><td>${esc(p.categoria)}</td><td><code>${esc(p.endpoint || '—')}</code></td>
     <td>${reais(p.custo_centavos)}</td><td><strong>${reais(p.preco_centavos)}</strong></td>
     <td>${p.ativo && p.endpoint ? '<span style="color:var(--ok);font-weight:700">Ativa</span>' : '<span class="muted">Inativa</span>'}</td>
     <td><a href="/admin/produtos/editar?id=${p.id}">Editar</a></td></tr>`).join('')}
@@ -112,13 +112,14 @@ export function adminImportar({ texto = '', resultado, erro }) {
 ${resultado ? `<div class="aviso ok">${esc(resultado)}</div>` : ''}
 <div class="cartao" style="margin-bottom:18px">
   <h3>Como preencher</h3>
-  <p class="muted">Uma consulta por linha, com os campos separados por ponto e vírgula (;). Os três primeiros são obrigatórios:</p>
-  <p><code>Nome; Endpoint; Custo; Categoria; Documento; Descrição</code></p>
+  <p class="muted">Uma consulta por linha, com os campos separados por ponto e vírgula (;). Nome e endpoint são obrigatórios:</p>
+  <p><code>Nome; Endpoint; Custo; Categoria; Documento; Descrição; Campo</code></p>
   <ul class="muted">
-    <li><strong>Custo:</strong> valor na APIFull, ex.: <code>5,83</code>. O preço de venda é calculado sozinho.</li>
+    <li><strong>Custo:</strong> valor na APIFull, ex.: <code>5,83</code>. O preço de venda é calculado sozinho. <strong>Sem custo, a consulta entra inativa</strong> até você informar o custo.</li>
+    <li><strong>Campo</strong> (opcional): nome do campo enviado à APIFull. Padrão: <code>document</code> (ou <code>placa</code> para veículos).</li>
     <li><strong>Categoria</strong> (opcional): ex.: Dívidas e Crédito, Veículos, Empresas, Dados. Padrão: Dívidas e Crédito.</li>
     <li><strong>Documento</strong> (opcional): <code>cpf_cnpj</code> (padrão), <code>cpf</code>, <code>cnpj</code> ou <code>placa</code>.</li>
-    <li>Se o endpoint já estiver cadastrado, a consulta é <strong>atualizada</strong> (nome, custo, categoria). Se não, é criada <strong>já ativa</strong>.</li>
+    <li>Se o endpoint já estiver cadastrado, a consulta é <strong>atualizada</strong>. Se não, é criada (ativa quando tem custo).</li>
   </ul>
   <p class="muted" style="margin:0">Exemplo:<br><code>Serasa Premium; serasa-premium; 15,72; Dívidas e Crédito; cpf_cnpj; Score e negativações Serasa</code><br><code>Consulta Veicular Completa; veiculo-completo; 12,50; Veículos; placa</code></p>
 </div>
