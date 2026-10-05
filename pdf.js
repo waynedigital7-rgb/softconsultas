@@ -16,6 +16,7 @@ export function formatarDoc(d) {
   d = String(d || '');
   if (/^\d{11}$/.test(d)) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
   if (/^\d{14}$/.test(d)) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+  if (/^\d{8}$/.test(d)) return d.replace(/(\d{5})(\d{3})/, '$1-$2');
   return d.toUpperCase();
 }
 

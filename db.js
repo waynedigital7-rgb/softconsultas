@@ -77,7 +77,7 @@ db.exec(`
     nome TEXT NOT NULL,
     categoria TEXT NOT NULL,
     descricao TEXT NOT NULL DEFAULT '',
-    documento TEXT NOT NULL DEFAULT 'cpf_cnpj' CHECK (documento IN ('cpf', 'cnpj', 'cpf_cnpj', 'placa')),
+    documento TEXT NOT NULL DEFAULT 'cpf_cnpj' CHECK (documento IN ('cpf', 'cnpj', 'cpf_cnpj', 'placa', 'cep')),
     endpoint TEXT NOT NULL DEFAULT '',
     link TEXT NOT NULL DEFAULT '',
     campo TEXT NOT NULL DEFAULT 'document',
@@ -101,6 +101,20 @@ db.exec(`
     pago_em TEXT
   );
 `);
+
+// Migração: permitir o tipo 'cep' em bancos criados antes dessa opção
+const sqlProdutos = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='produtos'").get()?.sql || '';
+if (sqlProdutos && !sqlProdutos.includes("'cep'")) {
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('BEGIN');
+  try {
+    db.exec(sqlProdutos.replace(/CREATE TABLE "?produtos"?/, 'CREATE TABLE produtos_novo').replace("'placa'))", "'placa', 'cep'))"));
+    db.exec('INSERT INTO produtos_novo SELECT * FROM produtos');
+    db.exec('DROP TABLE produtos');
+    db.exec('ALTER TABLE produtos_novo RENAME TO produtos');
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; } finally { db.exec('PRAGMA foreign_keys = ON'); }
+}
 
 // Colunas novas em tabelas antigas
 const colunas = (t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);

@@ -306,6 +306,7 @@ function validarValor(tipo, bruto) {
     return PLACA.test(v) ? { v } : { erro: 'Placa inválida. Use o formato ABC1234 ou ABC1D23.' };
   }
   const v = A.soNumeros(bruto);
+  if (tipo === 'cep') return /^\d{8}$/.test(v) && !/^0{8}$/.test(v) ? { v } : { erro: 'CEP inválido. Informe os 8 números.' };
   if (tipo === 'cpf' && !(v.length === 11 && A.cpfValido(v))) return { erro: 'CPF inválido.' };
   if (tipo === 'cnpj' && !(v.length === 14 && A.cnpjValido(v))) return { erro: 'CNPJ inválido.' };
   if (tipo === 'cpf_cnpj' && !A.documentoValido(v)) return { erro: 'CPF ou CNPJ inválido.' };
@@ -444,7 +445,7 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
   const p = {
     id: Number(f.id) || null,
     nome: String(f.nome || '').trim(), categoria: String(f.categoria || '').trim(), descricao: String(f.descricao || '').trim(),
-    documento: ['cpf', 'cnpj', 'cpf_cnpj', 'placa'].includes(f.documento) ? f.documento : 'cpf_cnpj',
+    documento: ['cpf', 'cnpj', 'cpf_cnpj', 'placa', 'cep'].includes(f.documento) ? f.documento : 'cpf_cnpj',
     endpoint: String(f.endpoint || '').trim(), link: String(f.link || '').trim(), campo: String(f.campo || 'document').trim() || 'document',
     custo_centavos: custo, ordem: Number(f.ordem) || 100, ativo: f.ativo === '1' ? 1 : 0,
   };
@@ -473,7 +474,7 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
   const linhas = texto.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   const erros = [];
   let criadas = 0, atualizadas = 0, inativas = 0;
-  const tipos = ['cpf', 'cnpj', 'cpf_cnpj', 'placa'];
+  const tipos = ['cpf', 'cnpj', 'cpf_cnpj', 'placa', 'cep'];
   const slugDe = (n) => n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'consulta';
   db.exec('BEGIN');
   try {
@@ -484,7 +485,7 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
       const temCusto = Number.isFinite(custo) && custo > 0;
       const doc = tipos.includes(documento) ? documento : 'cpf_cnpj';
       const cat = categoria || 'Dívidas e Crédito';
-      const campo = /^[\w]+$/.test(campoTxt || '') ? campoTxt : (doc === 'placa' ? 'placa' : 'document');
+      const campo = /^[\w]+$/.test(campoTxt || '') ? campoTxt : (doc === 'placa' ? 'placa' : doc === 'cep' ? 'cep' : 'document');
       // Atualiza pelo endpoint; senão, pela consulta de mesmo nome ainda sem endpoint (catálogo inicial)
       const existente = db.prepare('SELECT * FROM produtos WHERE endpoint = ?').get(endpoint)
         || db.prepare("SELECT * FROM produtos WHERE endpoint = '' AND lower(nome) = lower(?)").get(nome);

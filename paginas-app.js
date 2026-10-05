@@ -2,7 +2,7 @@
 import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
-const ROTULO_DOC = { cpf: 'CPF', cnpj: 'CNPJ', cpf_cnpj: 'CPF ou CNPJ', placa: 'Placa' };
+const ROTULO_DOC = { cpf: 'CPF', cnpj: 'CNPJ', cpf_cnpj: 'CPF ou CNPJ', placa: 'Placa', cep: 'CEP' };
 export const FINALIDADES = [
   'Consulta do meu próprio CPF/CNPJ',
   'Análise de crédito para venda a prazo',
@@ -10,6 +10,7 @@ export const FINALIDADES = [
   'Cadastro ou validação de cliente/fornecedor',
   'Proteção ao crédito e cobrança',
   'Prevenção a fraudes',
+  'Análise de mercado ou prospecção (consultas por CEP)',
 ];
 
 // Ícones por categoria (SVG simples, sem dependências)
@@ -21,6 +22,7 @@ const ICONES = {
   'compliance': '<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/>',
   'juridico': '<path d="M12 3v18M5 21h14M6 7h12M6 7l-3 7h6zM18 7l-3 7h6z"/>',
   'empresas': '<path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1"/>',
+  'analise-de-mercado': '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
   'ferramentas': '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/>',
 };
 export const slugCategoria = (c) => String(c).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -42,7 +44,7 @@ const cabecalho = (titulo, sub, saldo) => `
   <div class="tag" style="font-size:.9rem;padding:8px 14px">Saldo: ${reais(saldo)}</div>
 </div>`;
 
-const ORDEM_CATEGORIAS = ['Dívidas e Crédito', 'Veículos', 'Dados', 'Empresas', 'Certidões', 'Compliance', 'Jurídico', 'Ferramentas'];
+const ORDEM_CATEGORIAS = ['Dívidas e Crédito', 'Veículos', 'Dados', 'Empresas', 'Análise de Mercado', 'Certidões', 'Compliance', 'Jurídico', 'Ferramentas'];
 
 // Página inicial do catálogo: categorias + busca geral
 export function paginaCategorias({ produtos, saldo, busca = '' }) {

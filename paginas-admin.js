@@ -46,7 +46,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
   ${campo('descricao', 'Descrição curta', p.descricao)}
   <div class="campo"><label for="documento">O cliente informa</label>
     <select id="documento" name="documento" style="font:inherit;padding:13px 15px;border:1.5px solid #D6CCE0;border-radius:12px;min-height:48px;background:#fff">
-      ${[['cpf_cnpj', 'CPF ou CNPJ'], ['cpf', 'Somente CPF'], ['cnpj', 'Somente CNPJ'], ['placa', 'Placa de veículo']].map(([v, t]) => `<option value="${v}" ${p.documento === v ? 'selected' : ''}>${t}</option>`).join('')}
+      ${[['cpf_cnpj', 'CPF ou CNPJ'], ['cpf', 'Somente CPF'], ['cnpj', 'Somente CNPJ'], ['placa', 'Placa de veículo'], ['cep', 'CEP']].map(([v, t]) => `<option value="${v}" ${p.documento === v ? 'selected' : ''}>${t}</option>`).join('')}
     </select></div>
   ${campo('endpoint', 'Endpoint na APIFull (ex.: e-boavista)', p.endpoint)}
   ${campo('link', 'Link na APIFull (normalmente igual ao endpoint)', p.link)}
@@ -118,7 +118,7 @@ ${resultado ? `<div class="aviso ok">${esc(resultado)}</div>` : ''}
     <li><strong>Custo:</strong> valor na APIFull, ex.: <code>5,83</code>. O preço de venda é calculado sozinho. <strong>Sem custo, a consulta entra inativa</strong> até você informar o custo.</li>
     <li><strong>Campo</strong> (opcional): nome do campo enviado à APIFull. Padrão: <code>document</code> (ou <code>placa</code> para veículos).</li>
     <li><strong>Categoria</strong> (opcional): ex.: Dívidas e Crédito, Veículos, Empresas, Dados. Padrão: Dívidas e Crédito.</li>
-    <li><strong>Documento</strong> (opcional): <code>cpf_cnpj</code> (padrão), <code>cpf</code>, <code>cnpj</code> ou <code>placa</code>.</li>
+    <li><strong>Documento</strong> (opcional): <code>cpf_cnpj</code> (padrão), <code>cpf</code>, <code>cnpj</code>, <code>placa</code> ou <code>cep</code>.</li>
     <li>Se o endpoint já estiver cadastrado, a consulta é <strong>atualizada</strong>. Se não, é criada (ativa quando tem custo).</li>
   </ul>
   <p class="muted" style="margin:0">Exemplo:<br><code>Serasa Premium; serasa-premium; 15,72; Dívidas e Crédito; cpf_cnpj; Score e negativações Serasa</code><br><code>Consulta Veicular Completa; veiculo-completo; 12,50; Veículos; placa</code></p>
