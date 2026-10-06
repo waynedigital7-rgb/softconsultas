@@ -18,6 +18,18 @@ document.addEventListener('DOMContentLoaded', () => {
     requestAnimationFrame(passo);
   });
 
+  // Banner de anúncios: troca a cada 6 segundos
+  document.querySelectorAll('[data-banner]').forEach((b) => {
+    const slides = [...b.querySelectorAll('.slide')], pontos = [...b.querySelectorAll('.pontos button')];
+    if (slides.length < 2) return;
+    let i = 0, t;
+    const ir = (n) => { slides[i].classList.remove('ativo'); pontos[i]?.classList.remove('ativo'); i = (n + slides.length) % slides.length; slides[i].classList.add('ativo'); pontos[i]?.classList.add('ativo'); };
+    const auto = () => { clearInterval(t); if (!calmo) t = setInterval(() => ir(i + 1), 6000); };
+    pontos.forEach((p, n) => p.addEventListener('click', () => { ir(n); auto(); }));
+    b.addEventListener('mouseenter', () => clearInterval(t)); b.addEventListener('mouseleave', auto);
+    auto();
+  });
+
   // Botões com confirmação (ex.: pagar saque pelo Asaas)
   document.querySelectorAll('[data-confirmar]').forEach((b) => b.addEventListener('click', (e) => {
     if (!confirm(b.getAttribute('data-confirmar'))) e.preventDefault();

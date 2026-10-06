@@ -3,7 +3,7 @@ import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
-  ${[['/admin', 'Resumo'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
+  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
 const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
@@ -70,6 +70,10 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
   ${campo('ordem', 'Ordem no catálogo (menor aparece primeiro)', p.ordem ?? 100, 'inputmode="numeric"')}
   <label class="check"><input type="checkbox" name="ativo" value="1" ${p.ativo ? 'checked' : ''}><span>Ativa (visível para os clientes)</span></label>
   <label class="check"><input type="checkbox" name="sensivel" value="1" ${p.sensivel ? 'checked' : ''}><span>Consulta sensível (só contas CNPJ ou clientes liberados por você)</span></label>
+  <div class="campo"><label for="destaque_limpa_nome">Área Limpa Nome</label>
+    <select id="destaque_limpa_nome" name="destaque_limpa_nome" style="font:inherit;padding:13px 15px;border:1.5px solid #D6CCE0;border-radius:12px;min-height:48px;background:#fff">
+      ${[['', 'Não aparece'], ['economica', 'Mais em conta (triagem)'], ['completa', 'Mais completa (diagnóstico)']].map(([v, t]) => `<option value="${v}" ${(p.destaque_limpa_nome || '') === v ? 'selected' : ''}>${t}</option>`).join('')}
+    </select></div>
   <button class="btn" type="submit">Salvar</button> <a class="btn sec" href="/admin/produtos">Cancelar</a>
 </form>`;
 }
@@ -239,5 +243,109 @@ export function adminRegistro({ linhas }) {
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>Data</th><th>Quem</th><th>Ação</th><th>Detalhes</th></tr>
   ${linhas.map((l) => `<tr><td>${dt(l.criado_em)}</td><td>${esc(l.admin_email)}</td><td><strong>${esc(l.acao)}</strong></td><td>${esc(l.detalhe)}</td></tr>`).join('') || '<tr><td colspan="4" class="vazio">Nenhuma alteração registrada ainda.</td></tr>'}
+</table></div></div>`;
+}
+
+// ---------- Painel financeiro ----------
+function graficoDiario(dias, ini, fim) {
+  // preenche dias sem movimento
+  const mapa = new Map(dias.map((d) => [d.dia, d]));
+  const lista = [];
+  for (let t = new Date(ini + 'T12:00:00Z'); t <= new Date(fim + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + 1)) {
+    const k = t.toISOString().slice(0, 10);
+    const d = mapa.get(k) || { receita: 0, custo: 0, n: 0 };
+    lista.push({ dia: k, receita: d.receita, lucro: d.receita - d.custo, n: d.n });
+  }
+  const W = 900, H = 260, E = 54, B = 34, T = 14;
+  const max = Math.max(100, ...lista.map((d) => d.receita));
+  const larg = (W - E - 10) / lista.length;
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  const linhas = [0, 0.25, 0.5, 0.75, 1].map((f) => `<line x1="${E}" x2="${W - 10}" y1="${y(max * f)}" y2="${y(max * f)}" stroke="#EEE6F5"/>
+    <text x="${E - 6}" y="${y(max * f) + 4}" text-anchor="end" font-size="11" fill="#5B5466">${(max * f / 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</text>`).join('');
+  const barras = lista.map((d, i) => `<rect x="${E + i * larg + larg * 0.15}" y="${y(d.receita)}" width="${Math.max(1, larg * 0.7)}" height="${H - B - y(d.receita)}" rx="3" fill="#E4CCF4"><title>${d.dia.split('-').reverse().join('/')}: faturamento ${(d.receita / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}, ${d.n} consulta(s)</title></rect>`).join('');
+  const pontos = lista.map((d, i) => `${E + i * larg + larg / 2},${y(Math.max(0, d.lucro))}`).join(' ');
+  const passo = Math.max(1, Math.ceil(lista.length / 10));
+  const rotulos = lista.map((d, i) => (i % passo === 0 ? `<text x="${E + i * larg + larg / 2}" y="${H - 12}" text-anchor="middle" font-size="11" fill="#5B5466">${d.dia.slice(8)}/${d.dia.slice(5, 7)}</text>` : '')).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Faturamento e lucro por dia">${linhas}${barras}
+    <polyline points="${pontos}" fill="none" stroke="#9F31D3" stroke-width="2.5" stroke-linejoin="round"/>${rotulos}</svg>
+    <div class="muted" style="font-size:.85rem;display:flex;gap:16px"><span><span style="display:inline-block;width:12px;height:12px;background:#E4CCF4;border-radius:3px;vertical-align:-1px"></span> Faturamento</span>
+    <span><span style="display:inline-block;width:14px;height:3px;background:#9F31D3;vertical-align:3px"></span> Lucro</span><span>valores em R$</span></div>`;
+}
+function barrasH(itens, valor, rotulo, cor = '#9F31D3') {
+  const max = Math.max(1, ...itens.map(valor));
+  return itens.map((it) => `<div style="margin:10px 0">
+    <div style="display:flex;justify-content:space-between;gap:10px;font-size:.92rem"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.nome || it.produto)}</span><strong>${rotulo(it)}</strong></div>
+    <div style="height:8px;background:#F1E9F8;border-radius:999px;margin-top:5px;overflow:hidden"><div style="height:100%;width:${Math.max(2, (valor(it) / max) * 100)}%;background:${cor};border-radius:999px"></div></div></div>`).join('') || '<div class="vazio">Sem dados no período.</div>';
+}
+export function adminFinanceiro({ ini, fim, totais, recargas, novos, diario, porProduto, topGasto, topComissao, extrato, saldoApiFull, clientesTotal, saldoCarteiras }) {
+  const receita = totais.bruto - totais.comissoes;
+  const lucro = receita - totais.custo;
+  const margem = receita ? Math.round((lucro / receita) * 100) : 0;
+  const ticket = totais.n ? Math.round(receita / totais.n) : 0;
+  const tipoCor = { Recarga: 'var(--ok)', Consulta: 'var(--roxo)', 'Consulta interna': 'var(--cinza)', 'Comissão': '#B7791F', 'Saque pago': 'var(--erro)' };
+  return `<h1 style="font-size:1.7rem">Financeiro</h1>${menu('/admin/financeiro')}
+<form method="get" class="cartao" style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px">
+  <div class="campo" style="margin:0"><label for="inicio">Data inicial</label><input id="inicio" name="inicio" type="date" value="${ini}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  <div class="campo" style="margin:0"><label for="fim">Data final</label><input id="fim" name="fim" type="date" value="${fim}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  <button class="btn">Aplicar</button>
+  <span class="muted" style="font-size:.85rem">Atalhos: <a href="?inicio=${fim}&fim=${fim}">hoje</a> · <a href="/admin/financeiro">30 dias</a></span>
+</form>
+<div class="grade" style="margin-bottom:18px">
+  ${num('Recargas pagas', reais(recargas.total), `${recargas.n} recarga(s) · ${reais(recargas.bonus)} em bônus`)}
+  ${num('Faturamento com consultas', reais(receita), `${totais.n} consultas · ticket médio ${reais(ticket)}`)}
+  ${num('Custo APIFull', reais(totais.custo), saldoApiFull === null ? 'saldo APIFull indisponível' : `saldo atual na APIFull: ${reais(saldoApiFull)}`)}
+  <div class="cartao"><div class="muted">Lucro no período</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800;color:var(--ok)">${reais(lucro)}</div><div class="muted" style="font-size:.85rem">margem de ${margem}% sobre o faturamento</div></div>
+</div>
+<div class="grade" style="margin-bottom:18px">
+  ${num('Clientes', clientesTotal, `${novos} novo(s) no período · ${totais.clientes} consultaram`)}
+  ${num('Comissões de indicação', reais(totais.comissoes), 'pagas pelos indicados, acima do seu preço')}
+  ${num('Saldo nas carteiras', reais(saldoCarteiras), 'créditos dos clientes ainda não usados')}
+</div>
+<div class="cartao" style="margin-bottom:18px"><h3>Evolução diária</h3>${graficoDiario(diario, ini, fim)}</div>
+<div class="grade" style="margin-bottom:18px;grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+  <div class="cartao"><h3>Quem mais gasta</h3>${barrasH(topGasto, (x) => x.gasto, (x) => `${reais(x.gasto)} · ${x.n} consultas`)}</div>
+  <div class="cartao"><h3>Quem mais ganha comissão</h3>${barrasH(topComissao, (x) => x.ganho, (x) => `${reais(x.ganho)} · ${x.n} consultas`, '#B7791F')}</div>
+</div>
+<div class="cartao" style="margin-bottom:18px"><h3>Lucro por consulta</h3><div class="rolar"><table class="tabela">
+  <tr><th>Consulta</th><th>Qtde</th><th>Faturamento</th><th>Custo APIFull</th><th>Lucro</th><th>Lucro médio</th><th>Margem</th></tr>
+  ${porProduto.map((p) => { const l = p.receita - p.custo; return `<tr><td><strong>${esc(p.produto)}</strong></td><td>${p.n}</td><td>${reais(p.receita)}</td><td>${reais(p.custo)}</td>
+    <td><strong style="color:var(--ok)">${reais(l)}</strong></td><td>${reais(Math.round(l / p.n))}</td><td>${p.receita ? Math.round((l / p.receita) * 100) : 0}%</td></tr>`; }).join('') || '<tr><td colspan="7" class="vazio">Sem consultas no período.</td></tr>'}
+</table></div></div>
+<div class="cartao"><h3>Extrato detalhado</h3><p class="muted" style="margin-top:-6px">Até 300 movimentações mais recentes do período.</p><div class="rolar"><table class="tabela">
+  <tr><th>Data</th><th>Tipo</th><th>Cliente</th><th>Detalhe</th><th style="text-align:right">Valor</th><th style="text-align:right">Seu lucro</th></tr>
+  ${extrato.map((e) => `<tr><td>${dt(e.quando)}</td><td><span style="color:${tipoCor[e.tipo] || 'inherit'};font-weight:700">${esc(e.tipo)}</span></td><td>${esc(e.cliente)}</td><td>${esc(e.item)}</td>
+    <td style="text-align:right">${e.valor < 0 ? '-' : ''}${reais(Math.abs(e.valor))}</td><td style="text-align:right">${e.lucro === null ? '—' : `<strong style="color:var(--ok)">${reais(e.lucro)}</strong>`}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Sem movimentações no período.</td></tr>'}
+</table></div></div>`;
+}
+
+// ---------- Anúncios ----------
+export function adminAnuncios({ anuncios, ok, erro }) {
+  const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  const status = (a) => (!a.ativo ? '<span class="muted">Pausado</span>' : a.fim && a.fim < hoje ? '<span style="color:var(--erro)">Encerrado</span>'
+    : a.inicio && a.inicio > hoje ? 'Agendado' : '<span style="color:var(--ok);font-weight:700">No ar</span>');
+  return `<h1 style="font-size:1.7rem">Anúncios</h1>${menu('/admin/anuncios')}${aviso(ok, erro)}
+<div class="cartao" style="margin-bottom:18px">
+  <h3>Novo anúncio</h3>
+  <p class="muted">O banner aparece na página inicial e no painel dos clientes, alternando a cada 6 segundos. Use uma imagem horizontal de <strong>1600 × 400 px</strong> (proporção 4:1), em PNG, JPG ou WEBP, com até 3 MB. No celular, o banner é cortado nas laterais: deixe o texto importante no centro.</p>
+  <form method="post" action="/admin/anuncios/criar" enctype="multipart/form-data" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 16px;align-items:end">
+    <div class="campo" style="margin:0"><label for="anunciante">Anunciante</label><input id="anunciante" name="anunciante" type="text" required></div>
+    <div class="campo" style="margin:0"><label for="titulo">Texto alternativo (descrição do banner)</label><input id="titulo" name="titulo" type="text"></div>
+    <div class="campo" style="margin:0"><label for="link">Link de destino</label><input id="link" name="link" type="text" placeholder="https://"></div>
+    <div class="campo" style="margin:0"><label for="valor">Valor cobrado (R$, opcional)</label><input id="valor" name="valor" type="text" inputmode="decimal"></div>
+    <div class="campo" style="margin:0"><label for="inicio">Início</label><input id="inicio" name="inicio" type="date" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+    <div class="campo" style="margin:0"><label for="fim">Fim</label><input id="fim" name="fim" type="date" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+    <div class="campo" style="margin:0"><label for="imagem">Imagem do banner</label><input id="imagem" name="imagem" type="file" accept="image/png,image/jpeg,image/webp" required></div>
+    <button class="btn" type="submit">Publicar anúncio</button>
+  </form>
+</div>
+<div class="cartao"><div class="rolar"><table class="tabela">
+  <tr><th>Banner</th><th>Anunciante</th><th>Período</th><th>Exibições</th><th>Cliques</th><th>CTR</th><th>Valor</th><th>Status</th><th></th></tr>
+  ${anuncios.map((a) => `<tr><td><img src="/anuncio-img/${a.id}" alt="" style="width:160px;aspect-ratio:4/1;object-fit:cover;border-radius:8px"></td>
+    <td><strong>${esc(a.anunciante)}</strong><br><small class="muted">${esc(a.link || 'sem link')}</small></td>
+    <td>${a.inicio ? a.inicio.split('-').reverse().join('/') : 'já'} → ${a.fim ? a.fim.split('-').reverse().join('/') : 'sem fim'}</td>
+    <td>${a.impressoes}</td><td>${a.cliques}</td><td>${a.impressoes ? ((a.cliques / a.impressoes) * 100).toFixed(1) : '0.0'}%</td><td>${a.valor_centavos ? reais(a.valor_centavos) : '—'}</td><td>${status(a)}</td>
+    <td><form method="post" action="/admin/anuncios/acao" style="display:flex;gap:6px;margin:0"><input type="hidden" name="id" value="${a.id}">
+      <button class="btn sec" name="acao" value="alternar" style="min-height:36px;padding:6px 12px">${a.ativo ? 'Pausar' : 'Ativar'}</button>
+      <button class="btn sec" name="acao" value="excluir" style="min-height:36px;padding:6px 12px" data-confirmar="Excluir o anúncio de ${esc(a.anunciante)}?">Excluir</button></form></td></tr>`).join('') || '<tr><td colspan="9" class="vazio">Nenhum anúncio cadastrado. Enquanto não houver, aparece o espaço "Anuncie aqui".</td></tr>'}
 </table></div></div>`;
 }

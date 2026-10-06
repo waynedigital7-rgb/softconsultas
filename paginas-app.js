@@ -1,5 +1,5 @@
 // Páginas da área do cliente: catálogo, consulta, resultado, histórico e recarga
-import { esc, reais, dt } from './paginas.js';
+import { esc, reais, dt, botoesPdf } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 const ROTULO_DOC = { cpf: 'CPF', cnpj: 'CNPJ', cpf_cnpj: 'CPF ou CNPJ', placa: 'Placa', cep: 'CEP' };
@@ -133,7 +133,7 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, b
   ${bloqueada ? `<div class="aviso erro" role="alert"><strong>Consulta com dados sensíveis.</strong> Por segurança e exigência da LGPD, esta consulta é liberada para contas de empresa (CNPJ) ou após análise. Fale com o suporte para solicitar a liberação.</div><a class="btn largo" href="/consultas">Ver outras consultas</a>` : falta > 0 ? (admin
     ? `<div class="aviso erro">Saldo da APIFull insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="https://app.apifull.com.br" target="_blank" rel="noopener">Recarregar na APIFull</a>`
     : `<div class="aviso erro">Saldo insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="/recarregar">Recarregar agora</a>`) : `
-  <div id="aviso-nova-aba" class="aviso ok" hidden>Sua consulta está abrindo em uma <strong>nova aba</strong>. Se não abrir, confira se o navegador bloqueou ou veja no <a href="/historico">Histórico</a>.</div>
+  <div id="aviso-nova-aba" class="aviso ok" hidden>Sua consulta está abrindo em uma <strong>nova aba</strong>. O PDF também fica no <a href="/historico"><strong>Histórico</strong></a> com o botão <strong>Baixar PDF</strong>.</div>
   <form method="post" action="/consultas/${esc(produto.slug)}" target="_blank" data-consulta>
     <div class="campo"><label for="valor">${ROTULO_DOC[produto.documento]}</label>
       <input id="valor" name="valor" type="text" ${produto.documento === 'placa' ? 'autocapitalize="characters"' : 'inputmode="numeric"'} required value="${esc(v.valor)}"></div>
@@ -198,7 +198,7 @@ export function paginaHistorico({ consultas, busca = '', dias = 10 }) {
     if (c.status === 'falhou') return '<span class="muted">Falhou (valor estornado)</span>';
     if (c.status !== 'concluida') return 'Processando';
     if (!c.resultado) return '<span class="muted">Expirada</span>';
-    return `<a class="btn" style="min-height:38px;padding:6px 16px" href="/consulta/${c.id}/pdf" target="_blank" rel="noopener">Abrir PDF</a><br><small class="muted">Disponível até ${ate(c.criado_em)}</small>`;
+    return `${botoesPdf(c.id)}<br><small class="muted">Disponível até ${ate(c.criado_em)}</small>`;
   };
   return `
 <h1 style="font-size:1.8rem">Histórico de consultas</h1>
@@ -310,4 +310,29 @@ ${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso
     ${extrato.map((e) => `<tr><td>${dt(e.criado_em)}</td><td>${esc(e.descricao)}</td><td style="text-align:right;font-weight:700;color:${e.valor_centavos < 0 ? 'var(--erro)' : 'var(--ok)'}">${e.valor_centavos < 0 ? '-' : '+'} ${reais(Math.abs(e.valor_centavos))}</td></tr>`).join('')}
   </table></div>` : '<div class="vazio">Nenhuma comissão ainda.</div>'}
 </div>`;
+}
+
+// Área exclusiva para profissionais de limpa nome
+export function paginaLimpaNome({ economicas, completas, saldo, admin }) {
+  const bloco = (titulo, sub, lista, destaque) => `
+  <div class="cartao" style="margin-bottom:18px;${destaque ? 'border:2px solid var(--roxo)' : ''}">
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
+      <h2 style="margin:0;font-size:1.3rem">${titulo}</h2><span class="muted">${sub}</span></div>
+    ${lista.length ? `<div style="margin-top:14px">${listaProdutos(lista)}</div>` : '<div class="vazio">Nenhuma consulta selecionada ainda.</div>'}
+  </div>`;
+  const menor = economicas[0];
+  return `<span class="tag">Área exclusiva</span>
+<h1 style="font-size:1.9rem;margin:10px 0 4px">Limpa Nome</h1>
+<p class="muted" style="margin:0 0 18px;max-width:760px">As consultas certas para cada etapa do seu atendimento: comece pela triagem rápida e barata e, quando o cliente fechar, faça o diagnóstico completo em todas as bases.</p>
+<div class="grade" style="margin-bottom:18px">
+  <div class="saldo"><div style="color:#D9B8F0;font-weight:600">${admin ? 'Saldo APIFull' : 'Seu saldo'}</div><div class="valor">${saldo === null ? '—' : reais(saldo)}</div>
+    ${admin ? '' : '<a class="btn" href="/recarregar" style="margin-top:14px">Recarregar</a>'}</div>
+  <div class="cartao"><h3>1. Triagem</h3><p class="muted" style="margin:0">Descubra em segundos se o nome tem restrições, o score e o valor total${menor ? `, a partir de <strong>${reais(menor.preco_centavos)}</strong>` : ''}.</p></div>
+  <div class="cartao"><h3>2. Diagnóstico completo</h3><p class="muted" style="margin:0">Consulte cada base separadamente: Serasa, SPC, Boa Vista, Banco Central (SCR), protestos e CADIN. Uma restrição pode aparecer numa base e não em outra.</p></div>
+</div>
+${bloco('Mais em conta: triagem', 'ideal para o primeiro contato', economicas, false)}
+${bloco('Mais completas: diagnóstico', 'ideal para fechar o serviço', completas, true)}
+<div class="cartao"><h3>Dica de atendimento</h3>
+  <p class="muted" style="margin:0">Faça a triagem antes da reunião e mostre ao cliente o resultado. Depois de fechar, rode o diagnóstico completo e guarde os PDFs (ficam no Histórico por 10 dias) para comparar antes e depois do serviço.
+  Lembre-se: use as consultas apenas com a autorização do titular, conforme a LGPD.</p></div>`;
 }

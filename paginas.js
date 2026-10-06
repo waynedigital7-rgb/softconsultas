@@ -67,6 +67,18 @@ footer{color:var(--cinza);font-size:.85rem;text-align:center;padding:24px 20px;b
 .item .pr small{color:var(--cinza);font-size:.78rem}
 .item .bt{flex:none;min-height:40px;padding:8px 18px}
 @media (max-width:560px){.item{flex-wrap:wrap}.item .tx{flex-basis:calc(100% - 60px)}.item .pr{text-align:left;margin-left:58px}.item .bt{margin-left:auto}}
+.banner{position:relative;border-radius:20px;overflow:hidden;aspect-ratio:4/1;background:var(--preto);min-height:120px}
+.banner .slide{position:absolute;inset:0;opacity:0;transition:opacity .6s ease;pointer-events:none}
+.banner .slide.ativo{opacity:1;pointer-events:auto}
+.banner img{width:100%;height:100%;object-fit:cover;display:block}
+.banner .selo{position:absolute;top:10px;left:12px;background:rgba(15,12,20,.7);color:#fff;font-size:.72rem;font-weight:700;padding:3px 9px;border-radius:999px}
+.banner .pontos{position:absolute;bottom:10px;left:0;right:0;display:flex;gap:6px;justify-content:center}
+.banner .pontos button{width:9px;height:9px;border-radius:50%;border:0;background:rgba(255,255,255,.5);cursor:pointer;padding:0}
+.banner .pontos button.ativo{background:#fff;width:22px;border-radius:999px}
+.banner-vazio{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:28px;border-radius:20px;background:linear-gradient(120deg,#0F0C14 0%,#2A1440 60%,#9F31D3 140%);color:#fff;text-decoration:none}
+.banner-vazio strong{font-family:Montserrat,sans-serif;font-size:1.5rem}.banner-vazio span{color:#E2D3EE}
+.banner-vazio:hover{color:#fff}
+@media (max-width:560px){.banner{aspect-ratio:2/1}}
 /* ---------- Animações ---------- */
 @keyframes subir{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes girar{to{transform:rotate(360deg)}}
@@ -102,7 +114,7 @@ a.cartao:hover{transform:translateY(-4px);box-shadow:0 14px 30px -18px rgba(159,
 
 export function layout({ titulo, corpo, usuario }) {
   const nav = usuario
-    ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
+    ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/limpa-nome">Limpa Nome</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
        <form method="post" action="/sair" style="margin:0"><button class="btn sec" style="min-height:40px;padding:8px 18px;color:#fff;border-color:#3A3046">Sair</button></form>`
     : `<a href="/entrar">Entrar</a><a class="btn" href="/cadastro" style="min-height:40px;padding:8px 20px">Criar conta</a>`;
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
@@ -122,7 +134,25 @@ export function layout({ titulo, corpo, usuario }) {
 
 const aviso = (erro, ok) => (erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : '') + (ok ? `<div class="aviso ok">${esc(ok)}</div>` : '');
 
-export const paginaInicial = () => `
+// Banner rotativo de anúncios (com espaço "Anuncie aqui" quando não há anunciantes)
+export function bannerAnuncios(anuncios = [], contato = '#') {
+  if (!anuncios.length) {
+    return `<a class="banner-vazio" href="${esc(contato)}" target="_blank" rel="noopener">
+      <span class="tag" style="background:#2A2233;color:#D9B8F0">Espaço publicitário</span>
+      <strong>Anuncie aqui o seu negócio</strong>
+      <span>Fale com milhares de empresas e profissionais que usam a Soft Consultas todos os dias.</span>
+      <span class="btn" style="margin-top:6px">Quero anunciar</span></a>`;
+  }
+  return `<div class="banner" data-banner aria-roledescription="carrossel" aria-label="Anúncios">
+    ${anuncios.map((a, i) => `<a class="slide${i ? '' : ' ativo'}" href="${a.link ? `/anuncio/${a.id}` : '#'}" ${a.link ? 'target="_blank" rel="noopener sponsored"' : ''} aria-label="${esc(a.titulo || a.anunciante)}">
+      <img src="/anuncio-img/${a.id}" alt="${esc(a.titulo || a.anunciante)}" loading="lazy"></a>`).join('')}
+    <span class="selo">Anúncio</span>
+    ${anuncios.length > 1 ? `<div class="pontos">${anuncios.map((_, i) => `<button type="button" aria-label="Anúncio ${i + 1}" class="${i ? '' : 'ativo'}"></button>`).join('')}</div>` : ''}
+  </div>
+  <p class="muted" style="text-align:right;font-size:.8rem;margin:6px 0 0"><a href="${esc(contato)}" target="_blank" rel="noopener">Anuncie aqui</a></p>`;
+}
+
+export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
 <section class="hero">
   <div>
     <span class="tag">Consultas para o seu negócio</span>
@@ -138,6 +168,12 @@ export const paginaInicial = () => `
     <div class="cartao"><h3>Créditos pré-pagos</h3><p class="muted" style="margin:0">Recarregue por Pix e pague só pelo que consultar.</p></div>
     <div class="cartao"><h3>Relatório em PDF</h3><p class="muted" style="margin:0">Resultado na tela e PDF para baixar e arquivar.</p></div>
   </div>
+</section>
+<section style="margin-bottom:28px">${bannerAnuncios(anuncios, contato)}</section>
+<section class="cartao" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;justify-content:space-between">
+  <div><span class="tag">Para profissionais de limpa nome</span><h2 style="margin:10px 0 6px">Área exclusiva com as consultas certas para cada caso</h2>
+  <p class="muted" style="margin:0;max-width:620px">As consultas mais em conta para triagem e as mais completas para o diagnóstico: Serasa, SPC, Boa Vista, Banco Central, protestos e CADIN.</p></div>
+  <a class="btn" href="/cadastro">Criar conta grátis</a>
 </section>`;
 
 export const paginaCadastro = ({ erro, v = {} }) => `
@@ -197,7 +233,13 @@ export const paginaRedefinir = ({ erro, token, valido }) => `
   </form>` : `<p class="muted">Este link é inválido ou já expirou.</p><a class="btn largo" href="/esqueci-senha">Pedir um novo link</a>`}
 </div>`;
 
-export const paginaPainel = ({ usuario, saldo, transacoes, consultas }) => `
+// Botões de PDF bem visíveis: baixar (arquivo) e abrir (nova aba)
+const ICONE_BAIXAR = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>';
+export const botoesPdf = (id) => `<span style="display:inline-flex;gap:6px;flex-wrap:wrap">
+  <a class="btn" style="min-height:38px;padding:6px 14px" href="/consulta/${id}/pdf?baixar=1">${ICONE_BAIXAR} Baixar PDF</a>
+  <a class="btn sec" style="min-height:38px;padding:6px 14px" href="/consulta/${id}/pdf" target="_blank" rel="noopener">Abrir</a></span>`;
+
+export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#' }) => `
 <h1 style="font-size:1.8rem">Olá, ${esc(usuario.nome.split(' ')[0])}</h1>
 <p class="muted" style="margin-top:-4px">Bem-vindo ao seu painel.</p>
 <div class="grade" style="margin:22px 0">
@@ -222,10 +264,11 @@ export const paginaPainel = ({ usuario, saldo, transacoes, consultas }) => `
     <a class="btn" href="/indicacoes">Pegar meu link</a>
   </div>
 </div>
+${usuario.admin ? '' : `<div style="margin-bottom:18px">${bannerAnuncios(anuncios, contato)}</div>`}
 <div class="cartao" style="margin-bottom:18px">
   <h3>Últimas consultas</h3>
   ${consultas.length ? `<div class="rolar"><table class="tabela"><tr><th>Data</th><th>Consulta</th><th>Documento</th><th>Valor</th><th>Status</th></tr>
-    ${consultas.map((c) => `<tr><td>${dt(c.criado_em)}</td><td>${esc(c.produto)}</td><td>${esc(fmtDoc(c.parametro))}</td><td>${reais(c.preco_centavos)}</td><td>${c.status === 'concluida' ? (c.resultado ? `<a href="/consulta/${c.id}/pdf" target="_blank" rel="noopener">Abrir PDF</a>` : 'Expirada') : c.status === 'falhou' ? 'Falhou (estornada)' : 'Processando'}</td></tr>`).join('')}
+    ${consultas.map((c) => `<tr><td>${dt(c.criado_em)}</td><td>${esc(c.produto)}</td><td>${esc(fmtDoc(c.parametro))}</td><td>${reais(c.preco_centavos)}</td><td>${c.status === 'concluida' ? (c.resultado ? botoesPdf(c.id) : 'Expirada') : c.status === 'falhou' ? 'Falhou (estornada)' : 'Processando'}</td></tr>`).join('')}
   </table></div>` : '<div class="vazio">Você ainda não fez nenhuma consulta.</div>'}
 </div>
 <div class="cartao">

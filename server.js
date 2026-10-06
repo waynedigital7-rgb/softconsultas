@@ -3,7 +3,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar } from './db.js';
+import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar, pastaAnuncios } from './db.js';
 import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
 import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo } from './apifull.js';
@@ -45,6 +45,44 @@ async function corpoJson(req, limite = 200000) {
   for await (const pedaco of req) { dados += pedaco; if (dados.length > limite) throw new Error('corpo grande demais'); }
   try { return JSON.parse(dados || '{}'); } catch { return {}; }
 }
+// Formulário com arquivo (multipart/form-data), sem dependências. Limite padrão: 3 MB.
+async function corpoMultipart(req, limite = 3 * 1024 * 1024) {
+  const tipo = String(req.headers['content-type'] || '');
+  const m = tipo.match(/boundary=(?:"([^"]+)"|([^;]+))/i);
+  if (!m) throw new Error('formulário inválido');
+  const fronteira = Buffer.from(`--${m[1] || m[2]}`);
+  const pedacos = []; let total = 0;
+  for await (const c of req) { total += c.length; if (total > limite) throw new Error('arquivo grande demais'); pedacos.push(c); }
+  const corpo = Buffer.concat(pedacos);
+  const campos = {}, arquivos = {};
+  let pos = corpo.indexOf(fronteira);
+  while (pos !== -1) {
+    const inicio = pos + fronteira.length + 2;
+    const prox = corpo.indexOf(fronteira, inicio);
+    if (prox === -1) break;
+    const parte = corpo.subarray(inicio, prox - 2);
+    const sep = parte.indexOf('\r\n\r\n');
+    if (sep !== -1) {
+      const cab = parte.subarray(0, sep).toString('utf8');
+      const dados = parte.subarray(sep + 4);
+      const nome = (cab.match(/name="([^"]*)"/i) || [])[1];
+      const arq = (cab.match(/filename="([^"]*)"/i) || [])[1];
+      const ct = (cab.match(/Content-Type:\s*([^\r\n]+)/i) || [])[1];
+      if (nome && arq !== undefined) { if (dados.length) arquivos[nome] = { nome: arq, tipo: (ct || '').trim(), dados }; }
+      else if (nome) campos[nome] = dados.toString('utf8');
+    }
+    pos = prox;
+  }
+  return { campos, arquivos };
+}
+// Confere a imagem pelos primeiros bytes (não confia na extensão)
+function tipoImagem(b) {
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'png';
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'jpg';
+  if (b.subarray(0, 4).toString() === 'RIFF' && b.subarray(8, 12).toString() === 'WEBP') return 'webp';
+  return null;
+}
+
 function json(res, obj, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
@@ -140,7 +178,8 @@ function garantirCodigo(usuario) {
   return c;
 }
 
-rota('GET', '/', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel') : pagina(res, 'Consultas para o seu negócio', P.paginaInicial(), null)));
+rota('GET', '/', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel')
+  : pagina(res, 'Consultas para o seu negócio', P.paginaInicial({ anuncios: anunciosParaExibir(), contato: contatoAnuncie() }), null)));
 
 // Cadastro
 rota('GET', '/cadastro', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel') : pagina(res, 'Criar conta', P.paginaCadastro({}), null)));
@@ -236,7 +275,7 @@ rota('POST', '/redefinir-senha', async ({ req, res }) => {
 rota('GET', '/painel', exigeLogin(async ({ res, usuario }) => {
   const transacoes = db.prepare('SELECT * FROM transacoes WHERE usuario_id = ? ORDER BY id DESC LIMIT 20').all(usuario.id);
   const consultas = db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 10').all(usuario.id);
-  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas }), usuario);
+  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas, anuncios: anunciosParaExibir(), contato: contatoAnuncie() }), usuario);
 }));
 
 rota('GET', '/conta', exigeLogin(({ res, usuario, url }) => pagina(res, 'Minha conta',
@@ -487,7 +526,7 @@ rota('GET', '/consulta/:id', exigeLogin(({ res, usuario, params }) => {
   pagina(res, `Consulta #${c.id}`, PA.paginaResultado({ c, a, linhas: achatar(dadosLegiveis(dados)) }), usuario);
 }));
 
-rota('GET', '/consulta/:id/pdf', exigeLogin(async ({ res, usuario, params }) => {
+rota('GET', '/consulta/:id/pdf', exigeLogin(async ({ res, usuario, params, url }) => {
   const c = consultaDo(params.id, usuario);
   if (!c || c.status !== 'concluida' || expirou(c)) return redirecionar(res, c ? `/consulta/${c.id}` : '/historico');
   const nome = `consulta-${c.id}.pdf`;
@@ -503,7 +542,8 @@ rota('GET', '/consulta/:id/pdf', exigeLogin(async ({ res, usuario, params }) => 
     const dados = JSON.parse(c.resultado || '{}');
     bytes = await pdfGenerico({ id: c.id, produto: c.produto, parametro: c.parametro, dataHora: P.dt(c.criado_em) }, achatar(dadosLegiveis(dados)));
   }
-  res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${nome}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+  const modo = url.searchParams.get('baixar') ? 'attachment' : 'inline';
+  res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `${modo}; filename="${nome}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(bytes);
 }));
 
@@ -658,6 +698,7 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
     documento: ['cpf', 'cnpj', 'cpf_cnpj', 'placa', 'cep'].includes(f.documento) ? f.documento : 'cpf_cnpj',
     endpoint: String(f.endpoint || '').trim(), link: String(f.link || '').trim(), campo: String(f.campo || 'document').trim() || 'document',
     custo_centavos: custo, ordem: Number(f.ordem) || 100, ativo: f.ativo === '1' ? 1 : 0, sensivel: f.sensivel === '1' ? 1 : 0,
+    destaque_limpa_nome: ['economica', 'completa'].includes(f.destaque_limpa_nome) ? f.destaque_limpa_nome : '',
   };
   const erro = (m) => pagina(res, 'Admin · Editar consulta', PD.adminProdutoForm({ p, markup: lerConfig('markup_percentual'), erro: m }), usuario, 400);
   if (!p.nome || !p.categoria) return erro('Preencha o nome e a categoria.');
@@ -668,13 +709,13 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
   registrar(usuario, p.id ? 'Editou consulta' : 'Criou consulta',
     `${p.nome}: custo ${P.reais(antes?.custo_centavos ?? 0)} → ${P.reais(custo)}, preço ${P.reais(preco)}, ${p.ativo ? 'ativa' : 'inativa'}${antes && antes.endpoint !== p.endpoint ? `, endpoint ${antes.endpoint || '—'} → ${p.endpoint}` : ''}`);
   if (p.id) {
-    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=?, sensivel=? WHERE id=?`)
-      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.id);
+    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=?, sensivel=?, destaque_limpa_nome=? WHERE id=?`)
+      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome, p.id);
   } else {
     let slug = p.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'consulta';
     while (db.prepare('SELECT 1 FROM produtos WHERE slug = ?').get(slug)) slug += '-2';
-    db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ordem, ativo, sensivel) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(slug, p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel);
+    db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ordem, ativo, sensivel, destaque_limpa_nome) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(slug, p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome);
   }
   redirecionar(res, '/admin/produtos?ok=1');
 }));
@@ -817,6 +858,138 @@ rota('GET', '/admin/rede', exigeAdmin(({ res, usuario, url }) => {
 rota('GET', '/admin/registro', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Registro', PD.adminRegistro({
   linhas: db.prepare('SELECT * FROM registro_admin ORDER BY id DESC LIMIT 500').all(),
 }), usuario)));
+
+// ======================= ANÚNCIOS (banner) =======================
+const anunciosAtivos = () => db.prepare(`SELECT * FROM anuncios WHERE ativo = 1
+  AND (inicio IS NULL OR inicio = '' OR inicio <= date('now', '-3 hours'))
+  AND (fim IS NULL OR fim = '' OR fim >= date('now', '-3 hours')) ORDER BY id DESC LIMIT 8`).all();
+function anunciosParaExibir() {
+  const lista = anunciosAtivos();
+  if (lista.length) db.prepare(`UPDATE anuncios SET impressoes = impressoes + 1 WHERE id IN (${lista.map(() => '?').join(',')})`).run(...lista.map((a) => a.id));
+  return lista;
+}
+const contatoAnuncie = () => process.env.CONTATO_ANUNCIE || 'https://wa.me/5547997400955?text=Quero%20anunciar%20na%20Soft%20Consultas';
+
+rota('GET', '/anuncio-img/:id', async ({ res, params }) => {
+  const a = db.prepare('SELECT imagem FROM anuncios WHERE id = ?').get(Number(params.id));
+  if (!a) { res.writeHead(404); return res.end(); }
+  try {
+    const dados = await readFile(path.join(pastaAnuncios, a.imagem));
+    const ext = a.imagem.split('.').pop();
+    res.writeHead(200, { 'Content-Type': ext === 'jpg' ? 'image/jpeg' : `image/${ext}`, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
+    res.end(dados);
+  } catch { res.writeHead(404); res.end(); }
+});
+
+rota('GET', '/anuncio/:id', ({ res, params }) => {
+  const a = db.prepare('SELECT id, link FROM anuncios WHERE id = ? AND ativo = 1').get(Number(params.id));
+  if (!a || !/^https?:\/\//i.test(a.link)) return redirecionar(res, '/');
+  db.prepare('UPDATE anuncios SET cliques = cliques + 1 WHERE id = ?').run(a.id);
+  res.writeHead(302, { Location: a.link, 'Cache-Control': 'no-store', 'Referrer-Policy': 'origin' });
+  res.end();
+});
+
+rota('GET', '/admin/anuncios', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Anúncios', PD.adminAnuncios({
+  anuncios: db.prepare('SELECT * FROM anuncios ORDER BY id DESC').all(),
+  ok: url.searchParams.get('ok') ? 'Anúncio salvo.' : '', erro: url.searchParams.get('erro') || '',
+}), usuario)));
+
+rota('POST', '/admin/anuncios/criar', exigeAdmin(async ({ req, res, usuario }) => {
+  const erro = (m) => redirecionar(res, `/admin/anuncios?erro=${encodeURIComponent(m)}`);
+  let form;
+  try { form = await corpoMultipart(req); } catch (e) { return erro(e.message === 'arquivo grande demais' ? 'Imagem grande demais (máximo 3 MB).' : 'Não foi possível ler o formulário.'); }
+  const { campos, arquivos } = form;
+  const anunciante = String(campos.anunciante || '').trim().slice(0, 120);
+  const link = String(campos.link || '').trim().slice(0, 500);
+  const img = arquivos.imagem;
+  if (!anunciante) return erro('Informe o nome do anunciante.');
+  if (link && !/^https?:\/\/[^\s]+$/i.test(link)) return erro('O link precisa começar com http:// ou https://');
+  if (!img) return erro('Envie a imagem do banner.');
+  const ext = tipoImagem(img.dados);
+  if (!ext) return erro('A imagem precisa ser PNG, JPG ou WEBP.');
+  const arquivo = `anuncio-${Date.now()}.${ext}`;
+  await writeFile(path.join(pastaAnuncios, arquivo), img.dados);
+  const dataOk = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d : null);
+  const valor = centavos(campos.valor || '0');
+  db.prepare('INSERT INTO anuncios (anunciante, titulo, link, imagem, inicio, fim, valor_centavos) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(anunciante, String(campos.titulo || '').trim().slice(0, 160), link, arquivo, dataOk(campos.inicio), dataOk(campos.fim), Number.isFinite(valor) ? valor : 0);
+  registrar(usuario, 'Criou anúncio', `${anunciante} · ${link || 'sem link'} · ${campos.inicio || 'já'} até ${campos.fim || 'sem fim'}`);
+  redirecionar(res, '/admin/anuncios?ok=1');
+}));
+
+rota('POST', '/admin/anuncios/acao', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const a = db.prepare('SELECT * FROM anuncios WHERE id = ?').get(Number(f.id));
+  if (!a) return redirecionar(res, '/admin/anuncios');
+  if (f.acao === 'alternar') {
+    db.prepare('UPDATE anuncios SET ativo = 1 - ativo WHERE id = ?').run(a.id);
+    registrar(usuario, a.ativo ? 'Pausou anúncio' : 'Ativou anúncio', a.anunciante);
+  } else if (f.acao === 'excluir') {
+    db.prepare('DELETE FROM anuncios WHERE id = ?').run(a.id);
+    await unlink(path.join(pastaAnuncios, a.imagem)).catch(() => {});
+    registrar(usuario, 'Excluiu anúncio', `${a.anunciante} (${a.impressoes} exibições, ${a.cliques} cliques)`);
+  }
+  redirecionar(res, '/admin/anuncios?ok=1');
+}));
+
+// ======================= ÁREA LIMPA NOME =======================
+rota('GET', '/limpa-nome', exigeLogin(async ({ res, usuario }) => {
+  const todos = produtosPara(usuario);
+  pagina(res, 'Área Limpa Nome', PA.paginaLimpaNome({
+    economicas: todos.filter((p) => p.destaque_limpa_nome === 'economica').sort((a, b) => a.preco_centavos - b.preco_centavos),
+    completas: todos.filter((p) => p.destaque_limpa_nome === 'completa').sort((a, b) => a.preco_centavos - b.preco_centavos),
+    saldo: await saldoExibido(usuario), admin: !!usuario.admin,
+  }), usuario);
+}));
+
+// ======================= PAINEL FINANCEIRO (ADMIN) =======================
+function periodoDe(url) {
+  const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  const d30 = new Date(Date.now() - 3 * 3600000 - 29 * 86400000).toISOString().slice(0, 10);
+  let ini = url.searchParams.get('inicio'), fim = url.searchParams.get('fim');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ini || '')) ini = d30;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fim || '')) fim = hoje;
+  if (ini > fim) [ini, fim] = [fim, ini];
+  return { ini, fim };
+}
+rota('GET', '/admin/financeiro', exigeAdmin(async ({ res, usuario, url }) => {
+  const { ini, fim } = periodoDe(url);
+  // datas gravadas em UTC; o filtro usa o dia de Brasília
+  const filtro = `date(c.criado_em, '-3 hours') BETWEEN ? AND ?`;
+  const base = `FROM consultas c JOIN usuarios u ON u.id = c.usuario_id WHERE c.status = 'concluida' AND u.admin = 0 AND ${filtro}`;
+  const q = (sql) => db.prepare(sql).all(ini, fim);
+  const g = (sql) => db.prepare(sql).get(ini, fim);
+  const totais = g(`SELECT COUNT(*) n, COALESCE(SUM(c.preco_centavos),0) bruto, COALESCE(SUM(c.comissao_centavos),0) comissoes,
+    COALESCE(SUM(c.custo_centavos),0) custo, COUNT(DISTINCT c.usuario_id) clientes ${base}`);
+  const recargas = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(valor_centavos),0) total, COALESCE(SUM(bonus_centavos),0) bonus FROM recargas
+    WHERE status = 'paga' AND date(pago_em, '-3 hours') BETWEEN ? AND ?`).get(ini, fim);
+  const novos = db.prepare(`SELECT COUNT(*) n FROM usuarios WHERE date(criado_em, '-3 hours') BETWEEN ? AND ?`).get(ini, fim).n;
+  const diario = q(`SELECT date(c.criado_em, '-3 hours') dia, SUM(c.preco_centavos - c.comissao_centavos) receita, SUM(c.custo_centavos) custo, COUNT(*) n ${base} GROUP BY dia ORDER BY dia`);
+  const porProduto = q(`SELECT c.produto, COUNT(*) n, SUM(c.preco_centavos - c.comissao_centavos) receita, SUM(c.custo_centavos) custo ${base} GROUP BY c.produto ORDER BY (SUM(c.preco_centavos - c.comissao_centavos) - SUM(c.custo_centavos)) DESC`);
+  const topGasto = q(`SELECT u.nome, u.email, COUNT(*) n, SUM(c.preco_centavos) gasto, SUM(c.preco_centavos - c.comissao_centavos - c.custo_centavos) lucro ${base} GROUP BY u.id ORDER BY gasto DESC LIMIT 10`);
+  const topComissao = db.prepare(`SELECT u.nome, u.email, COUNT(*) n, SUM(k.valor_centavos) ganho FROM comissoes k JOIN usuarios u ON u.id = k.usuario_id
+    WHERE k.tipo = 'comissao' AND date(k.criado_em, '-3 hours') BETWEEN ? AND ? GROUP BY u.id ORDER BY ganho DESC LIMIT 10`).all(ini, fim);
+  const extrato = db.prepare(`
+    SELECT * FROM (
+      SELECT r.pago_em AS quando, 'Recarga' AS tipo, u.nome AS cliente, 'Pix' AS item, r.valor_centavos AS valor, NULL AS lucro FROM recargas r JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.status = 'paga' AND date(r.pago_em, '-3 hours') BETWEEN ? AND ?
+      UNION ALL
+      SELECT c.criado_em, CASE WHEN u.admin = 1 THEN 'Consulta interna' ELSE 'Consulta' END, u.nome, c.produto, c.preco_centavos,
+        CASE WHEN u.admin = 1 THEN NULL ELSE c.preco_centavos - c.comissao_centavos - c.custo_centavos END
+        FROM consultas c JOIN usuarios u ON u.id = c.usuario_id WHERE c.status = 'concluida' AND date(c.criado_em, '-3 hours') BETWEEN ? AND ?
+      UNION ALL
+      SELECT k.criado_em, 'Comissão', u.nome, k.descricao, k.valor_centavos, NULL FROM comissoes k JOIN usuarios u ON u.id = k.usuario_id
+        WHERE k.tipo = 'comissao' AND date(k.criado_em, '-3 hours') BETWEEN ? AND ?
+      UNION ALL
+      SELECT s.resolvido_em, 'Saque pago', u.nome, s.chave_pix, -s.valor_centavos, NULL FROM saques s JOIN usuarios u ON u.id = s.usuario_id
+        WHERE s.status = 'pago' AND date(s.resolvido_em, '-3 hours') BETWEEN ? AND ?
+    ) ORDER BY quando DESC LIMIT 300`).all(ini, fim, ini, fim, ini, fim, ini, fim);
+  pagina(res, 'Admin · Financeiro', PD.adminFinanceiro({
+    ini, fim, totais, recargas, novos, diario, porProduto, topGasto, topComissao, extrato,
+    saldoApiFull: await saldoApiFull(), clientesTotal: db.prepare('SELECT COUNT(*) n FROM usuarios WHERE admin = 0').get().n,
+    saldoCarteiras: db.prepare('SELECT COALESCE(SUM(valor_centavos),0) s FROM transacoes').get().s,
+  }), usuario);
+}));
 
 // ======================= BACKUPS =======================
 // Backup diário automático

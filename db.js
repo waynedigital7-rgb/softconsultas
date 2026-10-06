@@ -30,6 +30,8 @@ armazenamento.erro = erroDisco;
 armazenamento.persistente = !erroDisco && (process.env.RENDER ? armazenamento.definido && armazenamento.montado : true);
 export const pastaPdfs = path.join(pasta, 'pdfs');
 mkdirSync(pastaPdfs, { recursive: true });
+export const pastaAnuncios = path.join(pasta, 'anuncios');
+mkdirSync(pastaAnuncios, { recursive: true });
 export const db = new DatabaseSync(path.join(pasta, 'softconsultas.db'));
 
 // ---------- Backups (cópia completa do banco, sem parar o sistema) ----------
@@ -180,6 +182,29 @@ if (!colunas('produtos').includes('sensivel')) {
     OR lower(nome) GLOB '*parente*' OR lower(nome) GLOB '*grafo*' OR lower(nome) GLOB '*contato*' OR lower(nome) GLOB '*localiza*' OR lower(nome) GLOB '*veículos por cpf*'
     OR lower(nome) GLOB '*radar*' OR lower(nome) GLOB '*rastreamento*'`);
 }
+// Área Limpa Nome: destaque 'economica' ou 'completa'
+if (!colunas('produtos').includes('destaque_limpa_nome')) {
+  db.exec("ALTER TABLE produtos ADD COLUMN destaque_limpa_nome TEXT NOT NULL DEFAULT ''");
+  db.exec("UPDATE produtos SET destaque_limpa_nome = 'economica' WHERE endpoint IN ('e-boavista', 'ap-boavista', 'r-cadastrais-score-dividas', 'cadin', 'protesto-nacional', 'cp-cadastrais-score-dividas')");
+  db.exec("UPDATE produtos SET destaque_limpa_nome = 'completa' WHERE endpoint IN ('serasa-premium', 'serasa-premium-v2', 'spc-brasil', 'scr-premium', 'bacen', 'pf-credito-completo', 'credito-positivo')");
+}
+// Anúncios (banner da página inicial)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS anuncios (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    anunciante TEXT NOT NULL,
+    titulo TEXT NOT NULL DEFAULT '',
+    link TEXT NOT NULL DEFAULT '',
+    imagem TEXT NOT NULL,
+    ativo INTEGER NOT NULL DEFAULT 1,
+    inicio TEXT,
+    fim TEXT,
+    impressoes INTEGER NOT NULL DEFAULT 0,
+    cliques INTEGER NOT NULL DEFAULT 0,
+    valor_centavos INTEGER NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
 if (!colunas('usuarios').includes('liberado_sensivel')) db.exec('ALTER TABLE usuarios ADD COLUMN liberado_sensivel INTEGER NOT NULL DEFAULT 0');
 // Programa de indicação
 if (!colunas('usuarios').includes('codigo_indicacao')) db.exec('ALTER TABLE usuarios ADD COLUMN codigo_indicacao TEXT');
