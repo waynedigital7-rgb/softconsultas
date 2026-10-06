@@ -28,15 +28,44 @@ const ICONES = {
 export const slugCategoria = (c) => String(c).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 const icone = (cat, tam = 40) => `<svg width="${tam}" height="${tam}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONES[slugCategoria(cat)] || '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/>'}</svg>`;
 
-const cartaoProduto = (p) => `
-  <a class="cartao" href="/consultas/${esc(p.slug)}" style="text-decoration:none;color:inherit;display:flex;flex-direction:column;gap:10px">
-    <h3 style="margin:0">${esc(p.nome)}</h3>
-    <p class="muted" style="margin:0;flex:1">${esc(p.descricao)}</p>
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <strong style="font-family:Montserrat;font-size:1.25rem">${reais(p.preco_centavos)}</strong>
-      <span class="muted" style="font-size:.85rem">${ROTULO_DOC[p.documento]}</span>
-    </div>
+// Ícone de cada consulta, pelo assunto do nome/descrição
+const ICONES_ITEM = [
+  [/placa|ve[ií]cul|renavam|crlv|leil[aã]o|roubo|furto|renajud|renainf|recall|bin |gravame|fipe|proprietário|atpv|rntrc|vip car/i, 'veiculos'],
+  [/cnh|habilita/i, '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8" cy="12" r="2.5"/><path d="M13 10h5M13 14h3"/>'],
+  [/certid|nada consta|antecedente/i, 'certidoes'],
+  [/score|rating|cr[eé]dito|serasa|spc|boa ?vista|quod|scr|bacen|negativ|d[ií]vida|cadin|pend[eê]ncia/i, '<path d="M4 14a8 8 0 0 1 16 0"/><path d="M12 14l4-4"/><circle cx="12" cy="14" r="1.2"/>'],
+  [/^[^]*?(protesto nacional|cenprot|cart[oó]rio)/i, '<path d="M7 21h10M12 17v4M5 9l7-6 7 6M7 9v4a5 5 0 0 0 10 0V9"/>'],
+  [/telefone|celular|whats/i, '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>'],
+  [/e-?mail/i, '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/>'],
+  [/endere[cç]o|localiza|cep|geogr|im[oó]ve/i, '<path d="M12 22s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'],
+  [/empresa|cnpj|societ|s[oó]cio|sintegra|suframa|quadro|corretor/i, 'empresas'],
+  [/processo|judicial|mandado|pris[aã]o|a[cç][oõ]es/i, 'juridico'],
+  [/compliance|pld|pep|san[cç]/i, 'compliance'],
+  [/gasto|[ií]ndice|indicador|mercado|concorr|prospec|sociodem/i, 'analise-de-mercado'],
+  [/renda|financeir|restitui|benef[ií]cio|inss|assist[eê]ncia|servidor|patrim/i, '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>'],
+  [/[oó]bito|nome social|parente|pessoas relacionadas|grafo/i, '<circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.5"/><path d="M3 20c.8-3 3.2-5 6-5s5.2 2 6 5M14.5 19c.5-2 1.8-3.3 3.5-3.3s3 1.3 3.5 3.3"/>'],
+];
+function iconeItem(p) {
+  const texto = `${p.nome} ${p.descricao}`;
+  for (const [re, ic] of ICONES_ITEM) {
+    if (re.test(texto)) {
+      const corpo = ic.startsWith('<') ? ic : ICONES[ic];
+      return `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${corpo}</svg>`;
+    }
+  }
+  return icone(p.categoria, 22);
+}
+// Descrição curta: corta no primeiro ponto/barra para caber numa linha
+const resumo = (d) => String(d || '').split(/(?<=[.!?])\s|\s\|\s/)[0].replace(/\s+/g, ' ').trim();
+
+const itemProduto = (p) => `
+  <a class="item" href="/consultas/${esc(p.slug)}" title="${esc(p.descricao)}">
+    <span class="ic">${iconeItem(p)}</span>
+    <span class="tx"><strong>${esc(p.nome)}</strong>${resumo(p.descricao) ? `<span>${esc(resumo(p.descricao))}</span>` : ''}</span>
+    <span class="pr"><strong>${reais(p.preco_centavos)}</strong><small>${ROTULO_DOC[p.documento]}</small></span>
+    <span class="btn bt">Consultar</span>
   </a>`;
+const listaProdutos = (lista) => `<div class="lista">${lista.map(itemProduto).join('')}</div>`;
 
 const cabecalho = (titulo, sub, saldo, admin) => `
 <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px">
@@ -56,7 +85,7 @@ export function paginaCategorias({ produtos, saldo, busca = '' }) {
     const achados = produtos.filter((p) => `${p.nome} ${p.descricao} ${p.categoria}`.toLowerCase().includes(t));
     return cabecalho('Consultas', `Resultados para "${esc(busca)}"`, saldo, produtos[0]?.precoCusto) + form
       + `<p><a href="/consultas">← Ver todas as categorias</a></p>`
-      + (achados.length ? `<div class="grade">${achados.map(cartaoProduto).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta encontrada.</div>');
+      +  (achados.length ? listaProdutos(achados) : '<div class="cartao vazio">Nenhuma consulta encontrada.</div>');
   }
   const grupos = {};
   for (const p of produtos) (grupos[p.categoria] ||= []).push(p);
@@ -86,7 +115,7 @@ export function paginaCategoria({ categoria, produtos, saldo, busca = '' }) {
     + `<form method="get" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px">
       <input type="text" name="busca" value="${esc(busca)}" placeholder="Buscar em ${esc(categoria)}..." aria-label="Buscar nesta categoria" style="flex:1 1 220px">
       <button class="btn" type="submit">Buscar</button></form>`
-    + (lista.length ? `<div class="grade">${lista.map(cartaoProduto).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta encontrada nesta categoria.</div>');
+ + (lista.length ? listaProdutos(lista) : '<div class="cartao vazio">Nenhuma consulta encontrada nesta categoria.</div>');
 }
 
 export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false }) {

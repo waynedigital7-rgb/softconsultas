@@ -1,4 +1,10 @@
 // Páginas HTML (renderizadas no servidor)
+// Widget "Não sou um robô" (Cloudflare Turnstile)
+let chaveRobo = '';
+export const configurarRobo = (k) => { chaveRobo = k; };
+const robo = () => (chaveRobo ? `<div class="cf-turnstile" data-sitekey="${chaveRobo}" data-language="pt-br" style="margin:4px 0 16px"></div>` : '');
+const scriptRobo = () => (chaveRobo ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : '');
+
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const dt = (v) => {
   if (!v) return '-';
@@ -51,6 +57,16 @@ input:focus{outline:3px solid #E4CCF4;border-color:var(--roxo)}
 .rolar{overflow-x:auto}
 .vazio{text-align:center;padding:36px 12px;color:var(--cinza)}
 footer{color:var(--cinza);font-size:.85rem;text-align:center;padding:24px 20px;border-top:1px solid var(--borda);background:#fff}
+.lista{display:flex;flex-direction:column;background:#fff;border:1px solid var(--borda);border-radius:20px;overflow:hidden}
+.item{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid var(--borda);text-decoration:none;color:inherit}
+.item:last-child{border-bottom:0}.item:hover{background:var(--fundo)}
+.item .ic{flex:none;width:44px;height:44px;border-radius:12px;background:var(--fundo);color:var(--roxo);display:flex;align-items:center;justify-content:center}
+.item .tx{flex:1;min-width:0}.item .tx strong{display:block;font-size:1rem}
+.item .tx span{display:block;color:var(--cinza);font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .pr{flex:none;text-align:right}.item .pr strong{display:block;font-family:Montserrat,sans-serif;font-size:1.05rem}
+.item .pr small{color:var(--cinza);font-size:.78rem}
+.item .bt{flex:none;min-height:40px;padding:8px 18px}
+@media (max-width:560px){.item{flex-wrap:wrap}.item .tx{flex-basis:calc(100% - 60px)}.item .pr{text-align:left;margin-left:58px}.item .bt{margin-left:auto}}
 .hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:40px;align-items:center;padding:24px 0 40px}
 .hero h1{font-size:clamp(2rem,4.5vw,3.2rem);font-weight:800;letter-spacing:-.02em}
 .hero h1 em{font-style:normal;color:var(--roxo)}
@@ -67,7 +83,7 @@ export function layout({ titulo, corpo, usuario }) {
 <link rel="icon" href="/icone.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>${CSS}</style><script src="/app.js" defer></script></head><body>
+<style>${CSS}</style><script src="/app.js" defer></script>${scriptRobo()}</head><body>
 <header class="topo"><div class="in">
 <a class="marca" href="${usuario ? '/painel' : '/'}"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></a>
 <nav class="nav">${nav}</nav></div></header>
@@ -108,6 +124,7 @@ export const paginaCadastro = ({ erro, v = {} }) => `
     <div class="campo"><label for="telefone">WhatsApp</label><input id="telefone" name="telefone" type="tel" autocomplete="tel" placeholder="(00) 00000-0000" required value="${esc(v.telefone)}"></div>
     <div class="campo"><label for="senha">Senha</label><input id="senha" name="senha" type="password" autocomplete="new-password" minlength="8" required><small class="muted">Mínimo de 8 caracteres.</small></div>
     <label class="check"><input type="checkbox" name="aceite" value="1" required><span>Li e aceito os <a href="/termos" target="_blank">Termos de uso</a> e a <a href="/privacidade" target="_blank">Política de privacidade</a>.</span></label>
+    ${robo()}
     <button class="btn largo" type="submit">Criar minha conta</button>
   </form>
   <p class="muted" style="text-align:center;margin:18px 0 0">Já tem conta? <a href="/entrar">Entrar</a></p>
@@ -120,6 +137,7 @@ export const paginaEntrar = ({ erro, ok, email = '' }) => `
   <form method="post" action="/entrar">
     <div class="campo"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="email" required value="${esc(email)}"></div>
     <div class="campo"><label for="senha">Senha</label><input id="senha" name="senha" type="password" autocomplete="current-password" required></div>
+    ${robo()}
     <button class="btn largo" type="submit">Entrar</button>
   </form>
   <p style="text-align:center;margin:18px 0 0"><a href="/esqueci-senha">Esqueci minha senha</a></p>
@@ -133,6 +151,7 @@ export const paginaEsqueci = ({ erro, ok }) => `
   ${aviso(erro, ok)}
   <form method="post" action="/esqueci-senha">
     <div class="campo"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+    ${robo()}
     <button class="btn largo" type="submit">Enviar link</button>
   </form>
   <p style="text-align:center;margin:18px 0 0"><a href="/entrar">Voltar para o login</a></p>

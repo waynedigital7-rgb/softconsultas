@@ -55,11 +55,34 @@ const centavos = (v) => {
   return Number.isFinite(n) ? Math.round(n * 100) : NaN;
 };
 
+// "Não sou um robô" (Cloudflare Turnstile): ativo quando as duas variáveis existem
+const TURNSTILE = { site: process.env.TURNSTILE_SITE_KEY || '', segredo: process.env.TURNSTILE_SECRET_KEY || '' };
+TURNSTILE.ativo = !!(TURNSTILE.site && TURNSTILE.segredo);
+async function passouNoRobo(req, f) {
+  if (!TURNSTILE.ativo) return true;
+  const token = String(f['cf-turnstile-response'] || '');
+  if (!token) return false;
+  try {
+    const r = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret: TURNSTILE.segredo, response: token, remoteip: ipDe(req) }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const j = await r.json();
+    return j.success === true;
+  } catch (e) { console.warn('turnstile:', e.message); return false; }
+}
+P.configurarRobo(TURNSTILE.ativo ? TURNSTILE.site : '');
+
+const CF = TURNSTILE.ativo ? ' https://challenges.cloudflare.com' : '';
 const CABECALHOS = {
-  'Content-Security-Policy': "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'",
+  'Content-Security-Policy': `default-src 'self'; script-src 'self'${CF}; frame-src${CF || " 'none'"}; connect-src 'self'${CF}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'`,
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
 function html(res, conteudo, status = 200, extra = {}) {
   res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...CABECALHOS, ...extra });
@@ -71,7 +94,7 @@ function redirecionar(res, para, extra = {}) {
 }
 const AVISO_DISCO = `<div class="aviso erro" role="alert" style="font-size:1rem"><strong>ATENÇÃO: os dados NÃO estão sendo salvos no disco permanente.</strong>
   Cadastros, saldos, consultas e preços serão apagados na próxima atualização do site. No Render, confira em <strong>Disks</strong> se existe um disco com Mount Path <code>/var/data</code>
-  e em <strong>Environment</strong> se <code>DATA_DIR</code> = <code>/var/data</code>. Pasta atual: <code>${P.esc(armazenamento.pasta)}</code></div>`;
+  e em <strong>Environment</strong> se <code>DATA_DIR</code> = <code>/var/data</code>. Pasta atual: <code>${P.esc(armazenamento.pasta)}</code>${armazenamento.erro ? `<br>${P.esc(armazenamento.erro)}` : ''}</div>`;
 const pagina = (res, titulo, corpo, usuario, status, extra) =>
   html(res, P.layout({ titulo, corpo: (usuario?.admin && !armazenamento.persistente ? AVISO_DISCO : '') + corpo, usuario }), status, extra);
 
@@ -131,6 +154,7 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   };
   const erro = (m) => pagina(res, 'Criar conta', P.paginaCadastro({ erro: m, v }), null, 400);
   if (!A.limitar(`cad:${ipDe(req)}`, 10, 60)) return erro('Muitas tentativas. Aguarde alguns minutos e tente de novo.');
+  if (!(await passouNoRobo(req, f))) return erro('Confirme que você não é um robô.');
   if (v.nome.length < 3) return erro('Informe seu nome completo ou a razão social.');
   if (!A.emailValido(v.email)) return erro('Informe um e-mail válido.');
   if (!A.documentoValido(v.documento)) return erro('CPF ou CNPJ inválido.');
@@ -160,6 +184,7 @@ rota('POST', '/entrar', async ({ req, res }) => {
   if (!A.limitar(`login-ip:${ipDe(req)}`, 20, 15) || !A.limitar(`login:${email}`, 8, 15)) {
     return erro('Muitas tentativas. Aguarde 15 minutos e tente de novo.', 429);
   }
+  if (!(await passouNoRobo(req, f))) return erro('Confirme que você não é um robô.', 400);
   const u = db.prepare('SELECT id, senha_hash, ativo FROM usuarios WHERE email = ?').get(email);
   if (!u || !A.conferirSenha(String(f.senha || ''), u.senha_hash)) return erro('E-mail ou senha incorretos.', 401);
   if (!u.ativo) return erro('Esta conta está desativada. Fale com o suporte.', 403);
@@ -181,6 +206,7 @@ rota('POST', '/esqueci-senha', async ({ req, res }) => {
   if (!A.limitar(`esq-ip:${ipDe(req)}`, 10, 60) || !A.limitar(`esq:${email}`, 3, 60)) {
     return pagina(res, 'Esqueci minha senha', P.paginaEsqueci({ ok }), null);
   }
+  if (!(await passouNoRobo(req, f))) return pagina(res, 'Esqueci minha senha', P.paginaEsqueci({ erro: 'Confirme que você não é um robô.' }), null, 400);
   const u = db.prepare('SELECT id, nome FROM usuarios WHERE email = ? AND ativo = 1').get(email);
   if (u) {
     const t = A.criarTokenRedefinicao(u.id);
