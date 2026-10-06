@@ -3,9 +3,10 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, saldoCentavos, lerConfig, gravarConfig, precoDe, recalcularPrecos } from './db.js';
+import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento } from './db.js';
+import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
-import { consultarApiFull, analisar, achatar } from './apifull.js';
+import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo } from './apifull.js';
 import { pdfGenerico } from './pdf.js';
 import * as PA from './paginas-app.js';
 import * as PD from './paginas-admin.js';
@@ -68,7 +69,11 @@ function redirecionar(res, para, extra = {}) {
   res.writeHead(303, { Location: para, 'Cache-Control': 'no-store', ...extra });
   res.end();
 }
-const pagina = (res, titulo, corpo, usuario, status, extra) => html(res, P.layout({ titulo, corpo, usuario }), status, extra);
+const AVISO_DISCO = `<div class="aviso erro" role="alert" style="font-size:1rem"><strong>ATENÇÃO: os dados NÃO estão sendo salvos no disco permanente.</strong>
+  Cadastros, saldos, consultas e preços serão apagados na próxima atualização do site. No Render, confira em <strong>Disks</strong> se existe um disco com Mount Path <code>/var/data</code>
+  e em <strong>Environment</strong> se <code>DATA_DIR</code> = <code>/var/data</code>. Pasta atual: <code>${P.esc(armazenamento.pasta)}</code></div>`;
+const pagina = (res, titulo, corpo, usuario, status, extra) =>
+  html(res, P.layout({ titulo, corpo: (usuario?.admin && !armazenamento.persistente ? AVISO_DISCO : '') + corpo, usuario }), status, extra);
 
 // Bloqueia envios de formulário vindos de outros sites
 function origemValida(req) {
@@ -99,6 +104,19 @@ function acharRota(metodo, caminho) {
 const exigeLogin = (fn) => async (ctx) => (ctx.usuario ? fn(ctx) : redirecionar(ctx.res, '/entrar'));
 const exigeAdmin = (fn) => async (ctx) => (ctx.usuario?.admin ? fn(ctx) : redirecionar(ctx.res, ctx.usuario ? '/painel' : '/entrar'));
 
+function codigoUnico() {
+  let c;
+  do { c = A.novoCodigoIndicacao(); } while (db.prepare('SELECT 1 FROM usuarios WHERE codigo_indicacao = ?').get(c));
+  return c;
+}
+function garantirCodigo(usuario) {
+  if (usuario.codigo_indicacao) return usuario.codigo_indicacao;
+  const c = codigoUnico();
+  db.prepare('UPDATE usuarios SET codigo_indicacao = ? WHERE id = ?').run(c, usuario.id);
+  usuario.codigo_indicacao = c;
+  return c;
+}
+
 rota('GET', '/', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel') : pagina(res, 'Consultas para o seu negócio', P.paginaInicial(), null)));
 
 // Cadastro
@@ -122,12 +140,14 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   if (db.prepare('SELECT 1 FROM usuarios WHERE email = ?').get(v.email)) return erro('Já existe uma conta com esse e-mail. Faça login ou recupere a senha.');
 
   const admin = process.env.ADMIN_EMAIL && process.env.ADMIN_EMAIL.toLowerCase() === v.email ? 1 : 0;
-  const r = db.prepare(`INSERT INTO usuarios (nome, email, documento, telefone, senha_hash, admin, aceite_termos)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`).run(v.nome, v.email, v.documento, v.telefone, A.gerarHashSenha(f.senha), admin);
+  const ref = String(cookies(req).sc_ref || '').toUpperCase();
+  const indicador = ref ? db.prepare('SELECT id FROM usuarios WHERE codigo_indicacao = ? AND ativo = 1').get(ref) : null;
+  const r = db.prepare(`INSERT INTO usuarios (nome, email, documento, telefone, senha_hash, admin, aceite_termos, indicado_por, codigo_indicacao)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`).run(v.nome, v.email, v.documento, v.telefone, A.gerarHashSenha(f.senha), admin, indicador?.id ?? null, codigoUnico());
   const token = A.criarSessao(Number(r.lastInsertRowid));
   enviarEmail({ para: v.email, assunto: 'Bem-vindo à Soft Consultas', html: emailBoasVindas(v.nome, `${urlBase(req)}/painel`) })
     .catch((e) => console.error('e-mail boas-vindas:', e.message));
-  redirecionar(res, '/painel', { 'Set-Cookie': A.cookieSessao(token, ehHttps(req)) });
+  redirecionar(res, '/painel', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0'] });
 });
 
 // Login
@@ -187,10 +207,10 @@ rota('POST', '/redefinir-senha', async ({ req, res }) => {
 });
 
 // Área do cliente
-rota('GET', '/painel', exigeLogin(({ res, usuario }) => {
+rota('GET', '/painel', exigeLogin(async ({ res, usuario }) => {
   const transacoes = db.prepare('SELECT * FROM transacoes WHERE usuario_id = ? ORDER BY id DESC LIMIT 20').all(usuario.id);
   const consultas = db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 10').all(usuario.id);
-  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: saldoCentavos(usuario.id), transacoes, consultas }), usuario);
+  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas }), usuario);
 }));
 
 rota('GET', '/conta', exigeLogin(({ res, usuario, url }) => pagina(res, 'Minha conta',
@@ -297,8 +317,43 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
   try { creditarRecarga(rid); } catch (e) { console.error('crédito recarga:', e.message); }
 });
 
+// Admin enxerga (e usa) o saldo real da APIFull; clientes, a carteira interna
+const saldoExibido = async (usuario) => (usuario.admin ? await saldoApiFull() : saldoCentavos(usuario.id));
+
+// ======================= RETENÇÃO DO HISTÓRICO =======================
+const diasHistorico = () => Math.max(1, Number(lerConfig('dias_historico') || 10));
+const expirou = (c) => c.status === 'concluida' && !c.resultado;
+async function limparExpiradas() {
+  const dias = diasHistorico();
+  const lista = db.prepare(`SELECT id FROM consultas WHERE status = 'concluida' AND resultado IS NOT NULL AND criado_em < datetime('now', ?)`).all(`-${dias} days`);
+  for (const { id } of lista) {
+    db.prepare('UPDATE consultas SET resultado = NULL, pdf_origem = NULL WHERE id = ?').run(id);
+    await unlink(path.join(pastaPdfs, `${id}.pdf`)).catch(() => {});
+  }
+  if (lista.length) console.log(`Histórico: ${lista.length} consulta(s) expirada(s) e removida(s).`);
+}
+setTimeout(() => limparExpiradas().catch((e) => console.error('limpeza:', e.message)), 10000).unref();
+setInterval(() => limparExpiradas().catch((e) => console.error('limpeza:', e.message)), 60 * 60 * 1000).unref();
+
 // ======================= CONSULTAS =======================
 const produtosAtivos = () => db.prepare("SELECT * FROM produtos WHERE ativo = 1 AND endpoint <> '' ORDER BY ordem, nome").all();
+// Administrador consulta a preço de custo (sem margem)
+// Indicado paga o preço normal + a comissão escolhida pelo indicador (a nossa margem não muda)
+function comissaoDoIndicador(usuario) {
+  if (!usuario?.indicado_por || usuario.admin) return null;
+  const ind = db.prepare('SELECT id, comissao_percentual FROM usuarios WHERE id = ? AND ativo = 1').get(usuario.indicado_por);
+  if (!ind || ind.id === usuario.id) return null;
+  const max = Number(lerConfig('comissao_maxima') ?? 100);
+  return { id: ind.id, pct: Math.max(0, Math.min(max, Number(ind.comissao_percentual) || 0)) };
+}
+const produtosPara = (usuario) => {
+  const ind = comissaoDoIndicador(usuario);
+  return produtosAtivos().map((p) => {
+    if (usuario?.admin) return { ...p, preco_centavos: p.custo_centavos, precoCusto: true, comissao_centavos: 0, indicador_id: null };
+    const com = ind ? Math.round((p.preco_centavos * ind.pct) / 100) : 0;
+    return { ...p, preco_base: p.preco_centavos, preco_centavos: p.preco_centavos + com, comissao_centavos: com, indicador_id: com > 0 ? ind.id : null };
+  });
+};
 const PLACA = /^[A-Z]{3}\d[A-Z0-9]\d{2}$/;
 function validarValor(tipo, bruto) {
   if (tipo === 'placa') {
@@ -313,32 +368,32 @@ function validarValor(tipo, bruto) {
   return { v };
 }
 
-rota('GET', '/consultas', exigeLogin(({ res, usuario, url }) => {
+rota('GET', '/consultas', exigeLogin(async ({ res, usuario, url }) => {
   // compatibilidade com links antigos ?categoria=
   const cat = url.searchParams.get('categoria');
   if (cat) return redirecionar(res, `/consultas/categoria/${PA.slugCategoria(cat)}`);
-  pagina(res, 'Consultas', PA.paginaCategorias({ produtos: produtosAtivos(), saldo: saldoCentavos(usuario.id), busca: url.searchParams.get('busca') || '' }), usuario);
+  pagina(res, 'Consultas', PA.paginaCategorias({ produtos: produtosPara(usuario), saldo: await saldoExibido(usuario), busca: url.searchParams.get('busca') || '' }), usuario);
 }));
 
-rota('GET', '/consultas/categoria/:cat', exigeLogin(({ res, usuario, url, params }) => {
-  const todos = produtosAtivos();
+rota('GET', '/consultas/categoria/:cat', exigeLogin(async ({ res, usuario, url, params }) => {
+  const todos = produtosPara(usuario);
   const produtos = todos.filter((p) => PA.slugCategoria(p.categoria) === params.cat);
   if (!produtos.length) return redirecionar(res, '/consultas');
-  pagina(res, produtos[0].categoria, PA.paginaCategoria({ categoria: produtos[0].categoria, produtos, saldo: saldoCentavos(usuario.id), busca: url.searchParams.get('busca') || '' }), usuario);
+  pagina(res, produtos[0].categoria, PA.paginaCategoria({ categoria: produtos[0].categoria, produtos, saldo: await saldoExibido(usuario), busca: url.searchParams.get('busca') || '' }), usuario);
 }));
 
-rota('GET', '/consultas/:slug', exigeLogin(({ res, usuario, params }) => {
-  const produto = produtosAtivos().find((p) => p.slug === params.slug);
+rota('GET', '/consultas/:slug', exigeLogin(async ({ res, usuario, params }) => {
+  const produto = produtosPara(usuario).find((p) => p.slug === params.slug);
   if (!produto) return redirecionar(res, '/consultas');
-  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: saldoCentavos(usuario.id) }), usuario);
+  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.admin }), usuario);
 }));
 
 rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }) => {
-  const produto = produtosAtivos().find((p) => p.slug === params.slug);
+  const produto = produtosPara(usuario).find((p) => p.slug === params.slug);
   if (!produto) return redirecionar(res, '/consultas');
   const f = await corpoForm(req);
   const v = { valor: f.valor, finalidade: f.finalidade };
-  const erro = (m) => pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: saldoCentavos(usuario.id), erro: m, v }), usuario, 400);
+  const erro = async (m) => pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.admin, erro: m, v }), usuario, 400);
   const val = validarValor(produto.documento, f.valor);
   if (val.erro) return erro(val.erro);
   if (!PA.FINALIDADES.includes(f.finalidade)) return erro('Selecione a finalidade da consulta.');
@@ -349,24 +404,41 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   let cid;
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (saldoCentavos(usuario.id) < produto.preco_centavos) { db.exec('ROLLBACK'); return erro('Saldo insuficiente. Faça uma recarga para continuar.'); }
-    cid = Number(db.prepare(`INSERT INTO consultas (usuario_id, produto_id, produto, parametro, finalidade, status, preco_centavos, custo_centavos)
-      VALUES (?, ?, ?, ?, ?, 'processando', ?, ?)`).run(usuario.id, produto.id, produto.nome, val.v, f.finalidade, produto.preco_centavos, produto.custo_centavos).lastInsertRowid);
-    db.prepare("INSERT INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'consulta', ?, ?, ?)")
-      .run(usuario.id, -produto.preco_centavos, `Consulta: ${produto.nome}`, `con_${cid}`);
+    if (!usuario.admin && saldoCentavos(usuario.id) < produto.preco_centavos) { db.exec('ROLLBACK'); return erro('Saldo insuficiente. Faça uma recarga para continuar.'); }
+    cid = Number(db.prepare(`INSERT INTO consultas (usuario_id, produto_id, produto, parametro, finalidade, status, preco_centavos, custo_centavos, indicador_id, comissao_centavos)
+      VALUES (?, ?, ?, ?, ?, 'processando', ?, ?, ?, ?)`).run(usuario.id, produto.id, produto.nome, val.v, f.finalidade, produto.preco_centavos, produto.custo_centavos, produto.indicador_id, produto.comissao_centavos).lastInsertRowid);
+    // Admin consulta direto no saldo da APIFull: nada é descontado da carteira interna
+    if (!usuario.admin) {
+      db.prepare("INSERT INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'consulta', ?, ?, ?)")
+        .run(usuario.id, -produto.preco_centavos, `Consulta: ${produto.nome}`, `con_${cid}`);
+    }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 
   try {
     const dados = await consultarApiFull(produto, val.v);
     const a = analisar(dados);
-    db.prepare("UPDATE consultas SET status = 'concluida', resultado = ?, pdf_origem = ? WHERE id = ?").run(JSON.stringify(dados), a.pdfOrigem, cid);
+    // Não guardamos o PDF embutido no banco (só o link); a cópia vai para o disco
+    const origemBanco = a.pdfOrigem && !a.pdfOrigem.startsWith('base64:') ? a.pdfOrigem : null;
+    if (dados?.aux && a.pdfOrigem?.startsWith('base64:')) dados.aux = { type: 'pdf', data: '(salvo em arquivo)' };
+    db.prepare("UPDATE consultas SET status = 'concluida', resultado = ?, pdf_origem = ? WHERE id = ?").run(JSON.stringify(dados), origemBanco, cid);
+    // Guarda uma cópia do PDF original da fonte (o link externo pode expirar)
+    // Comissão do indicador (só em consulta concluída)
+    if (produto.indicador_id && produto.comissao_centavos > 0) {
+      db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'comissao', ?, ?, ?)")
+        .run(produto.indicador_id, produto.comissao_centavos, `Comissão: ${produto.nome}`, `com_${cid}`);
+    }
+    const bytes = await obterPdf(a.pdfOrigem);
+    if (bytes) await writeFile(path.join(pastaPdfs, `${cid}.pdf`), bytes).catch((e) => console.warn('salvar pdf:', e.message));
   } catch (e) {
     console.error('consulta falhou', cid, e.message);
-    db.prepare("UPDATE consultas SET status = 'falhou', erro = ?, custo_centavos = 0 WHERE id = ?").run(String(e.message).slice(0, 500), cid);
-    db.prepare("INSERT OR IGNORE INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno', ?, ?, ?)")
-      .run(usuario.id, produto.preco_centavos, `Estorno: ${produto.nome}`, `est_${cid}`);
+    db.prepare("UPDATE consultas SET status = 'falhou', erro = ?, custo_centavos = 0, comissao_centavos = 0 WHERE id = ?").run(String(e.message).slice(0, 500), cid);
+    if (!usuario.admin) {
+      db.prepare("INSERT OR IGNORE INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno', ?, ?, ?)")
+        .run(usuario.id, produto.preco_centavos, `Estorno: ${produto.nome}`, `est_${cid}`);
+    }
   }
+  limparCacheSaldo();
   redirecionar(res, `/consulta/${cid}`);
 }));
 
@@ -377,6 +449,7 @@ const consultaDo = (id, usuario) => db.prepare(`SELECT * FROM consultas WHERE id
 rota('GET', '/consulta/:id', exigeLogin(({ res, usuario, params }) => {
   const c = consultaDo(params.id, usuario);
   if (!c) return redirecionar(res, '/historico');
+  if (expirou(c)) return pagina(res, `Consulta #${c.id}`, P.paginaEmBreve('Consulta expirada', `O resultado desta consulta ficou disponível por ${diasHistorico()} dias e já foi removido, conforme nossa política de privacidade. Se precisar, faça uma nova consulta.`), usuario);
   const dados = c.resultado ? JSON.parse(c.resultado) : {};
   const a = analisar(dados);
   pagina(res, `Consulta #${c.id}`, PA.paginaResultado({ c, a, linhas: achatar(dadosLegiveis(dados)) }), usuario);
@@ -384,14 +457,15 @@ rota('GET', '/consulta/:id', exigeLogin(({ res, usuario, params }) => {
 
 rota('GET', '/consulta/:id/pdf', exigeLogin(async ({ res, usuario, params }) => {
   const c = consultaDo(params.id, usuario);
-  if (!c || c.status !== 'concluida') return redirecionar(res, '/historico');
+  if (!c || c.status !== 'concluida' || expirou(c)) return redirecionar(res, c ? `/consulta/${c.id}` : '/historico');
   const nome = `consulta-${c.id}.pdf`;
+  const arquivo = path.join(pastaPdfs, `${c.id}.pdf`);
   let bytes = null;
-  if (c.pdf_origem) {
-    try {
-      const r = await fetch(c.pdf_origem, { signal: AbortSignal.timeout(30000) });
-      if (r.ok) bytes = Buffer.from(await r.arrayBuffer());
-    } catch (e) { console.warn('pdf origem:', e.message); }
+  // 1) cópia salva no disco  2) link da fonte (e salva a cópia)  3) PDF simples com os dados
+  try { await access(arquivo); bytes = await readFile(arquivo); } catch {}
+  if (!bytes && c.pdf_origem) {
+    bytes = await obterPdf(c.pdf_origem);
+    if (bytes) await writeFile(arquivo, bytes).catch(() => {});
   }
   if (!bytes) {
     const dados = JSON.parse(c.resultado || '{}');
@@ -408,11 +482,94 @@ rota('GET', '/historico', exigeLogin(({ res, usuario, url }) => {
   const consultas = busca
     ? db.prepare('SELECT * FROM consultas WHERE usuario_id = ? AND (produto LIKE ? OR parametro LIKE ? OR parametro LIKE ?) ORDER BY id DESC LIMIT 200').all(usuario.id, termo, termo.toUpperCase(), doc)
     : db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 200').all(usuario.id);
-  pagina(res, 'Histórico', PA.paginaHistorico({ consultas, busca }), usuario);
+  pagina(res, 'Histórico', PA.paginaHistorico({ consultas, busca, dias: diasHistorico() }), usuario);
+}));
+
+// ======================= INDICAÇÕES =======================
+rota('GET', '/indicacoes', exigeLogin(({ req, res, usuario, url }) => {
+  const codigo = garantirCodigo(usuario);
+  const indicados = db.prepare(`SELECT u.nome, u.criado_em,
+      (SELECT COUNT(*) FROM consultas c WHERE c.usuario_id = u.id AND c.status = 'concluida') AS consultas,
+      (SELECT COALESCE(SUM(valor_centavos), 0) FROM comissoes k WHERE k.usuario_id = ? AND k.tipo = 'comissao' AND k.referencia IN (SELECT 'com_' || id FROM consultas WHERE usuario_id = u.id)) AS gerado
+    FROM usuarios u WHERE u.indicado_por = ? ORDER BY u.id DESC LIMIT 200`).all(usuario.id, usuario.id);
+  const extrato = db.prepare('SELECT * FROM comissoes WHERE usuario_id = ? ORDER BY id DESC LIMIT 50').all(usuario.id);
+  const saques = db.prepare('SELECT * FROM saques WHERE usuario_id = ? ORDER BY id DESC LIMIT 20').all(usuario.id);
+  const msgs = { pct: 'Comissão atualizada.', conv: 'Comissões convertidas em créditos.', saque: 'Saque solicitado. Você recebe por Pix assim que for aprovado.' };
+  pagina(res, 'Indicações', PA.paginaIndicacoes({
+    link: `${urlBase(req)}/?ref=${codigo}`, usuario, indicados, extrato, saques,
+    saldo: saldoComissao(usuario.id), maximo: Number(lerConfig('comissao_maxima') ?? 100), minimoSaque: Number(lerConfig('saque_minimo_centavos') ?? 5000),
+    ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '',
+  }), usuario);
+}));
+
+rota('POST', '/indicacoes/comissao', exigeLogin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const max = Number(lerConfig('comissao_maxima') ?? 100);
+  const pct = Number(String(f.percentual || '').replace(',', '.'));
+  if (!Number.isFinite(pct) || pct < 0 || pct > max) return redirecionar(res, `/indicacoes?erro=${encodeURIComponent(`Escolha uma comissão entre 0% e ${max}%.`)}`);
+  db.prepare('UPDATE usuarios SET comissao_percentual = ? WHERE id = ?').run(Math.round(pct), usuario.id);
+  redirecionar(res, '/indicacoes?ok=pct');
+}));
+
+rota('POST', '/indicacoes/converter', exigeLogin(async ({ req, res, usuario }) => {
+  await corpoForm(req);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const saldo = saldoComissao(usuario.id);
+    if (saldo <= 0) { db.exec('ROLLBACK'); return redirecionar(res, `/indicacoes?erro=${encodeURIComponent('Você não tem comissões disponíveis.')}`); }
+    const ref = `conv_${usuario.id}_${Date.now()}`;
+    db.prepare("INSERT INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'conversao', ?, 'Convertido em créditos', ?)").run(usuario.id, -saldo, ref);
+    db.prepare("INSERT INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'ajuste', ?, 'Comissões convertidas em créditos', ?)").run(usuario.id, saldo, ref);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  redirecionar(res, '/indicacoes?ok=conv');
+}));
+
+rota('POST', '/indicacoes/saque', exigeLogin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const valor = centavos(f.valor);
+  const chave = String(f.chave_pix || '').trim().slice(0, 140);
+  const minimo = Number(lerConfig('saque_minimo_centavos') ?? 5000);
+  const erro = (m) => redirecionar(res, `/indicacoes?erro=${encodeURIComponent(m)}`);
+  if (!chave || chave.length < 5) return erro('Informe a sua chave Pix.');
+  if (!Number.isFinite(valor) || valor < minimo) return erro(`O saque mínimo é de ${P.reais(minimo)}.`);
+  if (!A.limitar(`saque:${usuario.id}`, 5, 60)) return erro('Muitas solicitações. Aguarde um pouco.');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (valor > saldoComissao(usuario.id)) { db.exec('ROLLBACK'); return erro('Valor maior que o seu saldo de comissões.'); }
+    const sid = Number(db.prepare('INSERT INTO saques (usuario_id, valor_centavos, chave_pix) VALUES (?, ?, ?)').run(usuario.id, valor, chave).lastInsertRowid);
+    db.prepare("INSERT INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'saque', ?, ?, ?)").run(usuario.id, -valor, `Saque via Pix #${sid}`, `saque_${sid}`);
+    db.prepare('UPDATE usuarios SET chave_pix = ? WHERE id = ?').run(chave, usuario.id);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  redirecionar(res, '/indicacoes?ok=saque');
+}));
+
+rota('GET', '/admin/saques', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Saques', PD.adminSaques({
+  saques: db.prepare('SELECT s.*, u.nome, u.email, u.documento FROM saques s JOIN usuarios u ON u.id = s.usuario_id ORDER BY (s.status = \'pendente\') DESC, s.id DESC LIMIT 300').all(),
+  ok: url.searchParams.get('ok') ? 'Saque atualizado.' : '',
+}), usuario)));
+
+rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res }) => {
+  const f = await corpoForm(req);
+  const s = db.prepare("SELECT * FROM saques WHERE id = ? AND status = 'pendente'").get(Number(f.id));
+  if (!s) return redirecionar(res, '/admin/saques');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (f.acao === 'pagar') {
+      db.prepare("UPDATE saques SET status = 'pago', resolvido_em = datetime('now'), observacao = ? WHERE id = ?").run(String(f.obs || '').slice(0, 200), s.id);
+    } else {
+      db.prepare("UPDATE saques SET status = 'recusado', resolvido_em = datetime('now'), observacao = ? WHERE id = ?").run(String(f.obs || '').slice(0, 200), s.id);
+      db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno_saque', ?, ?, ?)")
+        .run(s.usuario_id, s.valor_centavos, `Saque #${s.id} recusado: valor devolvido`, `estsaque_${s.id}`);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  redirecionar(res, '/admin/saques?ok=1');
 }));
 
 // ======================= ADMIN =======================
-rota('GET', '/admin', exigeAdmin(({ res, usuario }) => {
+rota('GET', '/admin', exigeAdmin(async ({ res, usuario }) => {
   const g = (sql, ...a) => db.prepare(sql).get(...a);
   const m = {
     clientes: g('SELECT COUNT(*) n FROM usuarios').n,
@@ -421,10 +578,17 @@ rota('GET', '/admin', exigeAdmin(({ res, usuario }) => {
     qtdRecargas: g("SELECT COUNT(*) n FROM recargas WHERE status='paga'").n,
     bonus: g("SELECT COALESCE(SUM(bonus_centavos),0) s FROM recargas WHERE status='paga'").s,
     saldos: g('SELECT COALESCE(SUM(valor_centavos),0) s FROM transacoes').s,
-    consultas: g("SELECT COUNT(*) n FROM consultas WHERE status='concluida'").n,
+    consultas: g("SELECT COUNT(*) n FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=0").n,
     falhas: g("SELECT COUNT(*) n FROM consultas WHERE status='falhou'").n,
-    faturamento: g("SELECT COALESCE(SUM(preco_centavos),0) s FROM consultas WHERE status='concluida'").s,
-    custo: g("SELECT COALESCE(SUM(custo_centavos),0) s FROM consultas WHERE status='concluida'").s,
+    faturamento: g("SELECT COALESCE(SUM(c.preco_centavos - c.comissao_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=0").s,
+    comissoes: g("SELECT COALESCE(SUM(comissao_centavos),0) s FROM consultas WHERE status='concluida'").s,
+    saquesPendentes: g("SELECT COALESCE(SUM(valor_centavos),0) s FROM saques WHERE status='pendente'").s,
+    qtdSaquesPendentes: g("SELECT COUNT(*) n FROM saques WHERE status='pendente'").n,
+    custo: g("SELECT COALESCE(SUM(c.custo_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=0").s,
+    internas: g("SELECT COUNT(*) n FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=1").n,
+    custoInternas: g("SELECT COALESCE(SUM(c.custo_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=1").s,
+    saldoApiFull: await saldoApiFull({ forcar: true }),
+    alertaApiFull: Number(lerConfig('alerta_saldo_apifull_centavos') ?? 5000),
   };
   pagina(res, 'Admin', PD.adminResumo({ m }), usuario);
 }));
@@ -514,13 +678,20 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
-  minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
+  minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
 
 rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = centavos(f.minimo), markup = Number(String(f.markup || '').replace(',', '.'));
-  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), erro: m }), usuario, 400);
+  const dias = Number(f.dias);
+  if (!Number.isInteger(dias) || dias < 1 || dias > 365) return erro('O prazo do histórico precisa ser entre 1 e 365 dias.');
+  const comissaoMax = Number(f.comissao_maxima), saqueMin = centavos(f.saque_minimo);
+  if (!Number.isInteger(comissaoMax) || comissaoMax < 0 || comissaoMax > 300) return erro('Comissão máxima inválida (0 a 300%).');
+  if (!Number.isFinite(saqueMin) || saqueMin < 100) return erro('Saque mínimo inválido.');
+  const alerta = centavos(f.alerta_apifull);
+  if (!Number.isFinite(alerta) || alerta < 0) return erro('Valor de alerta do saldo APIFull inválido.');
   if (!Number.isFinite(minimo) || minimo < 500) return erro('A recarga mínima precisa ser de pelo menos R$ 5,00.');
   if (!Number.isFinite(markup) || markup < 0 || markup > 1000) return erro('Margem inválida.');
   const faixas = [];
@@ -532,6 +703,10 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   }
   gravarConfig('recarga_minima_centavos', minimo);
   gravarConfig('markup_percentual', markup);
+  gravarConfig('dias_historico', dias);
+  gravarConfig('comissao_maxima', comissaoMax);
+  gravarConfig('saque_minimo_centavos', saqueMin);
+  gravarConfig('alerta_saldo_apifull_centavos', alerta);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
   redirecionar(res, '/admin/config?ok=1');
@@ -568,7 +743,7 @@ rota('GET', '/termos', ({ res, usuario }) => pagina(res, 'Termos de uso', P.pagi
 rota('GET', '/privacidade', ({ res, usuario }) => pagina(res, 'Privacidade', P.paginaTexto('Política de privacidade', PRIVACIDADE), usuario));
 
 
-rota('GET', '/saude', ({ res }) => { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('ok'); });
+rota('GET', '/saude', ({ res }) => json(res, { ok: true, discoPermanente: armazenamento.persistente }));
 
 // ---------- servidor ----------
 const servidor = http.createServer(async (req, res) => {
@@ -583,6 +758,11 @@ const servidor = http.createServer(async (req, res) => {
     if (!achou) return pagina(res, 'Página não encontrada', P.paginaEmBreve('Página não encontrada', 'O endereço que você abriu não existe.'), null, 404);
     const { fn, params } = achou;
     if (req.method === 'POST' && !url.pathname.startsWith('/webhook/') && !origemValida(req)) return pagina(res, 'Erro', P.paginaEmBreve('Envio bloqueado', 'Recarregue a página e tente de novo.'), null, 403);
+    // Link de indicação: guarda o código por 30 dias até o cadastro
+    const refParam = url.searchParams.get('ref');
+    if (req.method === 'GET' && refParam && /^[A-Z2-9]{6,10}$/i.test(refParam)) {
+      res.setHeader('Set-Cookie', `sc_ref=${refParam.toUpperCase()}; Path=/; Max-Age=${30 * 86400}; HttpOnly; SameSite=Lax${ehHttps(req) ? '; Secure' : ''}`);
+    }
     const token = cookies(req)[A.COOKIE];
     const usuario = A.usuarioDaSessao(token);
     // Quem tem o e-mail do ADMIN_EMAIL vira administrador (mesmo se a conta foi criada antes da variável)
@@ -598,4 +778,8 @@ const servidor = http.createServer(async (req, res) => {
 });
 
 const porta = process.env.PORT || 3000;
-servidor.listen(porta, () => console.log(`Soft Consultas no ar na porta ${porta}`));
+servidor.listen(porta, () => {
+  console.log(`Soft Consultas no ar na porta ${porta}`);
+  console.log(`Banco de dados em: ${armazenamento.pasta} | DATA_DIR definido: ${armazenamento.definido ? 'sim' : 'NÃO'} | disco montado: ${armazenamento.montado ? 'sim' : 'NÃO'}`);
+  if (!armazenamento.persistente) console.error('ATENÇÃO: os dados NÃO estão em disco permanente e serão perdidos no próximo deploy. Configure o disco (/var/data) e DATA_DIR no Render.');
+});

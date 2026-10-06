@@ -33,7 +33,7 @@ export function criarSessao(usuarioId) {
 export function usuarioDaSessao(token) {
   if (!token) return null;
   return db.prepare(`
-    SELECT u.id, u.nome, u.email, u.documento, u.telefone, u.admin
+    SELECT u.id, u.nome, u.email, u.documento, u.telefone, u.admin, u.indicado_por, u.codigo_indicacao, u.comissao_percentual, u.chave_pix
     FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id
     WHERE s.token_hash = ? AND s.expira_em > datetime('now') AND u.ativo = 1`).get(sha256(token)) || null;
 }
@@ -108,3 +108,11 @@ export function cnpjValido(cnpj) {
 }
 export const documentoValido = (d) => (soNumeros(d).length === 11 ? cpfValido(d) : cnpjValido(d));
 export const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(e || ''));
+
+// Código de indicação curto e legível (sem letras/números que se confundem)
+export function novoCodigoIndicacao() {
+  const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for (const b of crypto.randomBytes(7)) c += alfabeto[b % alfabeto.length];
+  return c;
+}

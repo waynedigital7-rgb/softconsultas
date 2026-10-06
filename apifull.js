@@ -3,7 +3,7 @@ export async function consultarApiFull(produto, valor) {
   const r = await fetch(`${process.env.APIFULL_URL || 'https://api.apifull.com.br/api/'}${encodeURIComponent(produto.endpoint)}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${process.env.APIFULL_TOKEN}`, Accept: '*/*', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ [produto.campo || 'document']: valor, link: produto.link || produto.endpoint }),
+    body: JSON.stringify({ [produto.campo || 'document']: valor, link: produto.link || produto.endpoint, pdf: true }),
     signal: AbortSignal.timeout(90000),
   });
   const dados = await r.json().catch(() => ({}));
@@ -58,6 +58,40 @@ export function achatar(obj, prefixo = '', out = [], prof = 0) {
     out.push([prefixo, v]);
   }
   return out;
+}
+
+// ---------- PDF da fonte ----------
+// Aceita: link no "aux" (padrão da APIFull), PDF embutido em base64, ou qualquer link .pdf na resposta
+export function acharPdf(dados) {
+  const aux = dados?.aux;
+  if (aux && typeof aux.data === 'string') {
+    if (/^https:\/\//.test(aux.data)) return aux.data;
+    const b64 = aux.data.replace(/^data:application\/pdf;base64,/, '');
+    if (b64.startsWith('JVBER')) return `base64:${b64}`;
+  }
+  let achado = null;
+  const procurar = (o, prof = 0) => {
+    if (achado || prof > 8 || !o) return;
+    if (typeof o === 'string') { if (/^https:\/\/\S+\.pdf(\?\S*)?$/i.test(o)) achado = o; return; }
+    if (typeof o === 'object') for (const v of Object.values(o)) procurar(v, prof + 1);
+  };
+  procurar(dados);
+  return achado;
+}
+
+// Baixa (ou decodifica) o PDF da fonte. Devolve os bytes ou null.
+export async function obterPdf(origem) {
+  if (!origem) return null;
+  try {
+    if (origem.startsWith('base64:')) {
+      const b = Buffer.from(origem.slice(7), 'base64');
+      return b.subarray(0, 5).toString() === '%PDF-' ? b : null;
+    }
+    const r = await fetch(origem, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) return null;
+    const b = Buffer.from(await r.arrayBuffer());
+    return b.subarray(0, 5).toString() === '%PDF-' ? b : null;
+  } catch { return null; }
 }
 
 // ---------- análise (semáforo) ----------
@@ -115,6 +149,49 @@ export function analisar(dados) {
   return {
     cor, titulo, motivos, score, pagamento, rating: sc?.classificacaoAlfabetica || '',
     qtdRestricoes, totalValor, itens, painel, consultasRecentes, temDadosCredito,
-    pdfOrigem: dados?.aux?.type === 'link' && /^https:\/\//.test(dados.aux.data || '') ? dados.aux.data : null,
+    pdfOrigem: acharPdf(dados),
   };
 }
+
+// ---------- Saldo da conta na APIFull (GET /api/get-balance) ----------
+let cacheSaldo = { em: 0, valor: null };
+function numeroEm(v) {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && /\d/.test(v)) {
+    const n = dinheiro(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+function lerSaldo(obj, prof = 0) {
+  if (prof > 5 || obj === null || obj === undefined) return null;
+  const direto = numeroEm(obj);
+  if (direto !== null) return direto;
+  if (typeof obj === 'object') {
+    for (const k of ['saldo', 'balance', 'creditos', 'credits', 'valor', 'value', 'amount', 'disponivel']) {
+      if (k in obj) { const n = lerSaldo(obj[k], prof + 1); if (n !== null) return n; }
+    }
+    for (const v of Object.values(obj)) { const n = lerSaldo(v, prof + 1); if (n !== null) return n; }
+  }
+  return null;
+}
+// Devolve o saldo em centavos (ou null se não conseguir ler). Guarda por 60 segundos.
+export async function saldoApiFull({ forcar = false } = {}) {
+  if (!forcar && Date.now() - cacheSaldo.em < 60000) return cacheSaldo.valor;
+  try {
+    const base = process.env.APIFULL_URL || 'https://api.apifull.com.br/api/';
+    const r = await fetch(`${base}get-balance`, {
+      headers: { Authorization: `Bearer ${process.env.APIFULL_TOKEN}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(15000),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || (j.status && j.status !== 'sucesso')) throw new Error(j.message || j.mensagem || `HTTP ${r.status}`);
+    const reais = lerSaldo(j.dados ?? j.data ?? j.saldo ?? j.balance ?? j);
+    cacheSaldo = { em: Date.now(), valor: reais === null ? null : Math.round(reais * 100) };
+  } catch (e) {
+    console.warn('saldo APIFull:', e.message);
+    cacheSaldo = { em: Date.now(), valor: null };
+  }
+  return cacheSaldo.valor;
+}
+export const limparCacheSaldo = () => { cacheSaldo.em = 0; };

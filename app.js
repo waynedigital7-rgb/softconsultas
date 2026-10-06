@@ -7,6 +7,12 @@ document.addEventListener('DOMContentLoaded', () => {
     try { await navigator.clipboard.writeText(t.value); copiar.textContent = 'Código copiado'; } catch { t.select(); }
   });
 
+  // Copiar link de indicação (ou qualquer campo com data-copiar)
+  document.querySelectorAll('[data-copiar]').forEach((b) => b.addEventListener('click', async () => {
+    const campo = document.getElementById(b.getAttribute('data-copiar'));
+    try { await navigator.clipboard.writeText(campo.value); b.textContent = 'Copiado!'; } catch { campo.select(); }
+  }));
+
   // Acompanhar pagamento da recarga
   const box = document.querySelector('[data-recarga]');
   if (box) {

@@ -38,10 +38,10 @@ const cartaoProduto = (p) => `
     </div>
   </a>`;
 
-const cabecalho = (titulo, sub, saldo) => `
+const cabecalho = (titulo, sub, saldo, admin) => `
 <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px">
   <div><h1 style="font-size:1.8rem;margin:0">${titulo}</h1><p class="muted" style="margin:4px 0 0">${sub}</p></div>
-  <div class="tag" style="font-size:.9rem;padding:8px 14px">Saldo: ${reais(saldo)}</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">${admin ? '<div class="tag" style="font-size:.9rem;padding:8px 14px">Admin: preços de custo</div>' : ''}<div class="tag" style="font-size:.9rem;padding:8px 14px">${admin ? 'Saldo APIFull' : 'Saldo'}: ${saldo === null ? 'indisponível' : reais(saldo)}</div></div>
 </div>`;
 
 const ORDEM_CATEGORIAS = ['Dívidas e Crédito', 'Veículos', 'Dados', 'Empresas', 'Análise de Mercado', 'Certidões', 'Compliance', 'Jurídico', 'Ferramentas'];
@@ -54,7 +54,7 @@ export function paginaCategorias({ produtos, saldo, busca = '' }) {
   if (busca) {
     const t = busca.toLowerCase();
     const achados = produtos.filter((p) => `${p.nome} ${p.descricao} ${p.categoria}`.toLowerCase().includes(t));
-    return cabecalho('Consultas', `Resultados para "${esc(busca)}"`, saldo) + form
+    return cabecalho('Consultas', `Resultados para "${esc(busca)}"`, saldo, produtos[0]?.precoCusto) + form
       + `<p><a href="/consultas">← Ver todas as categorias</a></p>`
       + (achados.length ? `<div class="grade">${achados.map(cartaoProduto).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta encontrada.</div>');
   }
@@ -64,7 +64,7 @@ export function paginaCategorias({ produtos, saldo, busca = '' }) {
     const ia = ORDEM_CATEGORIAS.indexOf(a), ib = ORDEM_CATEGORIAS.indexOf(b);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
   });
-  return cabecalho('Consultas', 'Escolha uma categoria.', saldo) + form
+  return cabecalho('Consultas', 'Escolha uma categoria.', saldo, produtos[0]?.precoCusto) + form
     + (cats.length ? `<div class="grade">${cats.map((c) => {
       const lista = grupos[c];
       const menor = Math.min(...lista.map((p) => p.preco_centavos));
@@ -82,26 +82,28 @@ export function paginaCategoria({ categoria, produtos, saldo, busca = '' }) {
   const lista = produtos.filter((p) => !busca || `${p.nome} ${p.descricao}`.toLowerCase().includes(t));
   return `<p style="margin:0 0 10px"><a href="/consultas" style="text-decoration:none">← Todas as categorias</a></p>`
     + `<div style="display:flex;align-items:center;gap:14px;margin-bottom:6px"><span style="color:var(--roxo)">${icone(categoria, 34)}</span></div>`
-    + cabecalho(esc(categoria), `${produtos.length} ${produtos.length === 1 ? 'consulta disponível' : 'consultas disponíveis'}`, saldo)
+    + cabecalho(esc(categoria), `${produtos.length} ${produtos.length === 1 ? 'consulta disponível' : 'consultas disponíveis'}`, saldo, produtos[0]?.precoCusto)
     + `<form method="get" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px">
       <input type="text" name="busca" value="${esc(busca)}" placeholder="Buscar em ${esc(categoria)}..." aria-label="Buscar nesta categoria" style="flex:1 1 220px">
       <button class="btn" type="submit">Buscar</button></form>`
     + (lista.length ? `<div class="grade">${lista.map(cartaoProduto).join('')}</div>` : '<div class="cartao vazio">Nenhuma consulta encontrada nesta categoria.</div>');
 }
 
-export function paginaConsultar({ produto, saldo, erro, v = {} }) {
-  const falta = Math.max(0, produto.preco_centavos - saldo);
+export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false }) {
+  const falta = saldo === null ? 0 : Math.max(0, produto.preco_centavos - saldo);
   return `
 <div class="cartao estreito" style="max-width:560px">
   <a href="/consultas/categoria/${slugCategoria(produto.categoria)}" class="muted" style="text-decoration:none">← Voltar para ${esc(produto.categoria)}</a>
   <h1 style="font-size:1.6rem;margin-top:12px">${esc(produto.nome)}</h1>
   <p class="muted">${esc(produto.descricao)}</p>
   <div style="display:flex;justify-content:space-between;background:var(--fundo);border-radius:14px;padding:14px 16px;margin:16px 0">
-    <div><div class="muted" style="font-size:.85rem">Valor da consulta</div><strong style="font-size:1.3rem;font-family:Montserrat">${reais(produto.preco_centavos)}</strong></div>
-    <div style="text-align:right"><div class="muted" style="font-size:.85rem">Seu saldo</div><strong style="font-size:1.3rem;font-family:Montserrat">${reais(saldo)}</strong></div>
+    <div><div class="muted" style="font-size:.85rem">Valor da consulta${produto.precoCusto ? ' <span class="tag">preço de custo · admin</span>' : ''}</div><strong style="font-size:1.3rem;font-family:Montserrat">${reais(produto.preco_centavos)}</strong></div>
+    <div style="text-align:right"><div class="muted" style="font-size:.85rem">${admin ? 'Saldo APIFull' : 'Seu saldo'}</div><strong style="font-size:1.3rem;font-family:Montserrat">${saldo === null ? '—' : reais(saldo)}</strong></div>
   </div>
   ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
-  ${falta > 0 ? `<div class="aviso erro">Saldo insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="/recarregar">Recarregar agora</a>` : `
+  ${falta > 0 ? (admin
+    ? `<div class="aviso erro">Saldo da APIFull insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="https://app.apifull.com.br" target="_blank" rel="noopener">Recarregar na APIFull</a>`
+    : `<div class="aviso erro">Saldo insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="/recarregar">Recarregar agora</a>`) : `
   <form method="post" action="/consultas/${esc(produto.slug)}" data-consulta>
     <div class="campo"><label for="valor">${ROTULO_DOC[produto.documento]}</label>
       <input id="valor" name="valor" type="text" ${produto.documento === 'placa' ? 'autocapitalize="characters"' : 'inputmode="numeric"'} required value="${esc(v.valor)}"></div>
@@ -112,7 +114,7 @@ export function paginaConsultar({ produto, saldo, erro, v = {} }) {
       </select></div>
     <label class="check"><input type="checkbox" name="aceite" value="1" required><span>Declaro que a consulta tem a finalidade informada, com base legal conforme a LGPD, e que vou usar os dados somente para esse fim.</span></label>
     <button class="btn largo" type="submit">Consultar por ${reais(produto.preco_centavos)}</button>
-    <p class="muted" style="font-size:.85rem;text-align:center;margin:10px 0 0">Se a consulta falhar, o valor volta automaticamente para o seu saldo.</p>
+    <p class="muted" style="font-size:.85rem;text-align:center;margin:10px 0 0">${admin ? 'Conta admin: a consulta é debitada direto do saldo da APIFull, sem passar pela carteira.' : 'Se a consulta falhar, o valor volta automaticamente para o seu saldo.'}</p>
   </form>`}
 </div>`;
 }
@@ -156,18 +158,28 @@ ${a.itens.length ? `<div class="cartao" style="margin-bottom:18px"><h3>Detalhame
 </details>`;
 }
 
-export function paginaHistorico({ consultas, busca = '' }) {
+export function paginaHistorico({ consultas, busca = '', dias = 10 }) {
+  const ate = (criado) => {
+    const d = new Date(String(criado).replace(' ', 'T') + 'Z');
+    d.setDate(d.getDate() + dias);
+    return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  };
+  const status = (c) => {
+    if (c.status === 'falhou') return '<span class="muted">Falhou (valor estornado)</span>';
+    if (c.status !== 'concluida') return 'Processando';
+    if (!c.resultado) return '<span class="muted">Expirada</span>';
+    return `<a href="/consulta/${c.id}">Ver</a> · <a href="/consulta/${c.id}/pdf">Baixar PDF</a><br><small class="muted">Disponível até ${ate(c.criado_em)}</small>`;
+  };
   return `
 <h1 style="font-size:1.8rem">Histórico de consultas</h1>
+<p class="muted" style="margin-top:-4px">Os resultados e PDFs ficam disponíveis para baixar por <strong>${dias} dias</strong> após cada consulta. Depois disso, são removidos para proteger os dados consultados.</p>
 <form method="get" action="/historico" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
   <input type="text" name="busca" value="${esc(busca)}" placeholder="Buscar por documento ou consulta" aria-label="Buscar no histórico" style="flex:1 1 220px">
   <button class="btn" type="submit">Buscar</button>
 </form>
 <div class="cartao">${consultas.length ? `<div class="rolar"><table class="tabela">
-  <tr><th>Data</th><th>Consulta</th><th>Documento</th><th>Valor</th><th>Status</th><th></th></tr>
-  ${consultas.map((c) => `<tr><td>${dt(c.criado_em)}</td><td>${esc(c.produto)}</td><td>${esc(formatarDoc(c.parametro))}</td><td>${reais(c.preco_centavos)}</td>
-    <td>${c.status === 'concluida' ? 'Concluída' : c.status === 'falhou' ? 'Falhou (estornada)' : 'Processando'}</td>
-    <td>${c.status === 'concluida' ? `<a href="/consulta/${c.id}">Ver</a> · <a href="/consulta/${c.id}/pdf">PDF</a>` : ''}</td></tr>`).join('')}
+  <tr><th>Data</th><th>Consulta</th><th>Documento</th><th>Valor</th><th>Resultado</th></tr>
+  ${consultas.map((c) => `<tr><td>${dt(c.criado_em)}</td><td>${esc(c.produto)}</td><td>${esc(formatarDoc(c.parametro))}</td><td>${reais(c.preco_centavos)}</td><td>${status(c)}</td></tr>`).join('')}
 </table></div>` : '<div class="vazio">Nenhuma consulta encontrada.</div>'}</div>`;
 }
 
@@ -209,5 +221,62 @@ export function paginaPagarRecarga({ r }) {
     <p class="muted">Seus créditos já estão disponíveis.</p>
     <a class="btn" href="/consultas">Fazer uma consulta</a>
   </div>
+</div>`;
+}
+
+export function paginaIndicacoes({ link, usuario, indicados, extrato, saques, saldo, maximo, minimoSaque, ok, erro }) {
+  const pct = usuario.comissao_percentual ?? 30;
+  const exemplo = 1458;
+  const tipoTxt = { comissao: 'Comissão', saque: 'Saque', conversao: 'Conversão em créditos', estorno_saque: 'Saque devolvido' };
+  const statusSaque = { pendente: 'Aguardando aprovação', pago: '<span style="color:var(--ok);font-weight:700">Pago</span>', recusado: '<span style="color:var(--erro)">Recusado</span>' };
+  const nomeCurto = (n) => { const p = String(n).trim().split(/\s+/); return p[0] + (p[1] ? ` ${p[1][0]}.` : ''); };
+  return `
+<h1 style="font-size:1.8rem">Indicações</h1>
+<p class="muted" style="margin-top:-4px">Indique a Soft Consultas e ganhe comissão em <strong>todas as consultas</strong> dos seus indicados.</p>
+${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="saldo">
+    <div style="color:#D9B8F0;font-weight:600">Comissões disponíveis</div>
+    <div class="valor">${reais(saldo)}</div>
+    <form method="post" action="/indicacoes/converter" style="margin-top:14px"><button class="btn" type="submit" ${saldo > 0 ? '' : 'disabled'}>Converter em créditos</button></form>
+  </div>
+  <div class="cartao">
+    <h3>Seu link de indicação</h3>
+    <input type="text" readonly value="${esc(link)}" aria-label="Seu link de indicação" id="link-indicacao" style="margin-bottom:10px">
+    <button class="btn sec" type="button" data-copiar="link-indicacao">Copiar link</button>
+    <p class="muted" style="font-size:.9rem;margin:12px 0 0">Quem se cadastrar pelo seu link (válido por 30 dias no navegador da pessoa) vira seu indicado para sempre.</p>
+  </div>
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h3>Sua comissão</h3>
+  <p class="muted">Você escolhe quanto ganhar: o percentual é somado ao preço das consultas dos seus indicados. Exemplo: numa consulta de ${reais(exemplo)}, com ${pct}% o indicado paga ${reais(exemplo + Math.round((exemplo * pct) / 100))} e você ganha ${reais(Math.round((exemplo * pct) / 100))}.</p>
+  <form method="post" action="/indicacoes/comissao" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+    <div class="campo" style="margin:0;flex:0 1 200px"><label for="percentual">Comissão (0% a ${maximo}%)</label><input id="percentual" name="percentual" type="text" inputmode="numeric" value="${pct}"></div>
+    <button class="btn" type="submit">Salvar</button>
+  </form>
+  <p class="muted" style="font-size:.85rem;margin:10px 0 0">Comissões menores deixam o preço mais competitivo para os seus indicados. A mudança vale para as próximas consultas.</p>
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h3>Sacar por Pix</h3>
+  <form method="post" action="/indicacoes/saque" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+    <div class="campo" style="margin:0;flex:1 1 220px"><label for="chave_pix">Sua chave Pix</label><input id="chave_pix" name="chave_pix" type="text" value="${esc(usuario.chave_pix || '')}"></div>
+    <div class="campo" style="margin:0;flex:0 1 160px"><label for="valor">Valor (R$)</label><input id="valor" name="valor" type="text" inputmode="decimal" placeholder="${(minimoSaque / 100).toFixed(2).replace('.', ',')}"></div>
+    <button class="btn" type="submit" ${saldo >= minimoSaque ? '' : 'disabled'}>Solicitar saque</button>
+  </form>
+  <p class="muted" style="font-size:.85rem;margin:10px 0 0">Saque mínimo de ${reais(minimoSaque)}. A chave Pix precisa ser do mesmo titular da conta.</p>
+  ${saques.length ? `<div class="rolar" style="margin-top:14px"><table class="tabela"><tr><th>Data</th><th>Valor</th><th>Status</th></tr>
+    ${saques.map((x) => `<tr><td>${dt(x.criado_em)}</td><td>${reais(x.valor_centavos)}</td><td>${statusSaque[x.status]}</td></tr>`).join('')}</table></div>` : ''}
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h3>Seus indicados (${indicados.length})</h3>
+  ${indicados.length ? `<div class="rolar"><table class="tabela"><tr><th>Indicado</th><th>Desde</th><th>Consultas</th><th style="text-align:right">Você ganhou</th></tr>
+    ${indicados.map((i) => `<tr><td>${esc(nomeCurto(i.nome))}</td><td>${dt(i.criado_em).slice(0, 10)}</td><td>${i.consultas}</td><td style="text-align:right;font-weight:700">${reais(i.gerado)}</td></tr>`).join('')}
+  </table></div>` : '<div class="vazio">Ninguém se cadastrou pelo seu link ainda. Compartilhe com clientes, parceiros e grupos de negócio.</div>'}
+</div>
+<div class="cartao">
+  <h3>Extrato de comissões</h3>
+  ${extrato.length ? `<div class="rolar"><table class="tabela"><tr><th>Data</th><th>Descrição</th><th style="text-align:right">Valor</th></tr>
+    ${extrato.map((e) => `<tr><td>${dt(e.criado_em)}</td><td>${esc(e.descricao)}</td><td style="text-align:right;font-weight:700;color:${e.valor_centavos < 0 ? 'var(--erro)' : 'var(--ok)'}">${e.valor_centavos < 0 ? '-' : '+'} ${reais(Math.abs(e.valor_centavos))}</td></tr>`).join('')}
+  </table></div>` : '<div class="vazio">Nenhuma comissão ainda.</div>'}
 </div>`;
 }

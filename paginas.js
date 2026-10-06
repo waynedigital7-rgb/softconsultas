@@ -58,7 +58,7 @@ footer{color:var(--cinza);font-size:.85rem;text-align:center;padding:24px 20px;b
 
 export function layout({ titulo, corpo, usuario }) {
   const nav = usuario
-    ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
+    ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
        <form method="post" action="/sair" style="margin:0"><button class="btn sec" style="min-height:40px;padding:8px 18px;color:#fff;border-color:#3A3046">Sair</button></form>`
     : `<a href="/entrar">Entrar</a><a class="btn" href="/cadastro" style="min-height:40px;padding:8px 20px">Criar conta</a>`;
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
@@ -154,15 +154,25 @@ export const paginaPainel = ({ usuario, saldo, transacoes, consultas }) => `
 <h1 style="font-size:1.8rem">Olá, ${esc(usuario.nome.split(' ')[0])}</h1>
 <p class="muted" style="margin-top:-4px">Bem-vindo ao seu painel.</p>
 <div class="grade" style="margin:22px 0">
-  <div class="saldo">
+  ${usuario.admin ? `<div class="saldo">
+    <div style="color:#D9B8F0;font-weight:600">Saldo na APIFull (conta admin)</div>
+    <div class="valor">${saldo === null ? 'Indisponível' : reais(saldo)}</div>
+    <p style="color:#CFC6DA;font-size:.9rem;margin:6px 0 0">Suas consultas saem direto deste saldo, a preço de custo.</p>
+    <a class="btn" href="https://app.apifull.com.br" target="_blank" rel="noopener" style="margin-top:14px">Recarregar na APIFull</a>
+  </div>` : `<div class="saldo">
     <div style="color:#D9B8F0;font-weight:600">Saldo disponível</div>
     <div class="valor">${reais(saldo)}</div>
     <a class="btn" href="/recarregar" style="margin-top:14px">Recarregar</a>
-  </div>
+  </div>`}
   <div class="cartao">
     <h3>Nova consulta</h3>
     <p class="muted">Escolha o tipo de consulta e veja o resultado na hora.</p>
     <a class="btn" href="/consultas">Ver consultas</a>
+  </div>
+  <div class="cartao">
+    <h3>Indique e ganhe</h3>
+    <p class="muted">Compartilhe seu link e ganhe comissão em todas as consultas de quem você indicar. Saque por Pix ou use como crédito.</p>
+    <a class="btn" href="/indicacoes">Pegar meu link</a>
   </div>
 </div>
 <div class="cartao" style="margin-bottom:18px">

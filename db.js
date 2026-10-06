@@ -1,10 +1,26 @@
 // Banco de dados (SQLite embutido no Node 22, salvo no disco persistente do Render)
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 
-const pasta = process.env.DATA_DIR || './dados';
+export const pasta = process.env.DATA_DIR || './dados';
+// Se a pasta do DATA_DIR não existir na inicialização, o disco não está montado (dados seriam perdidos no próximo deploy)
+const pastaJaExistia = existsSync(pasta);
 mkdirSync(pasta, { recursive: true });
+// É um disco montado de verdade? (dispositivo diferente da pasta-mãe)
+function ehDiscoMontado(dir) {
+  try { return statSync(dir).dev !== statSync(path.dirname(path.resolve(dir))).dev; } catch { return false; }
+}
+export const armazenamento = {
+  pasta: path.resolve(pasta),
+  definido: !!process.env.DATA_DIR,
+  pastaJaExistia,
+  montado: ehDiscoMontado(pasta),
+};
+// No Render (variável RENDER=true), só é seguro se o DATA_DIR apontar para um disco montado
+armazenamento.persistente = process.env.RENDER ? armazenamento.definido && armazenamento.montado : true;
+export const pastaPdfs = path.join(pasta, 'pdfs');
+mkdirSync(pastaPdfs, { recursive: true });
 export const db = new DatabaseSync(path.join(pasta, 'softconsultas.db'));
 
 db.exec(`
@@ -122,11 +138,48 @@ if (!colunas('usuarios').includes('asaas_cliente_id')) db.exec('ALTER TABLE usua
 if (!colunas('consultas').includes('produto_id')) db.exec('ALTER TABLE consultas ADD COLUMN produto_id INTEGER');
 if (!colunas('consultas').includes('pdf_origem')) db.exec('ALTER TABLE consultas ADD COLUMN pdf_origem TEXT');
 if (!colunas('consultas').includes('erro')) db.exec('ALTER TABLE consultas ADD COLUMN erro TEXT');
+// Programa de indicação
+if (!colunas('usuarios').includes('codigo_indicacao')) db.exec('ALTER TABLE usuarios ADD COLUMN codigo_indicacao TEXT');
+if (!colunas('usuarios').includes('indicado_por')) db.exec('ALTER TABLE usuarios ADD COLUMN indicado_por INTEGER');
+if (!colunas('usuarios').includes('comissao_percentual')) db.exec('ALTER TABLE usuarios ADD COLUMN comissao_percentual INTEGER NOT NULL DEFAULT 30');
+if (!colunas('usuarios').includes('chave_pix')) db.exec('ALTER TABLE usuarios ADD COLUMN chave_pix TEXT');
+if (!colunas('consultas').includes('indicador_id')) db.exec('ALTER TABLE consultas ADD COLUMN indicador_id INTEGER');
+if (!colunas('consultas').includes('comissao_centavos')) db.exec('ALTER TABLE consultas ADD COLUMN comissao_centavos INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_codigo_indicacao ON usuarios(codigo_indicacao) WHERE codigo_indicacao IS NOT NULL;
+  -- Extrato de comissões: créditos (+) por consultas de indicados e débitos (-) por saque ou conversão em créditos
+  CREATE TABLE IF NOT EXISTS comissoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    tipo TEXT NOT NULL CHECK (tipo IN ('comissao', 'saque', 'conversao', 'estorno_saque')),
+    valor_centavos INTEGER NOT NULL,
+    descricao TEXT NOT NULL,
+    referencia TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_comissao_ref ON comissoes(tipo, referencia) WHERE referencia IS NOT NULL;
+  CREATE TABLE IF NOT EXISTS saques (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    valor_centavos INTEGER NOT NULL,
+    chave_pix TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'pago', 'recusado')),
+    observacao TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    resolvido_em TEXT
+  );
+`);
+export const saldoComissao = (usuarioId) =>
+  db.prepare('SELECT COALESCE(SUM(valor_centavos), 0) AS s FROM comissoes WHERE usuario_id = ?').get(usuarioId).s;
 
 // Configurações padrão (editáveis no admin)
 const padrao = {
   recarga_minima_centavos: '3000',
   markup_percentual: '150',
+  dias_historico: '10',
+  comissao_maxima: '100',
+  alerta_saldo_apifull_centavos: '5000',
+  saque_minimo_centavos: '5000',
   bonus_faixas: JSON.stringify([{ a_partir_de: 10000, percentual: 5 }, { a_partir_de: 30000, percentual: 10 }]),
 };
 for (const [k, v] of Object.entries(padrao)) db.prepare('INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)').run(k, v);

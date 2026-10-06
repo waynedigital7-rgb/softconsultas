@@ -14,8 +14,11 @@ export const TERMOS = `
 <h3>4. Uso permitido e finalidade das consultas</h3>
 <p>Ao realizar uma consulta, você declara uma finalidade legítima e garante possuir base legal para o tratamento dos dados, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018), como proteção ao crédito, execução de contrato, prevenção a fraudes ou consulta dos seus próprios dados.</p>
 <p>É proibido usar a plataforma para: perseguir, assediar ou expor pessoas; discriminar; praticar fraudes; revender ou divulgar dados a terceiros sem autorização; ou qualquer finalidade ilegal. O uso indevido pode levar ao bloqueio imediato da conta, sem reembolso dos créditos, e à comunicação às autoridades.</p>
+<h3>4.1. Programa de indicação</h3>
+<p>Cada usuário pode indicar a plataforma por meio de um link próprio e definir uma comissão, dentro do limite da plataforma, que é somada ao preço das consultas realizadas pelos seus indicados. As comissões são creditadas apenas em consultas concluídas e podem ser convertidas em créditos ou sacadas por Pix para conta do mesmo titular, após aprovação. É proibido usar práticas enganosas, spam ou contas falsas para obter comissões; nesses casos as comissões podem ser canceladas e a conta bloqueada. O usuário é responsável pelas obrigações fiscais sobre os valores recebidos.</p>
 <h3>5. Registro das consultas</h3>
 <p>Toda consulta fica registrada com data, hora, usuário, documento consultado e finalidade declarada, para fins de segurança, auditoria e atendimento a solicitações de titulares de dados e autoridades.</p>
+<p>O resultado e o PDF de cada consulta ficam disponíveis no histórico do usuário pelo prazo informado na plataforma (atualmente 10 dias) e, depois disso, são excluídos automaticamente. Recomendamos baixar e guardar os relatórios de que precisar dentro desse prazo.</p>
 <h3>6. Informações das fontes</h3>
 <p>Os dados exibidos são fornecidos por fontes parceiras e refletem as informações disponíveis no momento da consulta. A Soft Consultas não altera o conteúdo das fontes e não garante que estejam livres de erros ou desatualizações. As decisões tomadas com base nas consultas são de responsabilidade de quem as realiza.</p>
 <h3>7. Disponibilidade</h3>
@@ -38,7 +41,7 @@ export const PRIVACIDADE = `
 <h3>5. Compartilhamento</h3>
 <p>Compartilhamos dados apenas com prestadores necessários à operação: processador de pagamentos (Asaas), fornecedores de dados das consultas, serviço de envio de e-mails e hospedagem. Não vendemos dados de usuários.</p>
 <h3>6. Retenção</h3>
-<p>Mantemos os dados enquanto a conta estiver ativa e pelo prazo necessário para cumprir obrigações legais e regulatórias.</p>
+<p>Mantemos os dados da conta enquanto ela estiver ativa e pelo prazo necessário para cumprir obrigações legais e regulatórias. Os resultados das consultas (dados de terceiros) ficam disponíveis por tempo limitado (atualmente 10 dias) e são excluídos automaticamente; mantemos apenas o registro da consulta (data, usuário, documento e finalidade) para auditoria.</p>
 <h3>7. Seus direitos</h3>
 <p>Você pode solicitar acesso, correção, anonimização, portabilidade ou exclusão dos seus dados, além de informações sobre compartilhamento, pelo e-mail ${CONTATO}. Titulares que tiveram dados consultados na plataforma também podem solicitar informações pelo mesmo canal.</p>
 <h3>8. Segurança</h3>
