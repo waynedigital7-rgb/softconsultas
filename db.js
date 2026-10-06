@@ -194,6 +194,19 @@ db.exec(`
     resolvido_em TEXT
   );
 `);
+// Registro de alterações feitas no Admin (auditoria)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS registro_admin (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_email TEXT NOT NULL,
+    acao TEXT NOT NULL,
+    detalhe TEXT NOT NULL DEFAULT '',
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+export const registrar = (usuario, acao, detalhe = '') =>
+  db.prepare('INSERT INTO registro_admin (admin_email, acao, detalhe) VALUES (?, ?, ?)').run(usuario?.email || 'sistema', acao, String(detalhe).slice(0, 1000));
+
 export const saldoComissao = (usuarioId) =>
   db.prepare('SELECT COALESCE(SUM(valor_centavos), 0) AS s FROM comissoes WHERE usuario_id = ?').get(usuarioId).s;
 

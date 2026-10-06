@@ -3,7 +3,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups } from './db.js';
+import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar } from './db.js';
 import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
 import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo } from './apifull.js';
@@ -552,7 +552,7 @@ rota('GET', '/admin/saques', exigeAdmin(({ res, usuario, url }) => pagina(res, '
   ok: url.searchParams.get('ok') ? 'Saque atualizado.' : '',
 }), usuario)));
 
-rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res }) => {
+rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const s = db.prepare("SELECT * FROM saques WHERE id = ? AND status = 'pendente'").get(Number(f.id));
   if (!s) return redirecionar(res, '/admin/saques');
@@ -567,6 +567,7 @@ rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res }) => {
     }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
+  registrar(usuario, f.acao === 'pagar' ? 'Marcou saque como pago' : 'Recusou saque', `Saque #${s.id} de ${P.reais(s.valor_centavos)} para a chave ${s.chave_pix}${f.obs ? ` (${String(f.obs).slice(0, 200)})` : ''}`);
   redirecionar(res, '/admin/saques?ok=1');
 }));
 
@@ -620,6 +621,9 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
   if (!Number.isFinite(custo) || custo <= 0) return erro('Informe o custo da consulta na APIFull.');
   if (p.endpoint && !/^[\w.-]+$/.test(p.endpoint)) return erro('Endpoint inválido: use só letras, números, ponto, hífen ou sublinhado.');
   const preco = precoDe(custo);
+  const antes = p.id ? db.prepare('SELECT nome, custo_centavos, ativo, endpoint FROM produtos WHERE id = ?').get(p.id) : null;
+  registrar(usuario, p.id ? 'Editou consulta' : 'Criou consulta',
+    `${p.nome}: custo ${P.reais(antes?.custo_centavos ?? 0)} → ${P.reais(custo)}, preço ${P.reais(preco)}, ${p.ativo ? 'ativa' : 'inativa'}${antes && antes.endpoint !== p.endpoint ? `, endpoint ${antes.endpoint || '—'} → ${p.endpoint}` : ''}`);
   if (p.id) {
     db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=? WHERE id=?`)
       .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.id);
@@ -676,6 +680,7 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
   const resultado = `${criadas} consulta(s) criada(s) e ${atualizadas} atualizada(s). ${inativas} ficaram inativas aguardando o custo: edite e informe o custo para ativar.`;
+  registrar(usuario, 'Importou consultas em lote', resultado);
   pagina(res, 'Admin · Importar', PD.adminImportar({ texto: erros.length ? texto : '', resultado, erro: erros.slice(0, 15).join(' ') }), usuario);
 }));
 
@@ -711,6 +716,7 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('alerta_saldo_apifull_centavos', alerta);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
+  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, alerta APIFull ${P.reais(alerta)}`);
   redirecionar(res, '/admin/config?ok=1');
 }));
 
@@ -729,15 +735,34 @@ rota('POST', '/admin/clientes/ajuste', exigeAdmin(async ({ req, res, usuario }) 
   const motivo = String(f.motivo || '').trim().slice(0, 120);
   if (!Number.isFinite(valor) || valor === 0 || !motivo || !db.prepare('SELECT 1 FROM usuarios WHERE id = ?').get(Number(f.id))) return redirecionar(res, '/admin/clientes');
   db.prepare("INSERT INTO transacoes (usuario_id, tipo, valor_centavos, descricao) VALUES (?, 'ajuste', ?, ?)").run(Number(f.id), valor, `Ajuste: ${motivo} (por ${usuario.email})`);
+  const cli = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(Number(f.id));
+  registrar(usuario, 'Ajustou saldo', `${cli.nome} (${cli.email}): ${valor > 0 ? '+' : '-'}${P.reais(Math.abs(valor))}, motivo: ${motivo}`);
   redirecionar(res, '/admin/clientes?ok=1');
 }));
 
 rota('GET', '/admin/consultas', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Consultas feitas', PD.adminConsultas({
-  consultas: db.prepare('SELECT c.*, u.nome AS cliente FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300').all(),
+  consultas: db.prepare('SELECT c.*, u.nome AS cliente, u.admin AS interno FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300').all(),
 }), usuario)));
 
 rota('GET', '/admin/recargas', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Recargas', PD.adminRecargas({
   recargas: db.prepare('SELECT r.*, u.nome AS cliente FROM recargas r JOIN usuarios u ON u.id = r.usuario_id ORDER BY r.id DESC LIMIT 300').all(),
+}), usuario)));
+
+// ======================= REDE DE CLIENTES E REGISTRO =======================
+rota('GET', '/admin/rede', exigeAdmin(({ res, usuario, url }) => {
+  const clientes = db.prepare(`SELECT u.id, u.nome, u.email, u.documento, u.telefone, u.indicado_por, u.comissao_percentual, u.criado_em, u.admin, u.ativo,
+      COALESCE((SELECT SUM(valor_centavos) FROM transacoes t WHERE t.usuario_id = u.id), 0) AS saldo,
+      COALESCE((SELECT SUM(valor_centavos) FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga'), 0) AS recarregado,
+      (SELECT COUNT(*) FROM consultas c WHERE c.usuario_id = u.id AND c.status = 'concluida') AS consultas,
+      COALESCE((SELECT SUM(c.preco_centavos - c.comissao_centavos - c.custo_centavos) FROM consultas c WHERE c.usuario_id = u.id AND c.status = 'concluida'), 0) AS lucro,
+      COALESCE((SELECT SUM(valor_centavos) FROM comissoes k WHERE k.usuario_id = u.id AND k.tipo = 'comissao'), 0) AS comissoes_ganhas,
+      COALESCE((SELECT SUM(valor_centavos) FROM comissoes k WHERE k.usuario_id = u.id), 0) AS comissoes_saldo
+    FROM usuarios u ORDER BY u.id`).all();
+  pagina(res, 'Admin · Rede de clientes', PD.adminRede({ clientes, busca: url.searchParams.get('busca') || '' }), usuario);
+}));
+
+rota('GET', '/admin/registro', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Registro', PD.adminRegistro({
+  linhas: db.prepare('SELECT * FROM registro_admin ORDER BY id DESC LIMIT 500').all(),
 }), usuario)));
 
 // ======================= BACKUPS =======================
@@ -748,17 +773,18 @@ rota('GET', '/admin/backups', exigeAdmin(({ res, usuario, url }) => pagina(res, 
   backups: listarBackups(), ok: url.searchParams.get('ok') ? 'Backup criado.' : '', persistente: armazenamento.persistente,
 }), usuario)));
 
-rota('POST', '/admin/backups/criar', exigeAdmin(async ({ req, res }) => {
+rota('POST', '/admin/backups/criar', exigeAdmin(async ({ req, res, usuario }) => {
   await corpoForm(req);
-  fazerBackup('manual');
+  registrar(usuario, 'Fez backup manual', fazerBackup('manual') || '');
   redirecionar(res, '/admin/backups?ok=1');
 }));
 
-rota('GET', '/admin/backups/baixar', exigeAdmin(async ({ res, url }) => {
+rota('GET', '/admin/backups/baixar', exigeAdmin(async ({ res, url, usuario }) => {
   const nome = String(url.searchParams.get('arquivo') || '');
   if (!/^backup-[\w-]+\.db$/.test(nome)) return redirecionar(res, '/admin/backups');
   try {
     const dados = await readFile(path.join(pastaBackups, nome));
+    registrar(usuario, 'Baixou backup', nome);
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${nome}"`, 'Cache-Control': 'no-store' });
     res.end(dados);
   } catch { redirecionar(res, '/admin/backups'); }

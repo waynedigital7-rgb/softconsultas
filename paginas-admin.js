@@ -3,7 +3,7 @@ import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
-  ${[['/admin', 'Resumo'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/backups', 'Backups'], ['/admin/config', 'Configurações']]
+  ${[['/admin', 'Resumo'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
 const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
@@ -40,9 +40,10 @@ export function adminProdutos({ produtos, markup, ok }) {
   return `<h1 style="font-size:1.7rem">Consultas e preços</h1>${menu('/admin/produtos')}${aviso(ok)}
 <p class="muted">Preço de venda = custo APIFull + ${markup}% (ajuste a porcentagem em Configurações). Só aparecem para os clientes as consultas <strong>ativas</strong> e com endpoint preenchido.</p>
 <div class="cartao"><div class="rolar"><table class="tabela">
-  <tr><th>Consulta</th><th>Categoria</th><th>Endpoint</th><th>Custo</th><th>Preço</th><th>Status</th><th></th></tr>
+  <tr><th>Consulta</th><th>Categoria</th><th>Endpoint</th><th>Custo</th><th>Preço</th><th>Lucro por consulta</th><th>Status</th><th></th></tr>
   ${produtos.map((p) => `<tr><td><strong>${esc(p.nome)}</strong>${p.custo_centavos ? '' : ' <span class="tag" style="color:var(--erro)">sem custo</span>'}</td><td>${esc(p.categoria)}</td><td><code>${esc(p.endpoint || '—')}</code></td>
     <td>${reais(p.custo_centavos)}</td><td><strong>${reais(p.preco_centavos)}</strong></td>
+    <td>${p.custo_centavos ? `<strong style="color:var(--ok)">${reais(p.preco_centavos - p.custo_centavos)}</strong><br><small class="muted">${Math.round(((p.preco_centavos - p.custo_centavos) / p.custo_centavos) * 100)}% sobre o custo</small>` : '—'}</td>
     <td>${p.ativo && p.endpoint ? '<span style="color:var(--ok);font-weight:700">Ativa</span>' : '<span class="muted">Inativa</span>'}</td>
     <td><a href="/admin/produtos/editar?id=${p.id}">Editar</a></td></tr>`).join('')}
 </table></div>
@@ -110,9 +111,12 @@ export function adminClientes({ clientes, busca = '', ok, erro }) {
 export function adminConsultas({ consultas }) {
   return `<h1 style="font-size:1.7rem">Consultas feitas</h1>${menu('/admin/consultas')}
 <div class="cartao"><div class="rolar"><table class="tabela">
-  <tr><th>#</th><th>Data</th><th>Cliente</th><th>Consulta</th><th>Documento</th><th>Finalidade</th><th>Preço</th><th>Custo</th><th>Status</th></tr>
+  <tr><th>#</th><th>Data</th><th>Cliente</th><th>Consulta</th><th>Documento</th><th>Finalidade</th><th>Cliente pagou</th><th>Custo APIFull</th><th>Comissão</th><th>Seu lucro</th><th>Status</th></tr>
   ${consultas.map((c) => `<tr><td>${c.id}</td><td>${dt(c.criado_em)}</td><td>${esc(c.cliente)}</td><td>${esc(c.produto)}</td><td>${esc(formatarDoc(c.parametro))}</td>
-    <td style="max-width:200px">${esc(c.finalidade || '-')}</td><td>${reais(c.preco_centavos)}</td><td>${reais(c.custo_centavos || 0)}</td>
+    <td style="max-width:200px">${esc(c.finalidade || '-')}</td>
+    <td>${c.interno ? '<span class="muted">interna</span>' : reais(c.preco_centavos)}</td><td>${reais(c.custo_centavos || 0)}</td>
+    <td>${c.comissao_centavos ? reais(c.comissao_centavos) : '—'}</td>
+    <td>${c.status === 'concluida' && !c.interno ? `<strong style="color:var(--ok)">${reais(c.preco_centavos - (c.comissao_centavos || 0) - (c.custo_centavos || 0))}</strong>` : '—'}</td>
     <td>${c.status === 'concluida' ? 'Concluída' : c.status === 'falhou' ? `<span style="color:var(--erro)" title="${esc(c.erro || '')}">Falhou</span>` : 'Processando'}</td></tr>`).join('')}
 </table></div></div>`;
 }
@@ -178,5 +182,58 @@ export function adminBackups({ backups, ok, persistente }) {
   <tr><th>Data</th><th>Arquivo</th><th>Tamanho</th><th></th></tr>
   ${backups.map((b) => `<tr><td>${esc(new Date(b.data).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }))}</td><td><code>${esc(b.nome)}</code></td><td>${kb(b.tamanho)}</td>
     <td><a href="/admin/backups/baixar?arquivo=${encodeURIComponent(b.nome)}">Baixar</a></td></tr>`).join('') || '<tr><td colspan="4" class="vazio">Nenhum backup ainda.</td></tr>'}
+</table></div></div>`;
+}
+
+export function adminRede({ clientes, busca = '' }) {
+  const porId = new Map(clientes.map((c) => [c.id, { ...c, filhos: [] }]));
+  const raizes = [];
+  for (const c of porId.values()) {
+    const pai = c.indicado_por && porId.get(c.indicado_por);
+    if (pai && pai.id !== c.id) pai.filhos.push(c); else raizes.push(c);
+  }
+  // Totais da rede (o próprio cliente + todos abaixo dele)
+  const totais = (n) => n.filhos.reduce((t, f) => { const x = totais(f); return { pessoas: t.pessoas + x.pessoas, lucro: t.lucro + x.lucro, consultas: t.consultas + x.consultas }; },
+    { pessoas: 1, lucro: n.lucro, consultas: n.consultas });
+  const t = busca.toLowerCase();
+  const casa = (n) => !t || `${n.nome} ${n.email} ${n.documento}`.toLowerCase().includes(t) || n.filhos.some(casa);
+  const linha = (n, nivel) => {
+    const tot = totais(n);
+    const info = `<div style="display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline">
+        <strong>${esc(n.nome)}</strong>${n.admin ? ' <span class="tag">admin</span>' : ''}${n.ativo ? '' : ' <span class="tag" style="color:var(--erro)">desativado</span>'}
+        <span class="muted">${esc(n.email)} · ${esc(formatarDoc(n.documento))} · ${esc(n.telefone)}</span></div>
+      <div class="muted" style="font-size:.88rem;display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:4px">
+        <span>Saldo: <strong>${reais(n.saldo)}</strong></span><span>Recarregou: ${reais(n.recarregado)}</span>
+        <span>Consultas: ${n.consultas}</span><span>Seu lucro com ele: <strong style="color:var(--ok)">${reais(n.lucro)}</strong></span>
+        ${n.filhos.length ? `<span>Indicados diretos: <strong>${n.filhos.length}</strong> (comissão ${n.comissao_percentual}%)</span>
+        <span>Comissões ganhas: ${reais(n.comissoes_ganhas)} · a sacar: ${reais(n.comissoes_saldo)}</span>
+        <span>Rede total: ${tot.pessoas - 1} pessoa(s), ${tot.consultas} consultas, lucro ${reais(tot.lucro)}</span>` : ''}
+        <span>Desde ${dt(n.criado_em).slice(0, 10)}</span></div>`;
+    const filhos = n.filhos.filter(casa);
+    return filhos.length
+      ? `<details ${nivel === 0 && !t ? '' : 'open'} style="border-left:3px solid ${nivel ? 'var(--borda)' : 'var(--roxo)'};padding:10px 0 10px 14px;margin:8px 0 8px ${nivel ? 18 : 0}px">
+          <summary style="cursor:pointer;list-style:none">${info}</summary>${filhos.map((f) => linha(f, nivel + 1)).join('')}</details>`
+      : `<div style="border-left:3px solid var(--borda);padding:10px 0 10px 14px;margin:8px 0 8px ${nivel ? 18 : 0}px">${info}</div>`;
+  };
+  const visiveis = raizes.filter(casa);
+  const totalIndicados = clientes.filter((c) => c.indicado_por).length;
+  return `<h1 style="font-size:1.7rem">Rede de clientes</h1>${menu('/admin/rede')}
+<div class="grade" style="margin-bottom:18px">
+  ${num('Clientes', clientes.length)}${num('Chegaram por indicação', totalIndicados, `${clientes.length ? Math.round((totalIndicados / clientes.length) * 100) : 0}% da base`)}
+  ${num('Indicadores ativos', new Set(clientes.filter((c) => c.indicado_por).map((c) => c.indicado_por)).size)}
+</div>
+<form method="get" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+  <input type="text" name="busca" value="${esc(busca)}" placeholder="Buscar por nome, e-mail ou documento" aria-label="Buscar na rede" style="flex:1 1 240px"><button class="btn">Buscar</button></form>
+<div class="cartao"><p class="muted" style="margin-top:0">Clique num cliente com indicados para abrir a rede dele. A linha roxa marca quem chegou sem indicação.</p>
+  ${visiveis.length ? visiveis.map((r) => linha(r, 0)).join('') : '<div class="vazio">Nenhum cliente encontrado.</div>'}
+</div>`;
+}
+
+export function adminRegistro({ linhas }) {
+  return `<h1 style="font-size:1.7rem">Registro de alterações</h1>${menu('/admin/registro')}
+<p class="muted">Tudo o que é alterado no Admin fica registrado aqui, com data e responsável. Os 500 registros mais recentes são exibidos.</p>
+<div class="cartao"><div class="rolar"><table class="tabela">
+  <tr><th>Data</th><th>Quem</th><th>Ação</th><th>Detalhes</th></tr>
+  ${linhas.map((l) => `<tr><td>${dt(l.criado_em)}</td><td>${esc(l.admin_email)}</td><td><strong>${esc(l.acao)}</strong></td><td>${esc(l.detalhe)}</td></tr>`).join('') || '<tr><td colspan="4" class="vazio">Nenhuma alteração registrada ainda.</td></tr>'}
 </table></div></div>`;
 }
