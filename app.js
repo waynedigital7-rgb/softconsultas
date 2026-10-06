@@ -36,6 +36,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const f = document.querySelector('form[data-consulta]');
   if (f) f.addEventListener('submit', () => {
     const b = f.querySelector('button[type=submit]');
-    if (b) { b.disabled = true; b.textContent = 'Consultando… isso pode levar alguns segundos'; }
+    const aviso = document.getElementById('aviso-nova-aba');
+    if (aviso) aviso.hidden = false;
+    if (b) {
+      // O envio acontece antes de desabilitar (o formulário abre numa nova aba)
+      setTimeout(() => { b.disabled = true; b.textContent = 'Consulta enviada. O PDF abre na nova aba.'; }, 0);
+      // Libera para uma nova consulta depois de alguns segundos
+      setTimeout(() => { b.disabled = false; b.textContent = 'Fazer outra consulta'; f.reset(); }, 15000);
+    }
   });
 });

@@ -104,7 +104,8 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false })
   ${falta > 0 ? (admin
     ? `<div class="aviso erro">Saldo da APIFull insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="https://app.apifull.com.br" target="_blank" rel="noopener">Recarregar na APIFull</a>`
     : `<div class="aviso erro">Saldo insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="/recarregar">Recarregar agora</a>`) : `
-  <form method="post" action="/consultas/${esc(produto.slug)}" data-consulta>
+  <div id="aviso-nova-aba" class="aviso ok" hidden>Sua consulta está abrindo em uma <strong>nova aba</strong>. Se não abrir, confira se o navegador bloqueou ou veja no <a href="/historico">Histórico</a>.</div>
+  <form method="post" action="/consultas/${esc(produto.slug)}" target="_blank" data-consulta>
     <div class="campo"><label for="valor">${ROTULO_DOC[produto.documento]}</label>
       <input id="valor" name="valor" type="text" ${produto.documento === 'placa' ? 'autocapitalize="characters"' : 'inputmode="numeric"'} required value="${esc(v.valor)}"></div>
     <div class="campo"><label for="finalidade">Finalidade da consulta</label>
@@ -114,7 +115,7 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false })
       </select></div>
     <label class="check"><input type="checkbox" name="aceite" value="1" required><span>Declaro que a consulta tem a finalidade informada, com base legal conforme a LGPD, e que vou usar os dados somente para esse fim.</span></label>
     <button class="btn largo" type="submit">Consultar por ${reais(produto.preco_centavos)}</button>
-    <p class="muted" style="font-size:.85rem;text-align:center;margin:10px 0 0">${admin ? 'Conta admin: a consulta é debitada direto do saldo da APIFull, sem passar pela carteira.' : 'Se a consulta falhar, o valor volta automaticamente para o seu saldo.'}</p>
+    <p class="muted" style="font-size:.85rem;text-align:center;margin:10px 0 0">O relatório em PDF abre numa nova aba. ${admin ? 'Conta admin: a consulta é debitada direto do saldo da APIFull, sem passar pela carteira.' : 'Se a consulta falhar, o valor volta automaticamente para o seu saldo.'}</p>
   </form>`}
 </div>`;
 }
@@ -125,7 +126,7 @@ export function paginaResultado({ c, a, linhas }) {
   if (c.status === 'falhou') {
     return `<div class="cartao estreito" style="text-align:center"><h1 style="font-size:1.5rem">Não foi possível concluir</h1>
       <p class="muted">A fonte não retornou o resultado desta consulta. O valor de ${reais(c.preco_centavos)} já voltou para o seu saldo.</p>
-      <a class="btn" href="/consultas">Tentar de novo</a></div>`;
+      <a class="btn" href="/consultas">Tentar de novo</a> <a class="btn sec" href="/historico">Ver histórico</a></div>`;
   }
   const cor = COR[a.cor] || COR.neutro;
   return `
@@ -168,7 +169,7 @@ export function paginaHistorico({ consultas, busca = '', dias = 10 }) {
     if (c.status === 'falhou') return '<span class="muted">Falhou (valor estornado)</span>';
     if (c.status !== 'concluida') return 'Processando';
     if (!c.resultado) return '<span class="muted">Expirada</span>';
-    return `<a href="/consulta/${c.id}">Ver</a> · <a href="/consulta/${c.id}/pdf">Baixar PDF</a><br><small class="muted">Disponível até ${ate(c.criado_em)}</small>`;
+    return `<a class="btn" style="min-height:38px;padding:6px 16px" href="/consulta/${c.id}/pdf" target="_blank" rel="noopener">Abrir PDF</a><br><small class="muted">Disponível até ${ate(c.criado_em)}</small>`;
   };
   return `
 <h1 style="font-size:1.8rem">Histórico de consultas</h1>

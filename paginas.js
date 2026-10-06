@@ -178,7 +178,7 @@ export const paginaPainel = ({ usuario, saldo, transacoes, consultas }) => `
 <div class="cartao" style="margin-bottom:18px">
   <h3>Últimas consultas</h3>
   ${consultas.length ? `<div class="rolar"><table class="tabela"><tr><th>Data</th><th>Consulta</th><th>Documento</th><th>Valor</th><th>Status</th></tr>
-    ${consultas.map((c) => `<tr><td>${dt(c.criado_em)}</td><td>${esc(c.produto)}</td><td>${esc(fmtDoc(c.parametro))}</td><td>${reais(c.preco_centavos)}</td><td>${c.status === 'concluida' ? `<a href="/consulta/${c.id}">Ver resultado</a>` : c.status === 'falhou' ? 'Falhou (estornada)' : 'Processando'}</td></tr>`).join('')}
+    ${consultas.map((c) => `<tr><td>${dt(c.criado_em)}</td><td>${esc(c.produto)}</td><td>${esc(fmtDoc(c.parametro))}</td><td>${reais(c.preco_centavos)}</td><td>${c.status === 'concluida' ? (c.resultado ? `<a href="/consulta/${c.id}/pdf" target="_blank" rel="noopener">Abrir PDF</a>` : 'Expirada') : c.status === 'falhou' ? 'Falhou (estornada)' : 'Processando'}</td></tr>`).join('')}
   </table></div>` : '<div class="vazio">Você ainda não fez nenhuma consulta.</div>'}
 </div>
 <div class="cartao">

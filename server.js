@@ -439,7 +439,9 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
     }
   }
   limparCacheSaldo();
-  redirecionar(res, `/consulta/${cid}`);
+  // Consulta concluída: abre direto o PDF. Se falhou, mostra o aviso de estorno.
+  const final = db.prepare('SELECT status FROM consultas WHERE id = ?').get(cid);
+  redirecionar(res, final?.status === 'concluida' ? `/consulta/${cid}/pdf` : `/consulta/${cid}`);
 }));
 
 const dadosLegiveis = (dados) => dados?.dados?.data?.saida ?? dados?.dados?.data ?? dados?.dados ?? {};
