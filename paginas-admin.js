@@ -3,7 +3,7 @@ import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
-  ${[['/admin', 'Resumo'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/config', 'Configurações']]
+  ${[['/admin', 'Resumo'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/backups', 'Backups'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
 const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
@@ -161,5 +161,22 @@ export function adminSaques({ saques, ok }) {
       <input type="hidden" name="id" value="${x.id}"><input type="text" name="obs" placeholder="Observação" aria-label="Observação" style="width:130px;min-height:40px;padding:8px">
       <button class="btn" name="acao" value="pagar" style="min-height:40px;padding:8px 14px">Marcar pago</button>
       <button class="btn sec" name="acao" value="recusar" style="min-height:40px;padding:8px 14px">Recusar</button></form>` : '-'}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhum saque solicitado.</td></tr>'}
+</table></div></div>`;
+}
+
+export function adminBackups({ backups, ok, persistente }) {
+  const kb = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);
+  return `<h1 style="font-size:1.7rem">Backups</h1>${menu('/admin/backups')}${aviso(ok)}
+<div class="cartao" style="margin-bottom:18px">
+  <p style="margin-top:0">O sistema faz uma cópia completa do banco de dados (clientes, saldos, recargas, consultas, comissões e configurações):</p>
+  <ul class="muted"><li><strong>a cada atualização do site</strong>, antes de qualquer ajuste;</li><li><strong>uma vez por dia</strong>, automaticamente;</li><li>e quando você clicar em "Fazer backup agora".</li></ul>
+  <p class="muted">Ficam guardadas as 30 cópias mais recentes. ${persistente ? '' : '<strong style="color:var(--erro)">Atenção: sem o disco permanente, os backups também são apagados nas atualizações.</strong>'}
+  Baixe uma cópia de vez em quando (por exemplo, toda semana) e guarde num lugar seguro: o arquivo contém dados pessoais dos clientes.</p>
+  <form method="post" action="/admin/backups/criar"><button class="btn" type="submit">Fazer backup agora</button></form>
+</div>
+<div class="cartao"><div class="rolar"><table class="tabela">
+  <tr><th>Data</th><th>Arquivo</th><th>Tamanho</th><th></th></tr>
+  ${backups.map((b) => `<tr><td>${esc(new Date(b.data).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }))}</td><td><code>${esc(b.nome)}</code></td><td>${kb(b.tamanho)}</td>
+    <td><a href="/admin/backups/baixar?arquivo=${encodeURIComponent(b.nome)}">Baixar</a></td></tr>`).join('') || '<tr><td colspan="4" class="vazio">Nenhum backup ainda.</td></tr>'}
 </table></div></div>`;
 }

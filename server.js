@@ -3,7 +3,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento } from './db.js';
+import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups } from './db.js';
 import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
 import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo } from './apifull.js';
@@ -737,6 +737,30 @@ rota('GET', '/admin/consultas', exigeAdmin(({ res, usuario }) => pagina(res, 'Ad
 rota('GET', '/admin/recargas', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Recargas', PD.adminRecargas({
   recargas: db.prepare('SELECT r.*, u.nome AS cliente FROM recargas r JOIN usuarios u ON u.id = r.usuario_id ORDER BY r.id DESC LIMIT 300').all(),
 }), usuario)));
+
+// ======================= BACKUPS =======================
+// Backup diário automático
+setInterval(() => { try { fazerBackup('diario'); } catch (e) { console.error('backup diário:', e.message); } }, 24 * 60 * 60 * 1000).unref();
+
+rota('GET', '/admin/backups', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Backups', PD.adminBackups({
+  backups: listarBackups(), ok: url.searchParams.get('ok') ? 'Backup criado.' : '', persistente: armazenamento.persistente,
+}), usuario)));
+
+rota('POST', '/admin/backups/criar', exigeAdmin(async ({ req, res }) => {
+  await corpoForm(req);
+  fazerBackup('manual');
+  redirecionar(res, '/admin/backups?ok=1');
+}));
+
+rota('GET', '/admin/backups/baixar', exigeAdmin(async ({ res, url }) => {
+  const nome = String(url.searchParams.get('arquivo') || '');
+  if (!/^backup-[\w-]+\.db$/.test(nome)) return redirecionar(res, '/admin/backups');
+  try {
+    const dados = await readFile(path.join(pastaBackups, nome));
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${nome}"`, 'Cache-Control': 'no-store' });
+    res.end(dados);
+  } catch { redirecionar(res, '/admin/backups'); }
+}));
 
 // ======================= TERMOS E PRIVACIDADE =======================
 rota('GET', '/termos', ({ res, usuario }) => pagina(res, 'Termos de uso', P.paginaTexto('Termos de uso', TERMOS), usuario));

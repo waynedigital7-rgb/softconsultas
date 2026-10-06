@@ -1,6 +1,6 @@
 // Banco de dados (SQLite embutido no Node 22, salvo no disco persistente do Render)
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, existsSync, statSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync, readdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 
 export const pasta = process.env.DATA_DIR || './dados';
@@ -22,6 +22,31 @@ armazenamento.persistente = process.env.RENDER ? armazenamento.definido && armaz
 export const pastaPdfs = path.join(pasta, 'pdfs');
 mkdirSync(pastaPdfs, { recursive: true });
 export const db = new DatabaseSync(path.join(pasta, 'softconsultas.db'));
+
+// ---------- Backups (cópia completa do banco, sem parar o sistema) ----------
+export const pastaBackups = path.join(pasta, 'backups');
+mkdirSync(pastaBackups, { recursive: true });
+const MANTER_BACKUPS = 30;
+export function fazerBackup(motivo = 'manual') {
+  const tabelas = db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='usuarios'").get().n;
+  if (!tabelas) return null; // banco novo, nada para guardar
+  const carimbo = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
+  const nome = `backup-${carimbo}-${motivo.replace(/[^a-z0-9-]/gi, '')}.db`;
+  const destino = path.join(pastaBackups, nome);
+  db.exec(`VACUUM INTO '${destino.replace(/'/g, "''")}'`);
+  // Mantém só os mais recentes
+  const lista = readdirSync(pastaBackups).filter((f) => f.endsWith('.db')).sort();
+  for (const antigo of lista.slice(0, Math.max(0, lista.length - MANTER_BACKUPS))) {
+    try { unlinkSync(path.join(pastaBackups, antigo)); } catch {}
+  }
+  return nome;
+}
+export const listarBackups = () => readdirSync(pastaBackups).filter((f) => f.endsWith('.db')).sort().reverse()
+  .map((f) => ({ nome: f, tamanho: statSync(path.join(pastaBackups, f)).size, data: statSync(path.join(pastaBackups, f)).mtime }));
+
+// Toda inicialização (ou seja, toda atualização do site) faz uma cópia ANTES de qualquer ajuste no banco
+try { const b = fazerBackup('antes-da-atualizacao'); if (b) console.log(`Backup automático criado: ${b}`); }
+catch (e) { console.error('Falha no backup inicial:', e.message); }
 
 db.exec(`
   PRAGMA journal_mode = WAL;
