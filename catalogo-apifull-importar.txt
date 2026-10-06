@@ -1,103 +1,103 @@
 # Catálogo APIFull para Soft Consultas. Formato: Nome; Endpoint; Custo; Categoria; Documento; Descrição; Campo
 # Linhas sem custo entram INATIVAS: informe o custo no Admin para ativar.
 Cred Completa Plus; e-boavista; 5,83; Dívidas e Crédito; cpf_cnpj; Score, rating, negativações, protestos, ações, cheques, cadastro positivo e histórico de consultas.; document
-Dados Financeiros; pf-dados-financeiros; 3,00; Dívidas e Crédito; cpf; Estimativas de renda, patrimônio, classe social e capacidade financeira.; document
+Dados Financeiros; pf-dados-financeiros; 3,00; Dados; cpf; Estimativas de renda, patrimônio, classe social e capacidade financeira.; document
 Certidão FGTS; cert-pj-fgts; ; Certidões; cnpj; Consulta o Certificado de Regularidade do FGTS, situação e endereço da empresa.; document
 Certidão Judicial Nada Consta - PF; cert-pf-judicial-nada-consta; ; Certidões; cpf; Consulta certidão judicial de nada consta para o CPF.; document
 Certidão Negativa CGU - PF; cert-pf-negativa-cgu; ; Certidões; cpf; Consulta certidão negativa da Controladoria-Geral da União para o CPF.; document
-Certidão Negativa CGU - PJ; cert-pj-negativa-cgu; ; Certidões; cnpj; Consulta certidão negativa da Controladoria-Geral da União para o CNPJ.; document
-Certidão Negativa CNJ - PF; cert-pf-negativa-cnj; ; Certidões; cpf; Consulta certidão negativa de improbidade e inelegibilidade do CNJ para o CPF.; document
-Certidão Negativa CNJ - PJ; cert-pj-negativa-cnj; ; Certidões; cnpj; Consulta certidão negativa de improbidade e inelegibilidade do CNJ para o CNPJ.; document
-Certidão Negativa IBAMA - PF; cert-pf-negativa-ibama; ; Certidões; cpf; Consulta certidão negativa do IBAMA para o CPF.; document
-Certidão Negativa IBAMA - PJ; cert-pj-negativa-ibama; ; Certidões; cnpj; Consulta certidão negativa do IBAMA para o CNPJ.; document
-Certidão PGFN - Empresa; cert-pj-pgfn; ; Certidões; cnpj; Consulta certidão de regularidade fiscal da empresa perante a PGFN e a Receita Federal.; document
-Certidão PGFN - Pessoa Física; cert-pf-pgfn; ; Certidões; cpf; Consulta certidão de regularidade fiscal perante a PGFN e a Receita Federal.; document
-Certidão de Antecedentes Criminais; cert-pf-antecedentes-criminais; ; Certidões; cpf; Emite ou consulta a certidão federal de antecedentes criminais para o CPF.; document
-Certidão de Ações Trabalhistas - PF; cert-pf-acoes-trabalhistas; ; Certidões; cpf; Consulta certidão de ações trabalhistas vinculadas ao CPF.; document
-Certidão de Ações Trabalhistas - PJ; cert-pj-acoes-trabalhistas; ; Certidões; cnpj; Consulta certidão de ações trabalhistas vinculadas ao CNPJ.; document
-Certidão de Contratação de PCD; cert-pj-contratacao-pcd; ; Certidões; cnpj; Consulta a certidão de cumprimento da reserva legal para contratação de pessoas com deficiência.; document
-Certidão de Débitos Trabalhistas - PF; cert-pf-debitos-trabalhistas; ; Certidões; cpf; Consulta a Certidão Negativa de Débitos Trabalhistas do CPF.; document
-Certidão de Débitos Trabalhistas - PJ; cert-pj-debitos-trabalhistas; ; Certidões; cnpj; Consulta a Certidão Negativa de Débitos Trabalhistas do CNPJ.; document
-Certidão de Embargos IBAMA - PF; cert-pf-embargos-ibama; ; Certidões; cpf; Consulta a existência de embargos ambientais do IBAMA associados ao CPF.; document
-Certidão de Embargos IBAMA - PJ; cert-pj-embargos-ibama; ; Certidões; cnpj; Consulta a existência de embargos ambientais do IBAMA associados ao CNPJ.; document
-Certidão de Regularidade IBAMA - PF; cert-pf-regularidade-ibama; ; Certidões; cpf; Consulta a certidão de regularidade do CPF nos cadastros do IBAMA.; document
-Certidão de Regularidade IBAMA - PJ; cert-pj-regularidade-ibama; ; Certidões; cnpj; Consulta a certidão de regularidade do CNPJ nos cadastros do IBAMA.; document
+Certidão Negativa CGU - PJ; cert-pj-negativa-cgu; 2,46; Certidões; cnpj; Consulta certidão negativa da Controladoria-Geral da União para o CNPJ.; document
+Certidão Negativa CNJ - PF; cert-pf-negativa-cnj; 2,46; Certidões; cpf; Consulta certidão negativa de improbidade e inelegibilidade do CNJ para o CPF.; document
+Certidão Negativa CNJ - PJ; cert-pj-negativa-cnj; 2,46; Certidões; cnpj; Consulta certidão negativa de improbidade e inelegibilidade do CNJ para o CNPJ.; document
+Certidão Negativa IBAMA - PF; cert-pf-negativa-ibama; 2,46; Certidões; cpf; Consulta certidão negativa do IBAMA para o CPF.; document
+Certidão Negativa IBAMA - PJ; cert-pj-negativa-ibama; 2,46; Certidões; cnpj; Consulta certidão negativa do IBAMA para o CNPJ.; document
+Certidão PGFN - Empresa; cert-pj-pgfn; 2,46; Certidões; cnpj; Consulta certidão de regularidade fiscal da empresa perante a PGFN e a Receita Federal.; document
+Certidão PGFN - Pessoa Física; cert-pf-pgfn; 2,46; Certidões; cpf; Consulta certidão de regularidade fiscal perante a PGFN e a Receita Federal.; document
+Certidão de Antecedentes Criminais; cert-pf-antecedentes-criminais; 2,46; Certidões; cpf; Emite ou consulta a certidão federal de antecedentes criminais para o CPF.; document
+Certidão de Ações Trabalhistas - PF; cert-pf-acoes-trabalhistas; 2,46; Certidões; cpf; Consulta certidão de ações trabalhistas vinculadas ao CPF.; document
+Certidão de Ações Trabalhistas - PJ; cert-pj-acoes-trabalhistas; 2,46; Certidões; cnpj; Consulta certidão de ações trabalhistas vinculadas ao CNPJ.; document
+Certidão de Contratação de PCD; cert-pj-contratacao-pcd; 2,46; Certidões; cnpj; Consulta a certidão de cumprimento da reserva legal para contratação de pessoas com deficiência.; document
+Certidão de Débitos Trabalhistas - PF; cert-pf-debitos-trabalhistas; 2,46; Certidões; cpf; Consulta a Certidão Negativa de Débitos Trabalhistas do CPF.; document
+Certidão de Débitos Trabalhistas - PJ; cert-pj-debitos-trabalhistas; 2,46; Certidões; cnpj; Consulta a Certidão Negativa de Débitos Trabalhistas do CNPJ.; document
+Certidão de Embargos IBAMA - PF; cert-pf-embargos-ibama; 2,46; Certidões; cpf; Consulta a existência de embargos ambientais do IBAMA associados ao CPF.; document
+Certidão de Embargos IBAMA - PJ; cert-pj-embargos-ibama; 2,46; Certidões; cnpj; Consulta a existência de embargos ambientais do IBAMA associados ao CNPJ.; document
+Certidão de Regularidade IBAMA - PF; cert-pf-regularidade-ibama; 2,46; Certidões; cpf; Consulta a certidão de regularidade do CPF nos cadastros do IBAMA.; document
+Certidão de Regularidade IBAMA - PJ; cert-pj-regularidade-ibama; 2,46; Certidões; cnpj; Consulta a certidão de regularidade do CNPJ nos cadastros do IBAMA.; document
 Certidão de Situação Cadastral; cert-pj-situacao-cadastral; ; Certidões; cnpj; Consulta o comprovante e a situação cadastral atual do CNPJ na Receita Federal.; document
-Consulta de Dívida Ativa PGFN - PF; cert-pf-divida-ativa-pgfn; ; Certidões; cpf; Pesquisa o CPF na lista de devedores e retorna o total de dívida ativa disponível.; document
-Compliance PLD QSA V3; pj-compliance-pld-qsa-v3; ; Compliance; cnpj; Aplica a análise de PLD V3 aos sócios e administradores vinculados ao CNPJ.; document
-Compliance PLD V3 - Empresa; pj-compliance-pld-v3; ; Compliance; cnpj; Análise empresarial de PLD com sanções, processos, notícias, relacionamentos e nível de risco.; document
-Compliance PLD V3 - Pessoa Física; pf-compliance-pld-v3; ; Compliance; cpf; Análise de compliance e prevenção à lavagem de dinheiro com PEP, sanções, processos e nível de risco.; document
+Consulta de Dívida Ativa PGFN - PF; cert-pf-divida-ativa-pgfn; 2,46; Certidões; cpf; Pesquisa o CPF na lista de devedores e retorna o total de dívida ativa disponível.; document
+Compliance PLD QSA V3; pj-compliance-pld-qsa-v3; 14,37; Compliance; cnpj; Aplica a análise de PLD V3 aos sócios e administradores vinculados ao CNPJ.; document
+Compliance PLD V3 - Empresa; pj-compliance-pld-v3; 14,37; Compliance; cnpj; Análise empresarial de PLD com sanções, processos, notícias, relacionamentos e nível de risco.; document
+Compliance PLD V3 - Pessoa Física; pf-compliance-pld-v3; 4,79; Compliance; cpf; Análise de compliance e prevenção à lavagem de dinheiro com PEP, sanções, processos e nível de risco.; document
 Doações Políticas - Empresa; pj-doacoes-politicas; ; Compliance; cnpj; Consulta doações eleitorais realizadas pelo CNPJ, com eleição, partido, favorecido e valores.; document
 Doações Políticas - Pessoa Física; pf-doacoes-politicas; ; Compliance; cpf; Consulta doações eleitorais vinculadas ao CPF, incluindo eleição, partido, candidato e valores.; document
 Pessoa Exposta Politicamente; pf-pep; ; Compliance; cpf; Identifica condição de PEP, função pública, órgão, período de exercício e vínculos relacionados.; document
 Sanções e Restrições - Empresa; pj-sancoes-restricoes; ; Compliance; cnpj; Pesquisa o CNPJ em listas nacionais e internacionais de sanções, impedimentos e restrições.; document
 Sanções e Restrições - Pessoa Física; pf-sancoes-restricoes; ; Compliance; cpf; Pesquisa o CPF em listas nacionais e internacionais de sanções, impedimentos e restrições.; document
-Assistência Social; pf-assistencia-social; ; Dados; cpf; Consulta benefícios e auxílios sociais vinculados ao CPF, com situação, período e valores disponíveis.; document
-Benefício do INSS e Consignados; beneficio-inss; 5,05; Dados; cpf; Consulta benefícios do INSS e consignados por CPF. Requer saldo e pode consumir créditos. Verifique status no corpo também em respostas HTTP 200. Os campos...; cpf
-Carteira Nacional de Habilitação; pf-cnh; ; Dados; cpf; Consulta dados da CNH, categoria, validade, RENACH, filiação e eventuais débitos vinculados.; document
-Carteira Nacional de Habilitação V2; pf-cnh-v2; ; Dados; cpf; Consulta ampliada da CNH com foto, categoria, validade, RENACH, filiação e débitos.; document
-Carteira da Pessoa Idosa; pf-carteira-idoso; ; Dados; cpf; Valida a Carteira da Pessoa Idosa e retorna situação, emissão, identificação e NIS.; document
-Celulares Hot; pf-celulares-hot; ; Dados; cpf; Retorna celulares priorizados da base hot, incluindo tipo e indicadores de contato disponíveis.; document
+Assistência Social; pf-assistencia-social; 0,47; Dados; cpf; Consulta benefícios e auxílios sociais vinculados ao CPF, com situação, período e valores disponíveis.; document
+Benefício do INSS e Consignados; beneficio-inss; 5,05; Dados; cpf; Benefícios do INSS e empréstimos consignados vinculados ao CPF.; cpf
+Carteira Nacional de Habilitação; pf-cnh; 6,68; Dados; cpf; Consulta dados da CNH, categoria, validade, RENACH, filiação e eventuais débitos vinculados.; document
+Carteira Nacional de Habilitação V2; pf-cnh-v2; 5,68; Dados; cpf; Consulta ampliada da CNH com foto, categoria, validade, RENACH, filiação e débitos.; document
+Carteira da Pessoa Idosa; pf-carteira-idoso; 2,46; Dados; cpf; Valida a Carteira da Pessoa Idosa e retorna situação, emissão, identificação e NIS.; document
+Celulares Hot; pf-celulares-hot; 0,61; Dados; cpf; Retorna celulares priorizados da base hot, incluindo tipo e indicadores de contato disponíveis.; document
 Celulares Hot - Empresa; pj-celulares-hot; ; Dados; cnpj; Retorna celulares empresariais priorizados, com tipo, WhatsApp e indicadores de contato.; document
 Celulares Hot e E-mail; pf-celulares-hot-email; ; Dados; cpf; Combina celulares priorizados da base hot com os e-mails mais relevantes associados ao CPF.; document
-Conselhos de Classe; pf-conselhos-classe; ; Dados; cpf; Consulta registros profissionais em conselhos de classe, com categoria, situação e período de filiação.; document
+Conselhos de Classe; pf-conselhos-classe; 0,47; Dados; cpf; Consulta registros profissionais em conselhos de classe, com categoria, situação e período de filiação.; document
 Corretor de Seguros de Danos; pf-corretor-seguros; ; Dados; cpf; Verifica o registro de corretor de seguros de danos, produtos autorizados e situação cadastral.; document
-Corretor de Seguros de Danos - PJ; pj-corretor-seguros; ; Dados; cnpj; Verifica registro empresarial de corretor de seguros, produtos autorizados e situação cadastral.; document
-Dados Cadastrais Básicos; pf-dados-cadastrais; ; Dados; cpf; Retorna identificação, filiação, nascimento, situação na Receita Federal e outros dados cadastrais do CPF.; document
-Dados Cadastrais da Empresa; pj-dados-cadastrais; ; Dados; cnpj; Retorna razão social, situação, CNAEs, porte, capital, faturamento e outros dados do CNPJ.; document
-Dados Cadastrais e Contato; pf-dados-contato; ; Dados; cpf; Retorna em uma consulta dados cadastrais, telefones, e-mails e endereços associados ao CPF.; document
-Dados Profissionais; pf-dados-profissionais; ; Dados; cpf; Retorna vínculos profissionais, empregadores, ocupações e participações empresariais disponíveis.; document
+Corretor de Seguros de Danos - PJ; pj-corretor-seguros; 2,46; Dados; cnpj; Verifica registro empresarial de corretor de seguros, produtos autorizados e situação cadastral.; document
+Dados Cadastrais Básicos; pf-dados-cadastrais; 0,39; Dados; cpf; Retorna identificação, filiação, nascimento, situação na Receita Federal e outros dados cadastrais do CPF.; document
+Dados Cadastrais da Empresa; pj-dados-cadastrais; 0,79; Dados; cnpj; Retorna razão social, situação, CNAEs, porte, capital, faturamento e outros dados do CNPJ.; document
+Dados Cadastrais e Contato; pf-dados-contato; 1,21; Dados; cpf; Retorna em uma consulta dados cadastrais, telefones, e-mails e endereços associados ao CPF.; document
+Dados Profissionais; pf-dados-profissionais; 0,94; Dados; cpf; Retorna vínculos profissionais, empregadores, ocupações e participações empresariais disponíveis.; document
 Dados de Contato da Empresa; pj-dados-contato; ; Dados; cnpj; Retorna telefones, fax e e-mails cadastrais associados ao CNPJ.; document
-Dados de Óbito; pf-obito; ; Dados; cpf; Verifica indicação de óbito, ano e origem da informação para o CPF consultado.; document
-E-mails - Pessoa Física; pf-emails; ; Dados; cpf; Retorna e-mails associados ao CPF com domínio, tipo, prioridade, similaridade e qualidade.; document
-Empresas Societárias - PJ; pj-empresas-societarias; ; Dados; cnpj; Mapeia empresas ligadas aos sócios e administradores do CNPJ consultado.; document
-Empresas Societárias - Pessoa Física; pf-empresas-societarias; ; Dados; cpf; Lista empresas das quais a pessoa participa ou participou, com situação e período do vínculo societário.; document
-Endereços - Pessoa Física; pf-enderecos; ; Dados; cpf; Lista endereços associados ao CPF, ordenados por prioridade e enriquecidos com geolocalização.; document
+Dados de Óbito; pf-obito; 0,20; Dados; cpf; Verifica indicação de óbito, ano e origem da informação para o CPF consultado.; document
+E-mails - Pessoa Física; pf-emails; 0,47; Dados; cpf; Retorna e-mails associados ao CPF com domínio, tipo, prioridade, similaridade e qualidade.; document
+Empresas Societárias - PJ; pj-empresas-societarias; 0,65; Dados; cnpj; Mapeia empresas ligadas aos sócios e administradores do CNPJ consultado.; document
+Empresas Societárias - Pessoa Física; pf-empresas-societarias; 0,65; Dados; cpf; Lista empresas das quais a pessoa participa ou participou, com situação e período do vínculo societário.; document
+Endereços - Pessoa Física; pf-enderecos; 0,47; Dados; cpf; Lista endereços associados ao CPF, ordenados por prioridade e enriquecidos com geolocalização.; document
 Histórico Escolar e Acadêmico; pf-historico-academico; ; Dados; cpf; Retorna instituições, cursos e períodos acadêmicos encontrados para a pessoa consultada.; document
-Localização da Empresa; pj-localizacao; ; Dados; cnpj; Retorna endereço empresarial completo, município, UF, latitude, longitude e mapa.; document
-Nome Social; pf-nome-social; ; Dados; cpf; Consulta o nome social associado ao CPF e a data da última atualização disponível.; document
-Passe Livre; pf-passe-livre; ; Dados; cpf; Verifica credencial Passe Livre, situação, número, emissão e validade para o CPF.; document
-Percentual de Participação Societária; pj-participacao-societaria; ; Dados; cnpj; Detalha participações societárias, percentuais, quantidade e composição dos sócios.; document
-Pessoas Relacionadas; pf-pessoas-relacionadas; ; Dados; cpf; Mapeia familiares, sócios e outras pessoas relacionadas ao CPF a partir das bases disponíveis.; document
-Pessoas Relacionadas em Grafo; pf-relacionamentos-grafo; ; Dados; cpf; Apresenta relações do CPF em formato de grafo, com pessoas, empresas e distância entre vínculos.; document
-Quadro Societário; pj-quadro-societario; ; Dados; cnpj; Retorna o quadro societário do CNPJ, incluindo sócios, documentos, qualificações e vínculos.; document
-Restituição de Imposto de Renda; pf-restituicao-ir; ; Dados; cpf; Consulta a situação da restituição do Imposto de Renda, banco, lote e data de crédito.; document
-SUFRAMA; pj-suframa; ; Dados; cnpj; Consulta inscrição, incentivos, situação cadastral e projetos aprovados na SUFRAMA.; document
-Servidor Público; pf-servidor-publico; ; Dados; cpf; Consulta vínculos com órgãos públicos, esfera, empregador, cargo e localização disponíveis.; document
-Sintegra; pj-sintegra; ; Dados; cnpj; Consulta inscrição estadual, situação cadastral, atividade econômica e endereço no Sintegra.; document
-Telefones - Pessoa Física; pf-telefones; ; Dados; cpf; Lista telefones associados ao CPF, classificados por tipo e prioridade.; document
-Telefones Hot Completo; pf-telefones-hot-completo; ; Dados; cpf; Retorna telefones hot completos, enriquecidos e ordenados por prioridade.; document
+Localização da Empresa; pj-localizacao; 0,51; Dados; cnpj; Retorna endereço empresarial completo, município, UF, latitude, longitude e mapa.; document
+Nome Social; pf-nome-social; 0,20; Dados; cpf; Consulta o nome social associado ao CPF e a data da última atualização disponível.; document
+Passe Livre; pf-passe-livre; 2,46; Dados; cpf; Verifica credencial Passe Livre, situação, número, emissão e validade para o CPF.; document
+Percentual de Participação Societária; pj-participacao-societaria; 12,02; Dados; cnpj; Detalha participações societárias, percentuais, quantidade e composição dos sócios.; document
+Pessoas Relacionadas; pf-pessoas-relacionadas; 0,47; Dados; cpf; Mapeia familiares, sócios e outras pessoas relacionadas ao CPF a partir das bases disponíveis.; document
+Pessoas Relacionadas em Grafo; pf-relacionamentos-grafo; 0,47; Dados; cpf; Apresenta relações do CPF em formato de grafo, com pessoas, empresas e distância entre vínculos.; document
+Quadro Societário; pj-quadro-societario; 0,65; Dados; cnpj; Retorna o quadro societário do CNPJ, incluindo sócios, documentos, qualificações e vínculos.; document
+Restituição de Imposto de Renda; pf-restituicao-ir; 0,47; Dados; cpf; Consulta a situação da restituição do Imposto de Renda, banco, lote e data de crédito.; document
+SUFRAMA; pj-suframa; 2,81; Dados; cnpj; Consulta inscrição, incentivos, situação cadastral e projetos aprovados na SUFRAMA.; document
+Servidor Público; pf-servidor-publico; 0,47; Dados; cpf; Consulta vínculos com órgãos públicos, esfera, empregador, cargo e localização disponíveis.; document
+Sintegra; pj-sintegra; 2,46; Dados; cnpj; Consulta inscrição estadual, situação cadastral, atividade econômica e endereço no Sintegra.; document
+Telefones - Pessoa Física; pf-telefones; 0,47; Dados; cpf; Lista telefones associados ao CPF, classificados por tipo e prioridade.; document
+Telefones Hot Completo; pf-telefones-hot-completo; 0,54; Dados; cpf; Retorna telefones hot completos, enriquecidos e ordenados por prioridade.; document
 Telefones Hot Completo e E-mails; pf-telefones-hot-completo-email; ; Dados; cpf; Combina telefones hot completos com e-mails classificados por prioridade e qualidade.; document
-Telefones Hot dos Sócios; pj-telefones-socios-hot; ; Dados; cnpj; Retorna telefones priorizados dos sócios, com documento relacionado, tipo e nível do vínculo.; document
+Telefones Hot dos Sócios; pj-telefones-socios-hot; 0,47; Dados; cnpj; Retorna telefones priorizados dos sócios, com documento relacionado, tipo e nível do vínculo.; document
 Análise de Crédito Completa; pf-credito-completo; 49,95; Dívidas e Crédito; cpf; Análise ampla de crédito com dados cadastrais, score, negativações, protestos, consultas e ocorrências.; document
 Análise de Crédito Essencial; pf-credito-essencial; 38,07; Dívidas e Crédito; cpf; Análise essencial de crédito com score, negativações, protestos e principais dados cadastrais.; document
 Análise de Crédito Mais; pf-credito-mais; 42,31; Dívidas e Crédito; cpf; Análise intermediária de crédito com score, restrições, protestos, consultas e telefone vinculado.; document
-Busca dados de protestos nacional; e-cenprot; ; Dívidas e Crédito; cpf_cnpj; ; document
-Crédito Positivo Real Time; credito-positivo; 37,91; Dívidas e Crédito; cpf_cnpj; ; document
-Busca por processos judiciais; processos-judiciais; ; Dívidas e Crédito; cpf_cnpj; ; document
-CNPJ; cnpj; ; Dívidas e Crédito; cnpj; Use POST com corpo JSON. A rota legada aceita outros métodos, mas eles não são recomendados para integração.; cnpj
-CPF Completo; ic-cpf-completo; ; Dívidas e Crédito; cpf; ; cpf
-CPF simples; pf-dadosbasicos; ; Dívidas e Crédito; cpf; ; cpf
-Dados cadastrais, score e dívidas; r-cadastrais-score-dividas; 6,46; Dívidas e Crédito; cpf_cnpj; ; document
-Dados cadastrais, score e dívidas CP; cp-cadastrais-score-dividas; 7,00; Dívidas e Crédito; cpf_cnpj; ; document
-Certidão Nacional de Débitos Trabalhistas; ic-cndt; ; Dívidas e Crédito; cpf_cnpj; ; document
-Consulta Boa Vista; scpc-boavista; ; Dívidas e Crédito; cpf_cnpj; ; document
-Protesto Nacional; protesto-nacional; 8,00; Dívidas e Crédito; cpf_cnpj; ; document
-SCR Premium; scr-premium; 13,36; Dívidas e Crédito; cpf_cnpj; ; document
-SPC Brasil; spc-brasil; 17,88; Dívidas e Crédito; cpf_cnpj; ; document
-Consulta Serasa Básica; serasa-basica; ; Dívidas e Crédito; cpf_cnpj; ; document
-Serasa Premium; serasa-premium; 15,72; Dívidas e Crédito; cpf_cnpj; ; document
-Serasa Premium V2; serasa-premium-v2; 17,88; Dívidas e Crédito; cpf_cnpj; ; document
-Rating Score; rating-score; 24,85; Dívidas e Crédito; cpf_cnpj; ; document
-Consulta de Rating de crédito bancário; rating-credito-bancario; ; Dívidas e Crédito; cpf_cnpj; ; document
-CADIN; cadin; 1,87; Dívidas e Crédito; cpf_cnpj; ; document
-Consulta de imóveis por CPF ou CNPJ; consulta-imoveis; ; Dívidas e Crédito; cpf_cnpj; ; document
-SCR e Score (BACEN); bacen; 14,74; Dívidas e Crédito; cpf_cnpj; ; document
+Protestos Nacional (CENPROT); e-cenprot; ; Dívidas e Crédito; cpf_cnpj; Protestos em cartório em todo o Brasil (CENPROT).; document
+Crédito Positivo Real Time; credito-positivo; 37,91; Dívidas e Crédito; cpf_cnpj; Histórico e comportamento financeiro em tempo real, com dados de Serasa e SPC.; document
+Busca por processos judiciais; processos-judiciais; ; Dívidas e Crédito; cpf_cnpj; Processos judiciais vinculados ao CPF ou CNPJ.; document
+Consulta CNPJ; cnpj; 0,14; Dados; cnpj; Dados cadastrais da empresa: razão social, situação, endereço e atividade.; cnpj
+CPF Completo; ic-cpf-completo; 1,40; Dívidas e Crédito; cpf; Dados gerais, endereços, telefones, e-mails, benefício INSS, parentes e empresas relacionadas.; cpf
+CPF Simples; pf-dadosbasicos; 0,23; Dívidas e Crédito; cpf; Dados cadastrais básicos do CPF a partir de fontes oficiais.; cpf
+Dados cadastrais, score e dívidas; r-cadastrais-score-dividas; 6,46; Dívidas e Crédito; cpf_cnpj; Dados cadastrais, score e pendências financeiras.; document
+Dados cadastrais, score e dívidas CP; cp-cadastrais-score-dividas; 7,00; Dívidas e Crédito; cpf_cnpj; Dados cadastrais, score e pendências financeiras, com cadastro positivo.; document
+Certidão Nacional de Débitos Trabalhistas; ic-cndt; ; Dívidas e Crédito; cpf_cnpj; Certidão Nacional de Débitos Trabalhistas (CNDT) da Justiça do Trabalho.; document
+Consulta Boa Vista; scpc-boavista; ; Dívidas e Crédito; cpf_cnpj; Pendências financeiras e score na base da Boa Vista SCPC.; document
+Protesto Nacional; protesto-nacional; 8,00; Dívidas e Crédito; cpf_cnpj; Protestos em cartório em todo o Brasil.; document
+SCR Premium; scr-premium; 13,36; Dívidas e Crédito; cpf_cnpj; Operações de crédito registradas no Banco Central (SCR) por bancos e financeiras.; document
+SPC Brasil; spc-brasil; 17,88; Dívidas e Crédito; cpf_cnpj; Dados cadastrais, pendências financeiras SPC, ações cíveis, cheques sem fundo e protestos.; document
+Consulta Serasa Básica; serasa-basica; ; Dívidas e Crédito; cpf_cnpj; Consulta básica de restrições na Serasa.; document
+Serasa Premium; serasa-premium; 15,72; Dívidas e Crédito; cpf_cnpj; Dados cadastrais, score, pendências financeiras, protestos e cheques na Serasa.; document
+Serasa Premium V2; serasa-premium-v2; 17,88; Dívidas e Crédito; cpf_cnpj; Dados cadastrais, score, pendências financeiras, protestos e cheques na Serasa (versão 2).; document
+Rating Score; rating-score; 24,85; Dívidas e Crédito; cpf_cnpj; Pontuação e classificação de risco de crédito de pessoa física ou empresa.; document
+Consulta de Rating de crédito bancário; rating-credito-bancario; ; Dívidas e Crédito; cpf_cnpj; Rating de crédito bancário do consultado.; document
+CADIN; cadin; 1,87; Dívidas e Crédito; cpf_cnpj; Dívidas com órgãos federais (CADIN) em tempo real.; document
+Consulta de imóveis; consulta-imoveis; 16,38; Dívidas e Crédito; cpf_cnpj; Imóveis vinculados ao CPF ou CNPJ, nas capitais dos estados.; document
+SCR e Score (BACEN); bacen; 14,74; Dívidas e Crédito; cpf_cnpj; Dívidas bancárias registradas no Banco Central (SCR) e score.; document
 Define Limite Positivo; pj-define-limite; 68,03; Dívidas e Crédito; cnpj; Análise completa para definição de limite de crédito empresarial com riscos, consultas e restrições.; document
 Define Negócio Positivo; pj-define-negocio; 57,65; Dívidas e Crédito; cnpj; Análise empresarial positiva com estrutura societária, consultas e riscos financeiros.; document
 Define Risco Positivo; pj-define-risco; 35,32; Dívidas e Crédito; cnpj; Avalia o risco de crédito da empresa com consultas anteriores, restrições e indicadores financeiros.; document
 Finanças da Empresa; pj-financas; 842,40; Dívidas e Crédito; cnpj; Retorna balanços, DRE, contas detalhadas, indicadores financeiros e documentos disponíveis.; document
-QUOD; ic-quod; 11,19; Dívidas e Crédito; cpf_cnpj; ; document
+QUOD; ic-quod; 11,19; Dívidas e Crédito; cpf_cnpj; Informações gerais de dívidas e créditos na QUOD.; document
 QUOD Consulta - Empresa; pj-quod-consulta; 29,79; Dívidas e Crédito; cnpj; Consolida dados cadastrais, contatos, negativações, protestos e score empresarial QUOD.; document
 QUOD Consulta - Pessoa Física; pf-quod-consulta; 22,90; Dívidas e Crédito; cpf; Consolida dados cadastrais, contatos, negativações, protestos e score QUOD.; document
 QUOD Negativo Detalhe - Empresa; pj-quod-negativo-detalhe; 14,90; Dívidas e Crédito; cnpj; Detalha negativações, apontamentos, protestos, consultas e valores vinculados ao CNPJ.; document
@@ -106,35 +106,55 @@ QUOD Negativo Flag - Empresa; pj-quod-negativo-flag; 8,95; Dívidas e Crédito; 
 QUOD Negativo Flag - Pessoa Física; pf-quod-negativo-flag; 6,81; Dívidas e Crédito; cpf; Retorna indicadores resumidos de negativação e situação cadastral na QUOD.; document
 QUOD Score de Crédito; pf-quod-score; 14,66; Dívidas e Crédito; cpf; Retorna score de crédito QUOD, sub-scores, segmento e indicadores cadastrais.; document
 QUOD Score de Crédito - Empresa; pj-quod-score; 19,10; Dívidas e Crédito; cnpj; Retorna score de crédito empresarial QUOD, segmento e indicadores cadastrais.; document
-SCPC Boa vista plus; ap-boavista; ; Dívidas e Crédito; cpf_cnpj; ; document
-SCR e Score (BACEN) V2; ic-bacen; 21,90; Dívidas e Crédito; cpf_cnpj; ; document
+Boa Vista Essencial Positivo; ap-boavista; 6,44; Dívidas e Crédito; cpf_cnpj; Dados cadastrais, score, pendências financeiras, protestos e cheques na Boa Vista.; document
+SCR e Score (BACEN) V2; ic-bacen; 21,90; Dívidas e Crédito; cpf_cnpj; Dívidas bancárias registradas no Banco Central (SCR) e score (versão 2).; document
 Score de Crédito NV; pf-score-credito-nv; ; Dívidas e Crédito; cpf; Retorna o score de crédito NV calculado para o CPF consultado.; document
 API de placa grátis; placa-basica; ; Ferramentas; placa; ; placa
-Mandados de Prisão; pf-mandados-prisao; ; Jurídico; cpf; Consulta mandados de prisão no BNMP, com situação, órgão expedidor, data e referência da peça.; document
-Processos Judiciais - Empresa; pj-processos-judiciais; ; Jurídico; cnpj; Lista processos judiciais associados ao CNPJ, com tribunal, assunto, partes e movimentações.; document
-Processos Judiciais - Pessoa Física; pf-processos-judiciais; ; Jurídico; cpf; Lista processos judiciais associados ao CPF, com tribunal, assunto, partes e movimentações.; document
-Agregados básico; agregados-basica; ; Veículos; placa; ; placa
-Agregados própria; agregados-propria; ; Veículos; placa; ; placa
-BIN Estadual; ic-bin-estadual; ; Veículos; placa; ; placa
-BIN Nacional; ic-bin-nacional; ; Veículos; placa; ; placa
-Busca dados Consulta integrada que reúne múltiplas verificações em uma única pesquisa; csv-renainf-renajud-recall-bin-proprietario; ; Veículos; placa; ; placa
-Busca dados Leilão; leilao; ; Veículos; placa; ; placa
-Busca histórico de roubo e furto; roubo-furto; ; Veículos; placa; ; placa
-Busca por débitos veicular; debitos-veicular; ; Veículos; placa; ; placa
-Combo de Veículos RNTRC; veiculo-combo-rntrc; ; Veículos; placa; Combina dados básicos, débitos e informações ANTT/RNTRC do veículo consultado pela placa.; placa
-Consulta CSV V2; csv-v2; ; Veículos; placa; ; placa
-Consulta Renainf; renainf; ; Veículos; placa; ; placa
-Consulta Renajud; renajud; ; Veículos; placa; ; placa
-Consulta de Vipcar; ic-vipcar; ; Veículos; placa; ; placa
-Consulta passagens em radares por placa; placa-radar; ; Veículos; placa; ; placa
-Dados Básicos do Veículo; veiculo-dados-basicos; ; Veículos; placa; Retorna identificação, características, proprietário e restrições básicas do veículo.; placa
-Dados Básicos e Débitos do Veículo; veiculo-dados-debitos; ; Veículos; placa; Retorna dados básicos e débitos como IPVA, licenciamento, multas e demais taxas disponíveis.; placa
-FIPE; fipe; ; Veículos; placa; ; placa
+Mandados de Prisão; pf-mandados-prisao; 0,47; Jurídico; cpf; Consulta mandados de prisão no BNMP, com situação, órgão expedidor, data e referência da peça.; document
+Processos Judiciais - Empresa; pj-processos-judiciais; 0,65; Jurídico; cnpj; Lista processos judiciais associados ao CNPJ, com tribunal, assunto, partes e movimentações.; document
+Processos Judiciais - Pessoa Física; pf-processos-judiciais; 0,65; Jurídico; cpf; Lista processos judiciais associados ao CPF, com tribunal, assunto, partes e movimentações.; document
+Placa Super Básica; agregados-basica; 0,19; Veículos; placa; Marca, modelo, chassi, ano, cor e características básicas do veículo.; placa
+Placa Básica (própria); agregados-propria; 0,23; Veículos; placa; Marca, modelo, chassi, ano, cor e características do veículo.; placa
+BIN Estadual; ic-bin-estadual; 6,46; Veículos; placa; Informações do veículo na base estadual (BIN) a partir da placa.; placa
+BIN Nacional; ic-bin-nacional; 7,02; Veículos; placa; Informações do veículo na base nacional (BIN) a partir da placa.; placa
+Certificado de Segurança Veicular; csv-renainf-renajud-recall-bin-proprietario; 10,53; Veículos; placa; CSV, Renainf, Renajud, recall, BIN e proprietário numa única pesquisa.; placa
+Leilão; leilao; 20,50; Veículos; placa; Verifica se o veículo tem registro de leilão.; placa
+Histórico de roubo e furto; roubo-furto; 8,42; Veículos; placa; Registro ativo de roubo ou furto nas bases policiais, com boletim quando disponível.; placa
+Débitos de veículo; debitos-veicular; 6,32; Veículos; placa; IPVA, licenciamento, multas e DPVAT, com código de barras quando disponível.; placa
+Combo de Veículos RNTRC; veiculo-combo-rntrc; 10,84; Veículos; placa; Combina dados básicos, débitos e informações ANTT/RNTRC do veículo consultado pela placa.; placa
+Consulta CSV V2; csv-v2; ; Veículos; placa; Certificado de Segurança Veicular (versão 2).; placa
+Renainf; renainf; 8,42; Veículos; placa; Infrações de trânsito registradas no RENAINF.; placa
+Renajud; renajud; 8,42; Veículos; placa; Restrições judiciais no RENAJUD: bloqueios de circulação, transferência ou licenciamento.; placa
+Vip car; ic-vipcar; 73,01; Veículos; placa; BIN estadual, gravame, histórico de roubo e furto e precificador.; placa
+Placa Radar; placa-radar; 1,76; Veículos; placa; Passagens do veículo por radares, com mapa e geolocalização.; placa
+Dados Básicos do Veículo; veiculo-dados-basicos; 6,23; Veículos; placa; Retorna identificação, características, proprietário e restrições básicas do veículo.; placa
+Dados Básicos e Débitos do Veículo; veiculo-dados-debitos; 9,10; Veículos; placa; Retorna dados básicos e débitos como IPVA, licenciamento, multas e demais taxas disponíveis.; placa
+FIPE; fipe; ; Veículos; placa; Valor da tabela FIPE do veículo.; placa
 FIPE Estimada; veiculo-fipe; ; Veículos; placa; Consulta marca, modelo, referência, código FIPE e valor estimado do veículo pela placa.; placa
-Foto Leilão; ic-foto-leilao; ; Veículos; placa; ; placa
-Histórico de roubo ou furto; ic-historico-roubo-furto; ; Veículos; placa; Rota legada registrada, mas sem implementação do identificador no controller atual. Não utilizar para novas integrações.; placa
-Proprietário placa; ic-proprietario-atual; ; Veículos; placa; ; placa
-Rastreamento de Veículos; veiculo-rastreamento; ; Veículos; placa; Retorna passagens capturadas, localização, pátios, indícios de fraude e registros disponíveis.; placa
-Recall; ic-recall; ; Veículos; placa; ; placa
-Veículos por CNPJ; pj-veiculos; ; Veículos; cnpj; Retorna a frota vinculada ao CNPJ, com placa, marca, modelo, RENAVAM e atualização.; document
-Veículos por CPF; pf-veiculos; ; Veículos; cpf; Retorna a frota vinculada ao CPF, com placa, marca, modelo, RENAVAM e atualização.; document
+Foto Leilão; ic-foto-leilao; ; Veículos; placa; Fotos do veículo em leilão.; placa
+Histórico de roubo ou furto; ic-historico-roubo-furto; ; Veículos; placa; Histórico de roubo ou furto do veículo.; placa
+Proprietário placa; ic-proprietario-atual; 8,00; Veículos; placa; Proprietário atual do veículo pela placa.; placa
+Rastreamento de Veículos; veiculo-rastreamento; 185,33; Veículos; placa; Retorna passagens capturadas, localização, pátios, indícios de fraude e registros disponíveis.; placa
+Recall; ic-recall; 8,42; Veículos; placa; Campanhas de recall do veículo.; placa
+Veículos por CNPJ; pj-veiculos; 11,23; Veículos; cnpj; Retorna a frota vinculada ao CNPJ, com placa, marca, modelo, RENAVAM e atualização.; document
+Veículos por CPF; pf-veiculos; 11,23; Veículos; cpf; Retorna a frota vinculada ao CPF, com placa, marca, modelo, RENAVAM e atualização.; document
+Score de Concorrência; mercado-concorrencia; 0,71; Análise de Mercado; cep; Mede a presença e intensidade de concorrentes por segmentos na região do CEP.; cep
+Gastos com Alimentação por CEP; mercado-gastos-alimentacao; 0,20; Análise de Mercado; cep; Estima gastos com alimentação dos domicílios localizados no CEP.; cep
+Gastos com Consumo por CEP; mercado-gastos-consumo; 0,20; Análise de Mercado; cep; Estima despesas de consumo recorrente dos domicílios localizados no CEP.; cep
+Gastos com Despesas Diversas; mercado-gastos-diversos; 0,20; Análise de Mercado; cep; Estima gastos diversos, comunicação, eventos e imóveis de uso ocasional no CEP.; cep
+Gastos com Educação por CEP; mercado-gastos-educacao; 0,20; Análise de Mercado; cep; Estima despesas com educação, cursos, livros e atividades educacionais no CEP.; cep
+Gastos com Habitação por CEP; mercado-gastos-habitacao; 0,20; Análise de Mercado; cep; Estima despesas com moradia, manutenção do lar e artigos de limpeza no CEP.; cep
+Gastos com Higiene e Cuidados; mercado-gastos-higiene; 0,20; Análise de Mercado; cep; Estima despesas com higiene e cuidados pessoais dos domicílios no CEP.; cep
+Gastos com Recreação e Cultura; mercado-gastos-recreacao; 0,20; Análise de Mercado; cep; Estima despesas com lazer, recreação, cultura e serviços relacionados no CEP.; cep
+Gastos com Assistência à Saúde; mercado-gastos-saude; 0,20; Análise de Mercado; cep; Estima gastos com planos, consultas, tratamentos e hospitalização no CEP.; cep
+Gastos com Serviços por CEP; mercado-gastos-servicos; 0,20; Análise de Mercado; cep; Estima despesas domiciliares com serviços, pacotes de telecomunicações e utilidades.; cep
+Gastos com Transporte por CEP; mercado-gastos-transporte; 0,20; Análise de Mercado; cep; Estima despesas com transporte, combustível e manutenção de veículos no CEP.; cep
+Gastos com Vestuário por CEP; mercado-gastos-vestuario; 0,20; Análise de Mercado; cep; Estima despesas com vestuário, calçados e acessórios dos domicílios no CEP.; cep
+Índice de Infraestrutura Urbana; mercado-infraestrutura-urbana; 0,39; Análise de Mercado; cep; Avalia qualidade de vida, padrão de vida e infraestrutura urbana da região do CEP.; cep
+Indicadores Macroeconômicos; mercado-macroeconomicos; 0,71; Análise de Mercado; cep; Apresenta indicadores de crescimento econômico e urbanístico para o CEP.; cep
+Gastos com Outras Despesas; mercado-outras-despesas; 0,20; Análise de Mercado; cep; Estima outras despesas e aquisição de ativos dos domicílios no CEP.; cep
+Índice de Preços de Serviços de Saúde; mercado-precos-saude; 0,39; Análise de Mercado; cep; Apresenta índices de preços e modalidades de seguros e serviços de saúde no CEP.; cep
+Índice de Propensão a Seguro; mercado-propensao-seguro; 0,39; Análise de Mercado; cep; Estima a propensão regional à contratação de seguros e planos odontológicos.; cep
+Risco Geográfico; mercado-risco-geografico; 0,71; Análise de Mercado; cep; Avalia riscos geográficos e indicadores de colisão automotiva na região do CEP.; cep
+Índice de Seguro por Patologia; mercado-seguro-patologia; 0,39; Análise de Mercado; cep; Apresenta indicadores regionais de patologias relevantes para análise de seguros.; cep
+Dados Sociodemográficos por CEP; mercado-sociodemografico; 0,71; Análise de Mercado; cep; Apresenta população, domicílios, renda, gênero e faixas etárias estimadas para o CEP.; cep

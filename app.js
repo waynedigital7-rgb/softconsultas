@@ -1,5 +1,33 @@
 // Comportamentos da página (sem scripts inline, por segurança)
 document.addEventListener('DOMContentLoaded', () => {
+  const calmo = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Saldo "contando" até o valor (ex.: R$ 85,42)
+  if (!calmo) document.querySelectorAll('.valor').forEach((el) => {
+    const m = el.textContent.match(/R\$\s*([\d.]+,\d{2})/);
+    if (!m) return;
+    const alvo = Number(m[1].replace(/\./g, '').replace(',', '.'));
+    if (!alvo) return;
+    const fmt = (v) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const inicio = performance.now(), dur = 900;
+    const passo = (t) => {
+      const p = Math.min(1, (t - inicio) / dur), e = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt(alvo * e);
+      if (p < 1) requestAnimationFrame(passo); else el.textContent = fmt(alvo);
+    };
+    requestAnimationFrame(passo);
+  });
+
+  // Botões com confirmação (ex.: pagar saque pelo Asaas)
+  document.querySelectorAll('[data-confirmar]').forEach((b) => b.addEventListener('click', (e) => {
+    if (!confirm(b.getAttribute('data-confirmar'))) e.preventDefault();
+  }));
+
+  // Indicador de carregamento ao enviar formulários (exceto o de consulta, que abre nova aba)
+  document.querySelectorAll('form[method="post"]:not([data-consulta])').forEach((f) => f.addEventListener('submit', (e) => {
+    const b = e.submitter || f.querySelector('button[type=submit], button:not([type])');
+    if (b && !e.defaultPrevented) setTimeout(() => b.classList.add('carregando'), 0);
+  }));
   // Copiar código Pix
   const copiar = document.getElementById('copiar');
   if (copiar) copiar.addEventListener('click', async () => {
@@ -40,9 +68,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (aviso) aviso.hidden = false;
     if (b) {
       // O envio acontece antes de desabilitar (o formulário abre numa nova aba)
-      setTimeout(() => { b.disabled = true; b.textContent = 'Consulta enviada. O PDF abre na nova aba.'; }, 0);
+      setTimeout(() => { b.disabled = true; b.classList.add('carregando'); b.textContent = 'Consultando… o PDF abre na nova aba'; }, 0);
       // Libera para uma nova consulta depois de alguns segundos
-      setTimeout(() => { b.disabled = false; b.textContent = 'Fazer outra consulta'; f.reset(); }, 15000);
+      setTimeout(() => { b.disabled = false; b.classList.remove('carregando'); b.textContent = 'Fazer outra consulta'; f.reset(); }, 15000);
     }
   });
 });

@@ -381,6 +381,9 @@ const produtosPara = (usuario) => {
   });
 };
 const PLACA = /^[A-Z]{3}\d[A-Z0-9]\d{2}$/;
+const PALAVRAS_SENSIVEIS = /mandado|antecedente|pessoas relacionadas|endere[cç]|telefone|celular|cpf completo|e-?mail|parente|grafo|contato|localiza|ve[ií]culos por cpf|radar|rastreamento/i;
+// Pode fazer consultas sensíveis? Empresas (CNPJ) e admin sim; pessoa física só com liberação do admin
+const podeSensivel = (u) => !!(u?.admin || u?.liberado_sensivel || String(u?.documento || '').length === 14);
 function validarValor(tipo, bruto) {
   if (tipo === 'placa') {
     const v = String(bruto || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -411,7 +414,7 @@ rota('GET', '/consultas/categoria/:cat', exigeLogin(async ({ res, usuario, url, 
 rota('GET', '/consultas/:slug', exigeLogin(async ({ res, usuario, params }) => {
   const produto = produtosPara(usuario).find((p) => p.slug === params.slug);
   if (!produto) return redirecionar(res, '/consultas');
-  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.admin }), usuario);
+  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.admin, bloqueada: produto.sensivel && !podeSensivel(usuario) }), usuario);
 }));
 
 rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }) => {
@@ -420,6 +423,7 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   const f = await corpoForm(req);
   const v = { valor: f.valor, finalidade: f.finalidade };
   const erro = async (m) => pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.admin, erro: m, v }), usuario, 400);
+  if (produto.sensivel && !podeSensivel(usuario)) return erro('Esta consulta contém dados sensíveis e precisa de liberação. Fale com o suporte.');
   const val = validarValor(produto.documento, f.valor);
   if (val.erro) return erro(val.erro);
   if (!PA.FINALIDADES.includes(f.finalidade)) return erro('Selecione a finalidade da consulta.');
@@ -575,13 +579,26 @@ rota('POST', '/indicacoes/saque', exigeLogin(async ({ req, res, usuario }) => {
 
 rota('GET', '/admin/saques', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Saques', PD.adminSaques({
   saques: db.prepare('SELECT s.*, u.nome, u.email, u.documento FROM saques s JOIN usuarios u ON u.id = s.usuario_id ORDER BY (s.status = \'pendente\') DESC, s.id DESC LIMIT 300').all(),
-  ok: url.searchParams.get('ok') ? 'Saque atualizado.' : '',
+  ok: url.searchParams.get('ok') ? 'Saque atualizado.' : '', erro: url.searchParams.get('erro') || '',
 }), usuario)));
 
 rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const s = db.prepare("SELECT * FROM saques WHERE id = ? AND status = 'pendente'").get(Number(f.id));
   if (!s) return redirecionar(res, '/admin/saques');
+  // Pagar automaticamente pelo Asaas (Pix sai da conta Asaas para a chave do usuário)
+  if (f.acao === 'asaas') {
+    try {
+      const t = await AS.transferirPix({ valorCentavos: s.valor_centavos, chave: s.chave_pix, descricao: `Saque de comissão Soft Consultas #${s.id}` });
+      db.prepare("UPDATE saques SET status = 'pago', resolvido_em = datetime('now'), observacao = ?, asaas_transferencia_id = ? WHERE id = ? AND status = 'pendente'")
+        .run(`Pix pelo Asaas (${t.status || 'enviado'})`, t.id || null, s.id);
+      registrar(usuario, 'Pagou saque pelo Asaas', `Saque #${s.id} de ${P.reais(s.valor_centavos)} para ${s.chave_pix} · transferência ${t.id || '-'} (${t.status || '-'})`);
+      return redirecionar(res, '/admin/saques?ok=1');
+    } catch (e) {
+      console.error('transferência asaas:', e.message);
+      return redirecionar(res, `/admin/saques?erro=${encodeURIComponent(`Não foi possível pagar pelo Asaas: ${e.message}`)}`);
+    }
+  }
   db.exec('BEGIN IMMEDIATE');
   try {
     if (f.acao === 'pagar') {
@@ -640,7 +657,7 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
     nome: String(f.nome || '').trim(), categoria: String(f.categoria || '').trim(), descricao: String(f.descricao || '').trim(),
     documento: ['cpf', 'cnpj', 'cpf_cnpj', 'placa', 'cep'].includes(f.documento) ? f.documento : 'cpf_cnpj',
     endpoint: String(f.endpoint || '').trim(), link: String(f.link || '').trim(), campo: String(f.campo || 'document').trim() || 'document',
-    custo_centavos: custo, ordem: Number(f.ordem) || 100, ativo: f.ativo === '1' ? 1 : 0,
+    custo_centavos: custo, ordem: Number(f.ordem) || 100, ativo: f.ativo === '1' ? 1 : 0, sensivel: f.sensivel === '1' ? 1 : 0,
   };
   const erro = (m) => pagina(res, 'Admin · Editar consulta', PD.adminProdutoForm({ p, markup: lerConfig('markup_percentual'), erro: m }), usuario, 400);
   if (!p.nome || !p.categoria) return erro('Preencha o nome e a categoria.');
@@ -651,13 +668,13 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
   registrar(usuario, p.id ? 'Editou consulta' : 'Criou consulta',
     `${p.nome}: custo ${P.reais(antes?.custo_centavos ?? 0)} → ${P.reais(custo)}, preço ${P.reais(preco)}, ${p.ativo ? 'ativa' : 'inativa'}${antes && antes.endpoint !== p.endpoint ? `, endpoint ${antes.endpoint || '—'} → ${p.endpoint}` : ''}`);
   if (p.id) {
-    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=? WHERE id=?`)
-      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.id);
+    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=?, sensivel=? WHERE id=?`)
+      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.id);
   } else {
     let slug = p.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'consulta';
     while (db.prepare('SELECT 1 FROM produtos WHERE slug = ?').get(slug)) slug += '-2';
-    db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ordem, ativo) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(slug, p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo);
+    db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ordem, ativo, sensivel) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(slug, p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel);
   }
   redirecionar(res, '/admin/produtos?ok=1');
 }));
@@ -697,8 +714,8 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
         let slug = slugDe(nome);
         while (db.prepare('SELECT 1 FROM produtos WHERE slug = ?').get(slug)) slug += '-2';
         const c = temCusto ? custo : 0;
-        db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ativo, ordem)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,100)`).run(slug, nome, cat, descricao || '', doc, endpoint, endpoint, campo, c, precoDe(c), temCusto ? 1 : 0);
+        db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ativo, ordem, sensivel)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,100,?)`).run(slug, nome, cat, descricao || '', doc, endpoint, endpoint, campo, c, precoDe(c), temCusto ? 1 : 0, PALAVRAS_SENSIVEIS.test(nome) ? 1 : 0);
         criadas++;
         if (!temCusto) inativas++;
       }
@@ -751,7 +768,7 @@ rota('GET', '/admin/clientes', exigeAdmin(({ res, usuario, url }) => {
   const t = `%${busca.replace(/[%_]/g, '')}%`;
   const clientes = db.prepare(`SELECT u.*, COALESCE((SELECT SUM(valor_centavos) FROM transacoes WHERE usuario_id = u.id), 0) AS saldo FROM usuarios u
     WHERE ? = '' OR u.nome LIKE ? OR u.email LIKE ? OR u.documento LIKE ? ORDER BY u.id DESC LIMIT 200`).all(busca, t, t, `%${A.soNumeros(busca) || '@@'}%`);
-  const ok = url.searchParams.get('ok') ? 'Saldo ajustado.' : '';
+  const ok = url.searchParams.get('ok') ? 'Cliente atualizado.' : '';
   pagina(res, 'Admin · Clientes', PD.adminClientes({ clientes, busca, ok }), usuario);
 }));
 
@@ -763,6 +780,16 @@ rota('POST', '/admin/clientes/ajuste', exigeAdmin(async ({ req, res, usuario }) 
   db.prepare("INSERT INTO transacoes (usuario_id, tipo, valor_centavos, descricao) VALUES (?, 'ajuste', ?, ?)").run(Number(f.id), valor, `Ajuste: ${motivo} (por ${usuario.email})`);
   const cli = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(Number(f.id));
   registrar(usuario, 'Ajustou saldo', `${cli.nome} (${cli.email}): ${valor > 0 ? '+' : '-'}${P.reais(Math.abs(valor))}, motivo: ${motivo}`);
+  redirecionar(res, '/admin/clientes?ok=1');
+}));
+
+rota('POST', '/admin/clientes/sensivel', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const cli = db.prepare('SELECT id, nome, email FROM usuarios WHERE id = ?').get(Number(f.id));
+  if (!cli) return redirecionar(res, '/admin/clientes');
+  const valor = f.liberar === '1' ? 1 : 0;
+  db.prepare('UPDATE usuarios SET liberado_sensivel = ? WHERE id = ?').run(valor, cli.id);
+  registrar(usuario, valor ? 'Liberou consultas sensíveis' : 'Bloqueou consultas sensíveis', `${cli.nome} (${cli.email})`);
   redirecionar(res, '/admin/clientes?ok=1');
 }));
 

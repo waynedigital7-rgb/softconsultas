@@ -61,7 +61,7 @@ const resumo = (d) => String(d || '').split(/(?<=[.!?])\s|\s\|\s/)[0].replace(/\
 const itemProduto = (p) => `
   <a class="item" href="/consultas/${esc(p.slug)}" title="${esc(p.descricao)}">
     <span class="ic">${iconeItem(p)}</span>
-    <span class="tx"><strong>${esc(p.nome)}</strong>${resumo(p.descricao) ? `<span>${esc(resumo(p.descricao))}</span>` : ''}</span>
+    <span class="tx"><strong>${esc(p.nome)}${p.sensivel ? ' <small class="tag" title="Dados sensíveis: liberada para contas CNPJ ou após análise">sensível</small>' : ''}</strong>${resumo(p.descricao) ? `<span>${esc(resumo(p.descricao))}</span>` : ''}</span>
     <span class="pr"><strong>${reais(p.preco_centavos)}</strong><small>${ROTULO_DOC[p.documento]}</small></span>
     <span class="btn bt">Consultar</span>
   </a>`;
@@ -118,7 +118,7 @@ export function paginaCategoria({ categoria, produtos, saldo, busca = '' }) {
  + (lista.length ? listaProdutos(lista) : '<div class="cartao vazio">Nenhuma consulta encontrada nesta categoria.</div>');
 }
 
-export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false }) {
+export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, bloqueada = false }) {
   const falta = saldo === null ? 0 : Math.max(0, produto.preco_centavos - saldo);
   return `
 <div class="cartao estreito" style="max-width:560px">
@@ -130,7 +130,7 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false })
     <div style="text-align:right"><div class="muted" style="font-size:.85rem">${admin ? 'Saldo APIFull' : 'Seu saldo'}</div><strong style="font-size:1.3rem;font-family:Montserrat">${saldo === null ? '—' : reais(saldo)}</strong></div>
   </div>
   ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
-  ${falta > 0 ? (admin
+  ${bloqueada ? `<div class="aviso erro" role="alert"><strong>Consulta com dados sensíveis.</strong> Por segurança e exigência da LGPD, esta consulta é liberada para contas de empresa (CNPJ) ou após análise. Fale com o suporte para solicitar a liberação.</div><a class="btn largo" href="/consultas">Ver outras consultas</a>` : falta > 0 ? (admin
     ? `<div class="aviso erro">Saldo da APIFull insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="https://app.apifull.com.br" target="_blank" rel="noopener">Recarregar na APIFull</a>`
     : `<div class="aviso erro">Saldo insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="/recarregar">Recarregar agora</a>`) : `
   <div id="aviso-nova-aba" class="aviso ok" hidden>Sua consulta está abrindo em uma <strong>nova aba</strong>. Se não abrir, confira se o navegador bloqueou ou veja no <a href="/historico">Histórico</a>.</div>
@@ -244,9 +244,10 @@ export function paginaPagarRecarga({ r }) {
     <textarea id="pix-codigo" readonly rows="3" aria-label="Código Pix copia e cola" style="width:100%;font:inherit;font-size:.8rem;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px;resize:none">${esc(r.pix_codigo)}</textarea>
     <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
     ${r.link_pagamento ? `<p><a href="${esc(r.link_pagamento)}" target="_blank" rel="noopener">${r.pix_imagem ? 'Prefiro pagar pela página do Asaas' : 'Abrir página de pagamento'}</a></p>` : ''}
-    <p class="muted" aria-live="polite">Aguardando pagamento… esta página atualiza sozinha.</p>
+    <p class="muted pulsando" aria-live="polite">Aguardando pagamento… esta página atualiza sozinha.</p>
   </div>
   <div id="pago" hidden>
+    <svg class="pop" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#1E7B4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
     <h2 style="color:var(--ok)">Pagamento confirmado!</h2>
     <p class="muted">Seus créditos já estão disponíveis.</p>
     <a class="btn" href="/consultas">Fazer uma consulta</a>

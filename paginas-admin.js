@@ -41,7 +41,7 @@ export function adminProdutos({ produtos, markup, ok }) {
 <p class="muted">Preço de venda = custo APIFull + ${markup}% (ajuste a porcentagem em Configurações). Só aparecem para os clientes as consultas <strong>ativas</strong> e com endpoint preenchido.</p>
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>Consulta</th><th>Categoria</th><th>Endpoint</th><th>Custo</th><th>Preço</th><th>Lucro por consulta</th><th>Status</th><th></th></tr>
-  ${produtos.map((p) => `<tr><td><strong>${esc(p.nome)}</strong>${p.custo_centavos ? '' : ' <span class="tag" style="color:var(--erro)">sem custo</span>'}</td><td>${esc(p.categoria)}</td><td><code>${esc(p.endpoint || '—')}</code></td>
+  ${produtos.map((p) => `<tr><td><strong>${esc(p.nome)}</strong>${p.custo_centavos ? '' : ' <span class="tag" style="color:var(--erro)">sem custo</span>'}${p.sensivel ? ' <span class="tag">sensível</span>' : ''}</td><td>${esc(p.categoria)}</td><td><code>${esc(p.endpoint || '—')}</code></td>
     <td>${reais(p.custo_centavos)}</td><td><strong>${reais(p.preco_centavos)}</strong></td>
     <td>${p.custo_centavos ? `<strong style="color:var(--ok)">${reais(p.preco_centavos - p.custo_centavos)}</strong><br><small class="muted">${Math.round(((p.preco_centavos - p.custo_centavos) / p.custo_centavos) * 100)}% sobre o custo</small>` : '—'}</td>
     <td>${p.ativo && p.endpoint ? '<span style="color:var(--ok);font-weight:700">Ativa</span>' : '<span class="muted">Inativa</span>'}</td>
@@ -69,6 +69,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
   <p class="muted" style="margin-top:-8px">Preço de venda calculado automaticamente: custo + ${markup}%.</p>
   ${campo('ordem', 'Ordem no catálogo (menor aparece primeiro)', p.ordem ?? 100, 'inputmode="numeric"')}
   <label class="check"><input type="checkbox" name="ativo" value="1" ${p.ativo ? 'checked' : ''}><span>Ativa (visível para os clientes)</span></label>
+  <label class="check"><input type="checkbox" name="sensivel" value="1" ${p.sensivel ? 'checked' : ''}><span>Consulta sensível (só contas CNPJ ou clientes liberados por você)</span></label>
   <button class="btn" type="submit">Salvar</button> <a class="btn sec" href="/admin/produtos">Cancelar</a>
 </form>`;
 }
@@ -97,9 +98,11 @@ export function adminClientes({ clientes, busca = '', ok, erro }) {
 <form method="get" class="cartao" style="padding:16px;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
   <input type="text" name="busca" value="${esc(busca)}" placeholder="Nome, e-mail ou documento" aria-label="Buscar cliente" style="flex:1 1 220px"><button class="btn">Buscar</button></form>
 <div class="cartao"><div class="rolar"><table class="tabela">
-  <tr><th>Cliente</th><th>Documento</th><th>WhatsApp</th><th>Saldo</th><th>Desde</th><th>Ajustar saldo</th></tr>
+  <tr><th>Cliente</th><th>Documento</th><th>WhatsApp</th><th>Saldo</th><th>Desde</th><th>Consultas sensíveis</th><th>Ajustar saldo</th></tr>
   ${clientes.map((c) => `<tr><td><strong>${esc(c.nome)}</strong><br><span class="muted">${esc(c.email)}</span>${c.ativo ? '' : ' <span style="color:var(--erro)">(desativado)</span>'}</td>
     <td>${esc(formatarDoc(c.documento))}</td><td>${esc(c.telefone)}</td><td><strong>${reais(c.saldo)}</strong></td><td>${dt(c.criado_em).slice(0, 10)}</td>
+    <td>${c.documento.length === 14 ? '<span class="muted">liberadas (CNPJ)</span>' : `<form method="post" action="/admin/clientes/sensivel" style="margin:0"><input type="hidden" name="id" value="${c.id}"><input type="hidden" name="liberar" value="${c.liberado_sensivel ? 0 : 1}">
+      <button class="btn ${c.liberado_sensivel ? 'sec' : ''}" style="min-height:36px;padding:6px 12px;font-size:.85rem">${c.liberado_sensivel ? 'Liberadas · bloquear' : 'Liberar'}</button></form>`}</td>
     <td><form method="post" action="/admin/clientes/ajuste" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">
       <input type="hidden" name="id" value="${c.id}">
       <input type="text" name="valor" placeholder="+10 ou -10" aria-label="Valor do ajuste" style="width:100px;min-height:40px;padding:8px">
@@ -153,17 +156,18 @@ ${resultado ? `<div class="aviso ok">${esc(resultado)}</div>` : ''}
 </form>`;
 }
 
-export function adminSaques({ saques, ok }) {
+export function adminSaques({ saques, ok, erro }) {
   const st = { pendente: '<strong>Pendente</strong>', pago: '<span style="color:var(--ok);font-weight:700">Pago</span>', recusado: '<span style="color:var(--erro)">Recusado</span>' };
-  return `<h1 style="font-size:1.7rem">Saques de comissão</h1>${menu('/admin/saques')}${aviso(ok)}
-<p class="muted">Faça o Pix pelo seu banco ou pelo Asaas para a chave informada e depois marque como <strong>pago</strong>. Se recusar, o valor volta para o saldo de comissões do usuário. Confira se a chave Pix é do mesmo titular (CPF/CNPJ) da conta.</p>
+  return `<h1 style="font-size:1.7rem">Saques de comissão</h1>${menu('/admin/saques')}${aviso(ok, erro)}
+<p class="muted"><strong>Pagar via Asaas</strong> envia o Pix automaticamente da sua conta Asaas para a chave do usuário. Se preferir pagar por outro banco, faça o Pix e clique em <strong>Já paguei</strong>. Se recusar, o valor volta para o saldo de comissões do usuário. Antes de pagar, confira se a chave Pix é do mesmo titular (CPF/CNPJ) da conta.</p>
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>#</th><th>Data</th><th>Usuário</th><th>Valor</th><th>Chave Pix</th><th>Status</th><th>Ação</th></tr>
   ${saques.map((x) => `<tr><td>${x.id}</td><td>${dt(x.criado_em)}</td><td>${esc(x.nome)}<br><span class="muted">${esc(formatarDoc(x.documento))}</span></td>
     <td><strong>${reais(x.valor_centavos)}</strong></td><td><code>${esc(x.chave_pix)}</code></td><td>${st[x.status]}${x.observacao ? `<br><small class="muted">${esc(x.observacao)}</small>` : ''}</td>
     <td>${x.status === 'pendente' ? `<form method="post" action="/admin/saques/resolver" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">
       <input type="hidden" name="id" value="${x.id}"><input type="text" name="obs" placeholder="Observação" aria-label="Observação" style="width:130px;min-height:40px;padding:8px">
-      <button class="btn" name="acao" value="pagar" style="min-height:40px;padding:8px 14px">Marcar pago</button>
+      <button class="btn" name="acao" value="asaas" style="min-height:40px;padding:8px 14px" data-confirmar="Enviar ${reais(x.valor_centavos)} por Pix pelo Asaas para a chave ${esc(x.chave_pix)}?">Pagar via Asaas</button>
+      <button class="btn sec" name="acao" value="pagar" style="min-height:40px;padding:8px 14px">Já paguei</button>
       <button class="btn sec" name="acao" value="recusar" style="min-height:40px;padding:8px 14px">Recusar</button></form>` : '-'}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhum saque solicitado.</td></tr>'}
 </table></div></div>`;
 }

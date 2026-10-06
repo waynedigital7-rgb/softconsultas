@@ -3,10 +3,18 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, existsSync, statSync, readdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 
-export const pasta = process.env.DATA_DIR || './dados';
-// Se a pasta do DATA_DIR não existir na inicialização, o disco não está montado (dados seriam perdidos no próximo deploy)
+// Se o DATA_DIR não puder ser usado (ex.: disco não conectado), o site continua no ar numa pasta temporária, com aviso no Admin
+let pastaEscolhida = process.env.DATA_DIR || './dados';
+let erroDisco = '';
+try { mkdirSync(pastaEscolhida, { recursive: true }); }
+catch (e) {
+  erroDisco = `Não foi possível usar ${pastaEscolhida} (${e.code || e.message}). O disco provavelmente não está conectado ao serviço.`;
+  console.error(`ATENÇÃO: ${erroDisco} Usando pasta temporária ./dados.`);
+  pastaEscolhida = './dados';
+  mkdirSync(pastaEscolhida, { recursive: true });
+}
+export const pasta = pastaEscolhida;
 const pastaJaExistia = existsSync(pasta);
-mkdirSync(pasta, { recursive: true });
 // É um disco montado de verdade? (dispositivo diferente da pasta-mãe)
 function ehDiscoMontado(dir) {
   try { return statSync(dir).dev !== statSync(path.dirname(path.resolve(dir))).dev; } catch { return false; }
@@ -18,7 +26,8 @@ export const armazenamento = {
   montado: ehDiscoMontado(pasta),
 };
 // No Render (variável RENDER=true), só é seguro se o DATA_DIR apontar para um disco montado
-armazenamento.persistente = process.env.RENDER ? armazenamento.definido && armazenamento.montado : true;
+armazenamento.erro = erroDisco;
+armazenamento.persistente = !erroDisco && (process.env.RENDER ? armazenamento.definido && armazenamento.montado : true);
 export const pastaPdfs = path.join(pasta, 'pdfs');
 mkdirSync(pastaPdfs, { recursive: true });
 export const db = new DatabaseSync(path.join(pasta, 'softconsultas.db'));
@@ -163,6 +172,15 @@ if (!colunas('usuarios').includes('asaas_cliente_id')) db.exec('ALTER TABLE usua
 if (!colunas('consultas').includes('produto_id')) db.exec('ALTER TABLE consultas ADD COLUMN produto_id INTEGER');
 if (!colunas('consultas').includes('pdf_origem')) db.exec('ALTER TABLE consultas ADD COLUMN pdf_origem TEXT');
 if (!colunas('consultas').includes('erro')) db.exec('ALTER TABLE consultas ADD COLUMN erro TEXT');
+// Consultas sensíveis (dados que permitem localizar/expor pessoas)
+if (!colunas('produtos').includes('sensivel')) {
+  db.exec('ALTER TABLE produtos ADD COLUMN sensivel INTEGER NOT NULL DEFAULT 0');
+  db.exec(`UPDATE produtos SET sensivel = 1 WHERE lower(nome) GLOB '*mandado*' OR lower(nome) GLOB '*antecedente*' OR lower(nome) GLOB '*pessoas relacionadas*'
+    OR lower(nome) GLOB '*endere*' OR lower(nome) GLOB '*telefone*' OR lower(nome) GLOB '*celular*' OR lower(nome) GLOB '*cpf completo*' OR lower(nome) GLOB '*e-mail*'
+    OR lower(nome) GLOB '*parente*' OR lower(nome) GLOB '*grafo*' OR lower(nome) GLOB '*contato*' OR lower(nome) GLOB '*localiza*' OR lower(nome) GLOB '*veículos por cpf*'
+    OR lower(nome) GLOB '*radar*' OR lower(nome) GLOB '*rastreamento*'`);
+}
+if (!colunas('usuarios').includes('liberado_sensivel')) db.exec('ALTER TABLE usuarios ADD COLUMN liberado_sensivel INTEGER NOT NULL DEFAULT 0');
 // Programa de indicação
 if (!colunas('usuarios').includes('codigo_indicacao')) db.exec('ALTER TABLE usuarios ADD COLUMN codigo_indicacao TEXT');
 if (!colunas('usuarios').includes('indicado_por')) db.exec('ALTER TABLE usuarios ADD COLUMN indicado_por INTEGER');
@@ -194,6 +212,7 @@ db.exec(`
     resolvido_em TEXT
   );
 `);
+if (!colunas('saques').includes('asaas_transferencia_id')) db.exec('ALTER TABLE saques ADD COLUMN asaas_transferencia_id TEXT');
 // Registro de alterações feitas no Admin (auditoria)
 db.exec(`
   CREATE TABLE IF NOT EXISTS registro_admin (
