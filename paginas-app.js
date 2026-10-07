@@ -219,7 +219,7 @@ export function paginaRecarregar({ minimo, faixas, erro }) {
   return `
 <div class="cartao estreito" style="max-width:600px">
   <h1 style="font-size:1.6rem">Recarregar créditos</h1>
-  <p class="muted">Pague por Pix e o saldo cai na hora. Recarga mínima de ${reais(minimo)}.</p>
+  <p class="muted">Pague por Pix e o saldo cai na hora. Recarga mínima de ${reais(minimo)}. <strong>Sem mensalidade:</strong> o saldo é usado só nas consultas que você fizer.</p>
   ${faixas.length ? `<div class="aviso ok">${faixas.map((f) => `Recarregando a partir de ${reais(f.a_partir_de)}, ganhe <strong>+${f.percentual}%</strong> de bônus`).join('<br>')}</div>` : ''}
   ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
   <form method="post" action="/recarregar">

@@ -3,7 +3,7 @@ import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
-  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
+  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
 const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
@@ -348,4 +348,43 @@ export function adminAnuncios({ anuncios, ok, erro }) {
       <button class="btn sec" name="acao" value="alternar" style="min-height:36px;padding:6px 12px">${a.ativo ? 'Pausar' : 'Ativar'}</button>
       <button class="btn sec" name="acao" value="excluir" style="min-height:36px;padding:6px 12px" data-confirmar="Excluir o anúncio de ${esc(a.anunciante)}?">Excluir</button></form></td></tr>`).join('') || '<tr><td colspan="9" class="vazio">Nenhum anúncio cadastrado. Enquanto não houver, aparece o espaço "Anuncie aqui".</td></tr>'}
 </table></div></div>`;
+}
+
+// ---------- Campanhas de tráfego pago ----------
+export function adminCampanhas({ ini, fim, linhas, rastreio, base }) {
+  const site = base || 'https://softconsultas.com';
+  const paginas = [['limpa-nome', 'Profissionais de limpa nome'], ['advogados', 'Advogados'], ['empresas', 'Empresas']];
+  const exemplo = (pub, fonte, meio) => `${site}/para/${pub}?utm_source=${fonte}&utm_medium=${meio}&utm_campaign=${pub}`;
+  const tot = linhas.reduce((t, l) => ({ c: t.c + l.cadastros, p: t.p + l.pagantes, r: t.r + l.recarregado, l: t.l + l.lucro }), { c: 0, p: 0, r: 0, l: 0 });
+  return `<h1 style="font-size:1.7rem">Campanhas</h1>${menu('/admin/campanhas')}
+<form method="get" class="cartao" style="padding:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px">
+  <div class="campo" style="margin:0"><label for="inicio">Cadastros de</label><input id="inicio" name="inicio" type="date" value="${ini}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  <div class="campo" style="margin:0"><label for="fim">até</label><input id="fim" name="fim" type="date" value="${fim}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  <button class="btn">Aplicar</button></form>
+<div class="grade" style="margin-bottom:18px">
+  ${num('Cadastros', tot.c)}${num('Viraram pagantes', tot.p, `${tot.c ? Math.round((tot.p / tot.c) * 100) : 0}% dos cadastros`)}
+  ${num('Recarregado por eles', reais(tot.r))}${num('Seu lucro com eles', reais(tot.l))}
+</div>
+<div class="cartao" style="margin-bottom:18px"><h3>Resultado por campanha</h3>
+  <p class="muted" style="margin-top:-6px">Clientes cadastrados no período, agrupados pela campanha de onde vieram. Compare o lucro de cada uma com o que você gastou em anúncios.</p>
+  <div class="rolar"><table class="tabela"><tr><th>Campanha</th><th>Fonte</th><th>Cadastros</th><th>Pagantes</th><th>Conversão</th><th>Recarregado</th><th>Consultas</th><th>Seu lucro</th></tr>
+  ${linhas.map((l) => `<tr><td><strong>${esc(l.campanha)}</strong></td><td>${esc(l.fonte)}</td><td>${l.cadastros}</td><td>${l.pagantes}</td><td>${l.cadastros ? Math.round((l.pagantes / l.cadastros) * 100) : 0}%</td>
+    <td>${reais(l.recarregado)}</td><td>${l.consultas}</td><td><strong style="color:var(--ok)">${reais(l.lucro)}</strong></td></tr>`).join('') || '<tr><td colspan="8" class="vazio">Nenhum cadastro no período.</td></tr>'}
+  </table></div></div>
+<div class="cartao" style="margin-bottom:18px"><h3>Páginas de campanha e links prontos</h3>
+  <p class="muted" style="margin-top:-6px">Use estes links nos anúncios. O sistema registra de onde cada cliente veio. Troque <code>utm_campaign</code> para separar anúncios diferentes (ex.: limpa-nome-video1).</p>
+  ${paginas.map(([pub, nome]) => `<div style="border-top:1px solid var(--borda);padding:12px 0">
+    <strong>${nome}</strong> · <a href="/para/${pub}" target="_blank" rel="noopener">ver página</a>
+    <div class="muted" style="font-size:.85rem;margin-top:6px">Meta (Instagram/Facebook):</div><code style="word-break:break-all;font-size:.82rem">${esc(exemplo(pub, 'meta', 'pago'))}</code>
+    <div class="muted" style="font-size:.85rem;margin-top:6px">Google Ads:</div><code style="word-break:break-all;font-size:.82rem">${esc(exemplo(pub, 'google', 'cpc'))}</code></div>`).join('')}
+</div>
+<div class="cartao"><h3>Pixel e tags</h3>
+  <table class="tabela">
+    <tr><td>Pixel da Meta (<code>META_PIXEL_ID</code>)</td><td>${rastreio.meta ? '<strong style="color:var(--ok)">ativo</strong>' : '<span class="muted">não configurado</span>'}</td></tr>
+    <tr><td>Google Analytics / Ads (<code>GOOGLE_TAG_ID</code>)</td><td>${rastreio.google ? '<strong style="color:var(--ok)">ativo</strong>' : '<span class="muted">não configurado</span>'}</td></tr>
+    <tr><td>Conversão Google Ads: cadastro (<code>GOOGLE_ADS_CONV_CADASTRO</code>)</td><td>${rastreio.convCadastro ? '<strong style="color:var(--ok)">ativo</strong>' : '<span class="muted">opcional</span>'}</td></tr>
+    <tr><td>Conversão Google Ads: recarga (<code>GOOGLE_ADS_CONV_RECARGA</code>)</td><td>${rastreio.convRecarga ? '<strong style="color:var(--ok)">ativo</strong>' : '<span class="muted">opcional</span>'}</td></tr>
+  </table>
+  <p class="muted" style="font-size:.88rem;margin-bottom:0">Eventos enviados: visita de página, clique em "Criar conta" (Lead), cadastro concluído (CompleteRegistration / sign_up) e recarga paga com o valor (Purchase).</p>
+</div>`;
 }

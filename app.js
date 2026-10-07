@@ -30,6 +30,9 @@ document.addEventListener('DOMContentLoaded', () => {
     auto();
   });
 
+  // Eventos de campanha em botões (ex.: "Criar conta" nas páginas de campanha)
+  document.querySelectorAll('[data-evento]').forEach((a) => a.addEventListener('click', () => { if (window.scEvento) window.scEvento(a.getAttribute('data-evento')); }));
+
   // Botões com confirmação (ex.: pagar saque pelo Asaas)
   document.querySelectorAll('[data-confirmar]').forEach((b) => b.addEventListener('click', (e) => {
     if (!confirm(b.getAttribute('data-confirmar'))) e.preventDefault();
@@ -64,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (j.pago) {
           document.getElementById('aguardando').hidden = true;
           document.getElementById('pago').hidden = false;
+          if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor);
           return;
         }
       } catch {}

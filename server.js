@@ -14,9 +14,37 @@ import * as A from './auth.js';
 import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
 import { TERMOS, PRIVACIDADE } from './textos.js';
+import { PUBLICOS, paginaLanding } from './landings.js';
 
 const raiz = path.dirname(fileURLToPath(import.meta.url));
 const ARQUIVOS = { '/icone.png': 'image/png', '/icone-branco.png': 'image/png', '/app.js': 'text/javascript; charset=utf-8' };
+// Script de rastreio gerado com os IDs do Render (sem código inline, compatível com a política de segurança)
+function scriptRastreio() {
+  return `(function(){
+  var cfg = ${JSON.stringify(RASTREIO)};
+  window.scEvento = function(nome, valor){
+    try {
+      if (cfg.meta && window.fbq) fbq('track', nome, valor ? { value: valor, currency: 'BRL' } : {});
+      if (cfg.google && window.gtag) {
+        var mapa = { CompleteRegistration: 'sign_up', Purchase: 'purchase', Lead: 'generate_lead' };
+        gtag('event', mapa[nome] || nome, valor ? { value: valor, currency: 'BRL' } : {});
+        if (nome === 'CompleteRegistration' && cfg.convCadastro) gtag('event', 'conversion', { send_to: cfg.convCadastro });
+        if (nome === 'Purchase' && cfg.convRecarga) gtag('event', 'conversion', { send_to: cfg.convRecarga, value: valor, currency: 'BRL' });
+      }
+    } catch (e) {}
+  };
+  if (cfg.meta) {
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', cfg.meta); fbq('track', 'PageView');
+  }
+  if (cfg.google) {
+    var g = document.createElement('script'); g.async = true; g.src = 'https://www.googletagmanager.com/gtag/js?id=' + cfg.google; document.head.appendChild(g);
+    window.dataLayer = window.dataLayer || []; window.gtag = function(){ dataLayer.push(arguments); };
+    gtag('js', new Date()); gtag('config', cfg.google);
+  }
+  if (/[?&]bemvindo=1/.test(location.search)) window.scEvento('CompleteRegistration');
+})();`;
+}
 
 // ---------- utilidades HTTP ----------
 function cookies(req) {
@@ -114,8 +142,19 @@ async function passouNoRobo(req, f) {
 P.configurarRobo(TURNSTILE.ativo ? TURNSTILE.site : '');
 
 const CF = TURNSTILE.ativo ? ' https://challenges.cloudflare.com' : '';
+// Pixel da Meta e tag do Google (ativos quando as variáveis existem)
+const RASTREIO = {
+  meta: (process.env.META_PIXEL_ID || '').replace(/\D/g, ''),
+  google: (process.env.GOOGLE_TAG_ID || '').replace(/[^\w-]/g, ''),
+  convCadastro: (process.env.GOOGLE_ADS_CONV_CADASTRO || '').replace(/[^\w/-]/g, ''),
+  convRecarga: (process.env.GOOGLE_ADS_CONV_RECARGA || '').replace(/[^\w/-]/g, ''),
+};
+RASTREIO.ativo = !!(RASTREIO.meta || RASTREIO.google);
+const DOM_META = RASTREIO.meta ? ' https://connect.facebook.net https://www.facebook.com' : '';
+const DOM_GOOGLE = RASTREIO.google ? ' https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://*.doubleclick.net https://www.googleadservices.com' : '';
+P.configurarRastreio(RASTREIO.ativo);
 const CABECALHOS = {
-  'Content-Security-Policy': `default-src 'self'; script-src 'self'${CF}; frame-src${CF || " 'none'"}; connect-src 'self'${CF}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'`,
+  'Content-Security-Policy': `default-src 'self'; script-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; frame-src${CF || DOM_GOOGLE ? `${CF}${DOM_GOOGLE}` : " 'none'"}; connect-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:${DOM_META}${DOM_GOOGLE}; form-action 'self'; frame-ancestors 'none'; base-uri 'self'`,
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -205,12 +244,17 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   const admin = process.env.ADMIN_EMAIL && process.env.ADMIN_EMAIL.toLowerCase() === v.email ? 1 : 0;
   const ref = String(cookies(req).sc_ref || '').toUpperCase();
   const indicador = ref ? db.prepare('SELECT id FROM usuarios WHERE codigo_indicacao = ? AND ativo = 1').get(ref) : null;
-  const r = db.prepare(`INSERT INTO usuarios (nome, email, documento, telefone, senha_hash, admin, aceite_termos, indicado_por, codigo_indicacao)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)`).run(v.nome, v.email, v.documento, v.telefone, A.gerarHashSenha(f.senha), admin, indicador?.id ?? null, codigoUnico());
+  let org = {};
+  try { org = JSON.parse(cookies(req).sc_origem || '{}') || {}; } catch {}
+  const t = (x) => String(x || '').slice(0, 80);
+  const r = db.prepare(`INSERT INTO usuarios (nome, email, documento, telefone, senha_hash, admin, aceite_termos, indicado_por, codigo_indicacao,
+      origem, utm_source, utm_medium, utm_campaign, utm_content, pagina_entrada)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)`).run(v.nome, v.email, v.documento, v.telefone, A.gerarHashSenha(f.senha), admin, indicador?.id ?? null, codigoUnico(),
+      t(org.origem || (indicador ? 'indicacao' : '')), t(org.utm_source), t(org.utm_medium), t(org.utm_campaign), t(org.utm_content), t(org.pagina));
   const token = A.criarSessao(Number(r.lastInsertRowid));
   enviarEmail({ para: v.email, assunto: 'Bem-vindo à Soft Consultas', html: emailBoasVindas(v.nome, `${urlBase(req)}/painel`) })
     .catch((e) => console.error('e-mail boas-vindas:', e.message));
-  redirecionar(res, '/painel', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0'] });
+  redirecionar(res, '/painel?bemvindo=1', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0'] });
 });
 
 // Login
@@ -357,11 +401,11 @@ rota('GET', '/api/recarga/:id/status', async ({ res, usuario, params }) => {
   if (!usuario) return json(res, { pago: false }, 401);
   const r = db.prepare('SELECT * FROM recargas WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!r) return json(res, { pago: false }, 404);
-  if (r.status === 'paga') return json(res, { pago: true });
+  if (r.status === 'paga') return json(res, { pago: true, valor: r.valor_centavos / 100 });
   if (r.asaas_id && A.limitar(`st:${r.id}`, 30, 5)) {
     try {
       const c = await AS.buscarCobranca(r.asaas_id);
-      if (AS.STATUS_PAGO.includes(c.status)) { creditarRecarga(r.id); return json(res, { pago: true }); }
+      if (AS.STATUS_PAGO.includes(c.status)) { creditarRecarga(r.id); return json(res, { pago: true, valor: r.valor_centavos / 100 }); }
     } catch (e) { console.warn('status recarga:', e.message); }
   }
   json(res, { pago: false });
@@ -932,6 +976,30 @@ rota('POST', '/admin/anuncios/acao', exigeAdmin(async ({ req, res, usuario }) =>
   redirecionar(res, '/admin/anuncios?ok=1');
 }));
 
+// ======================= PÁGINAS DE CAMPANHA =======================
+rota('GET', '/para/:publico', ({ res, usuario, params }) => {
+  const cfg = PUBLICOS[params.publico];
+  if (!cfg) return redirecionar(res, '/');
+  const ativos = db.prepare("SELECT * FROM produtos WHERE ativo = 1 AND endpoint <> ''").all();
+  const produtos = cfg.consultas.map((e) => ativos.find((p) => p.endpoint === e)).filter(Boolean);
+  html(res, P.layout({ titulo: cfg.titulo, descricao: cfg.descricaoMeta, corpo: paginaLanding({ chave: params.publico, cfg, produtos }), usuario }));
+});
+
+rota('GET', '/admin/campanhas', exigeAdmin(({ res, usuario, url }) => {
+  const { ini, fim } = periodoDe(url);
+  const linhas = db.prepare(`
+    SELECT CASE WHEN u.utm_campaign <> '' THEN u.utm_campaign WHEN u.origem <> '' THEN u.origem ELSE '(direto)' END AS campanha,
+      CASE WHEN u.utm_source <> '' THEN u.utm_source WHEN u.origem = 'indicacao' THEN 'indicação' WHEN u.origem <> '' THEN 'página de campanha' ELSE '-' END AS fonte,
+      COUNT(*) AS cadastros,
+      SUM(CASE WHEN EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga') THEN 1 ELSE 0 END) AS pagantes,
+      COALESCE(SUM((SELECT SUM(valor_centavos) FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')), 0) AS recarregado,
+      COALESCE(SUM((SELECT COUNT(*) FROM consultas c WHERE c.usuario_id = u.id AND c.status = 'concluida')), 0) AS consultas,
+      COALESCE(SUM((SELECT SUM(c.preco_centavos - c.comissao_centavos - c.custo_centavos) FROM consultas c WHERE c.usuario_id = u.id AND c.status = 'concluida')), 0) AS lucro
+    FROM usuarios u WHERE u.admin = 0 AND date(u.criado_em, '-3 hours') BETWEEN ? AND ?
+    GROUP BY campanha, fonte ORDER BY lucro DESC, cadastros DESC`).all(ini, fim);
+  pagina(res, 'Admin · Campanhas', PD.adminCampanhas({ ini, fim, linhas, rastreio: RASTREIO, base: process.env.URL_BASE || '' }), usuario);
+}));
+
 // ======================= ÁREA LIMPA NOME =======================
 rota('GET', '/limpa-nome', exigeLogin(async ({ res, usuario }) => {
   const todos = produtosPara(usuario);
@@ -1027,6 +1095,10 @@ rota('GET', '/saude', ({ res }) => json(res, { ok: true, discoPermanente: armaze
 const servidor = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://local');
+    if (req.method === 'GET' && url.pathname === '/rastreio.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
+      return res.end(scriptRastreio());
+    }
     if (req.method === 'GET' && ARQUIVOS[url.pathname]) {
       const dados = await readFile(path.join(raiz, url.pathname.slice(1)));
       res.writeHead(200, { 'Content-Type': ARQUIVOS[url.pathname], 'Cache-Control': 'public, max-age=86400' });
@@ -1036,10 +1108,20 @@ const servidor = http.createServer(async (req, res) => {
     if (!achou) return pagina(res, 'Página não encontrada', P.paginaEmBreve('Página não encontrada', 'O endereço que você abriu não existe.'), null, 404);
     const { fn, params } = achou;
     if (req.method === 'POST' && !url.pathname.startsWith('/webhook/') && !origemValida(req)) return pagina(res, 'Erro', P.paginaEmBreve('Envio bloqueado', 'Recarregue a página e tente de novo.'), null, 403);
+    // Origem da visita (campanhas): guarda por 30 dias até o cadastro
+    const utm = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'].reduce((o, k) => { const v = url.searchParams.get(k); if (v) o[k] = v.slice(0, 80); return o; }, {});
+    const origemParam = url.searchParams.get('origem');
+    if (req.method === 'GET' && (Object.keys(utm).length || (origemParam && PUBLICOS[origemParam]) || url.pathname.startsWith('/para/'))) {
+      const existente = cookies(req).sc_origem;
+      if (Object.keys(utm).length || !existente) {
+        const dados = { ...utm, origem: (origemParam && PUBLICOS[origemParam]) ? origemParam : (url.pathname.startsWith('/para/') ? url.pathname.slice(6) : ''), pagina: url.pathname.slice(0, 80) };
+        res.appendHeader?.('Set-Cookie', `sc_origem=${encodeURIComponent(JSON.stringify(dados))}; Path=/; Max-Age=${30 * 86400}; HttpOnly; SameSite=Lax${ehHttps(req) ? '; Secure' : ''}`);
+      }
+    }
     // Link de indicação: guarda o código por 30 dias até o cadastro
     const refParam = url.searchParams.get('ref');
     if (req.method === 'GET' && refParam && /^[A-Z2-9]{6,10}$/i.test(refParam)) {
-      res.setHeader('Set-Cookie', `sc_ref=${refParam.toUpperCase()}; Path=/; Max-Age=${30 * 86400}; HttpOnly; SameSite=Lax${ehHttps(req) ? '; Secure' : ''}`);
+      res.appendHeader('Set-Cookie', `sc_ref=${refParam.toUpperCase()}; Path=/; Max-Age=${30 * 86400}; HttpOnly; SameSite=Lax${ehHttps(req) ? '; Secure' : ''}`);
     }
     const token = cookies(req)[A.COOKIE];
     const usuario = A.usuarioDaSessao(token);

@@ -38,8 +38,10 @@ export const PRIVACIDADE = `
 <p>Para criar e manter sua conta, processar pagamentos, executar as consultas solicitadas, prevenir fraudes, cumprir obrigações legais e atender você.</p>
 <h3>4. Dados consultados</h3>
 <p>Os dados de terceiros obtidos nas consultas são fornecidos por fontes parceiras. O usuário que realiza a consulta é responsável por possuir base legal e por usar os dados apenas para a finalidade declarada. Mantemos o registro das consultas para auditoria e para atender aos direitos dos titulares.</p>
+<h3>4.1. Cookies e ferramentas de medição</h3>
+<p>Usamos cookies necessários ao funcionamento (login e segurança) e, quando ativados, cookies de medição e publicidade da Meta (Facebook/Instagram) e do Google, para saber de qual anúncio cada visitante veio e medir cadastros e recargas. Não enviamos a essas ferramentas os dados das consultas. Você pode bloquear cookies de terceiros nas configurações do seu navegador.</p>
 <h3>5. Compartilhamento</h3>
-<p>Compartilhamos dados apenas com prestadores necessários à operação: processador de pagamentos (Asaas), fornecedores de dados das consultas, serviço de envio de e-mails e hospedagem. Não vendemos dados de usuários.</p>
+<p>Compartilhamos dados apenas com prestadores necessários à operação: processador de pagamentos (Asaas), fornecedores de dados das consultas, serviço de envio de e-mails, hospedagem e, quando ativadas, ferramentas de medição de anúncios (Meta e Google). Não vendemos dados de usuários.</p>
 <h3>6. Retenção</h3>
 <p>Mantemos os dados da conta enquanto ela estiver ativa e pelo prazo necessário para cumprir obrigações legais e regulatórias. Os resultados das consultas (dados de terceiros) ficam disponíveis por tempo limitado (atualmente 10 dias) e são excluídos automaticamente; mantemos apenas o registro da consulta (data, usuário, documento e finalidade) para auditoria.</p>
 <h3>7. Seus direitos</h3>

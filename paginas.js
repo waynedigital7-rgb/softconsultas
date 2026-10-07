@@ -1,9 +1,16 @@
 // Páginas HTML (renderizadas no servidor)
+// Pixel da Meta / tag do Google
+let rastreioAtivo = false;
+export const configurarRastreio = (v) => { rastreioAtivo = !!v; };
+
 // Widget "Não sou um robô" (Cloudflare Turnstile)
 let chaveRobo = '';
 export const configurarRobo = (k) => { chaveRobo = k; };
 const robo = () => (chaveRobo ? `<div class="cf-turnstile" data-sitekey="${chaveRobo}" data-language="pt-br" style="margin:4px 0 16px"></div>` : '');
 const scriptRobo = () => (chaveRobo ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : '');
+
+const ICONE_OK = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
+export const faixaGratis = () => `<div class="faixa-gratis" role="note">${ICONE_OK} <strong>Cadastro e acesso 100% gratuitos.</strong> Sem mensalidade e sem taxa de adesão: você só paga pelas consultas que fizer.</div>`;
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const dt = (v) => {
@@ -79,6 +86,11 @@ footer{color:var(--cinza);font-size:.85rem;text-align:center;padding:24px 20px;b
 .banner-vazio strong{font-family:Montserrat,sans-serif;font-size:1.5rem}.banner-vazio span{color:#E2D3EE}
 .banner-vazio:hover{color:#fff}
 @media (max-width:560px){.banner{aspect-ratio:2/1}}
+.faixa-gratis{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#E9F6EF;color:#14532D;border:1px solid #BFE5CF;border-radius:14px;padding:12px 16px;margin:0 0 20px;font-size:.98rem}
+.faixa-gratis svg{color:var(--ok);flex:none}
+.selos{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.selos span{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--borda);border-radius:999px;padding:6px 12px;font-size:.88rem;font-weight:600}
+.selos svg{color:var(--ok)}
 /* ---------- Animações ---------- */
 @keyframes subir{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes girar{to{transform:rotate(360deg)}}
@@ -112,7 +124,7 @@ a.cartao:hover{transform:translateY(-4px);box-shadow:0 14px 30px -18px rgba(159,
 .hero h1 em{font-style:normal;color:var(--roxo)}
 `;
 
-export function layout({ titulo, corpo, usuario }) {
+export function layout({ titulo, corpo, usuario, descricao = '' }) {
   const nav = usuario
     ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/limpa-nome">Limpa Nome</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
        <form method="post" action="/sair" style="margin:0"><button class="btn sec" style="min-height:40px;padding:8px 18px;color:#fff;border-color:#3A3046">Sair</button></form>`
@@ -120,15 +132,18 @@ export function layout({ titulo, corpo, usuario }) {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(titulo)} · Soft Consultas</title>
+<meta name="description" content="${esc(descricao || 'Cadastro grátis e sem mensalidade: pague só pelas consultas de crédito, veículos, empresas, processos e certidões, com relatório em PDF na hora.')}">
+<meta property="og:title" content="${esc(titulo)} · Soft Consultas"><meta property="og:description" content="${esc(descricao || 'Consultas de crédito, veículos, empresas e certidões num só lugar.')}">
+<meta property="og:image" content="/icone.png">
 <link rel="icon" href="/icone.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>${CSS}</style><script src="/app.js" defer></script>${scriptRobo()}</head><body>
+<style>${CSS}</style><script src="/app.js" defer></script>${scriptRobo()}${rastreioAtivo ? '<script src="/rastreio.js" defer></script>' : ''}</head><body>
 <header class="topo"><div class="in">
 <a class="marca" href="${usuario ? '/painel' : '/'}"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></a>
 <nav class="nav">${nav}</nav></div></header>
 <main>${corpo}</main>
-<footer>Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01 · <a href="/termos">Termos de uso</a> · <a href="/privacidade">Privacidade</a></footer>
+<footer><strong>Cadastro grátis · Sem mensalidade · Você só paga pelas consultas</strong><br>Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01 · <a href="/termos">Termos de uso</a> · <a href="/privacidade">Privacidade</a></footer>
 </body></html>`;
 }
 
@@ -157,15 +172,16 @@ export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
   <div>
     <span class="tag">Consultas para o seu negócio</span>
     <h1 style="margin-top:14px">Informação de qualidade para <em>decidir com segurança</em>.</h1>
-    <p class="muted" style="font-size:1.15rem;max-width:520px">Consultas de crédito, empresas, veículos e muito mais, num só lugar. Recarregue créditos e consulte quando precisar, com relatório na hora.</p>
+    <p class="muted" style="font-size:1.15rem;max-width:520px">Consultas de crédito, empresas, veículos e muito mais, num só lugar. <strong style="color:var(--preto)">O cadastro é gratuito e você só paga pelas consultas que fizer</strong>, com relatório em PDF na hora.</p>
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:24px">
       <a class="btn" href="/cadastro">Criar conta grátis</a><a class="btn sec" href="/entrar">Já tenho conta</a>
     </div>
+    <div class="selos">${['Cadastro grátis', 'Sem mensalidade', 'Pague só pela consulta', 'PDF na hora'].map((t) => `<span>${ICONE_OK} ${t}</span>`).join('')}</div>
   </div>
   <div class="grade">
     <div class="cartao"><h3>Crédito</h3><p class="muted" style="margin:0">Score, restrições, protestos e histórico de CPF e CNPJ.</p></div>
     <div class="cartao"><h3>Veículos</h3><p class="muted" style="margin:0">Débitos, restrições e informações por placa.</p></div>
-    <div class="cartao"><h3>Créditos pré-pagos</h3><p class="muted" style="margin:0">Recarregue por Pix e pague só pelo que consultar.</p></div>
+    <div class="cartao"><h3>Cadastro gratuito</h3><p class="muted" style="margin:0">Sem mensalidade e sem adesão. Recarregue por Pix e pague só pelo que consultar.</p></div>
     <div class="cartao"><h3>Relatório em PDF</h3><p class="muted" style="margin:0">Resultado na tela e PDF para baixar e arquivar.</p></div>
   </div>
 </section>
@@ -178,8 +194,8 @@ export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
 
 export const paginaCadastro = ({ erro, v = {} }) => `
 <div class="cartao estreito">
-  <h1 style="font-size:1.7rem">Criar conta</h1>
-  <p class="muted">Leva menos de um minuto.</p>
+  <h1 style="font-size:1.7rem">Criar conta grátis</h1>
+  <p class="muted">Leva menos de um minuto. <strong style="color:var(--ok)">O cadastro e o acesso são gratuitos</strong>: sem mensalidade, você só paga pelas consultas que fizer.</p>
   ${aviso(erro)}
   <form method="post" action="/cadastro" novalidate>
     <div class="campo"><label for="nome">Nome completo ou razão social</label><input id="nome" name="nome" type="text" autocomplete="name" required value="${esc(v.nome)}"></div>
@@ -189,7 +205,7 @@ export const paginaCadastro = ({ erro, v = {} }) => `
     <div class="campo"><label for="senha">Senha</label><input id="senha" name="senha" type="password" autocomplete="new-password" minlength="8" required><small class="muted">Mínimo de 8 caracteres.</small></div>
     <label class="check"><input type="checkbox" name="aceite" value="1" required><span>Li e aceito os <a href="/termos" target="_blank">Termos de uso</a> e a <a href="/privacidade" target="_blank">Política de privacidade</a>.</span></label>
     ${robo()}
-    <button class="btn largo" type="submit">Criar minha conta</button>
+    <button class="btn largo" type="submit">Criar minha conta grátis</button>
   </form>
   <p class="muted" style="text-align:center;margin:18px 0 0">Já tem conta? <a href="/entrar">Entrar</a></p>
 </div>`;
@@ -241,6 +257,7 @@ export const botoesPdf = (id) => `<span style="display:inline-flex;gap:6px;flex-
 
 export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#' }) => `
 <h1 style="font-size:1.8rem">Olá, ${esc(usuario.nome.split(' ')[0])}</h1>
+${!usuario.admin && !transacoes.length ? faixaGratis() : ''}
 <p class="muted" style="margin-top:-4px">Bem-vindo ao seu painel.</p>
 <div class="grade" style="margin:22px 0">
   ${usuario.admin ? `<div class="saldo">

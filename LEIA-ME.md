@@ -15,6 +15,21 @@ Plataforma de consultas com cadastro, carteira de créditos (recarga por Pix), c
 | `ASAAS_WEBHOOK_TOKEN` | token do webhook (veja abaixo) |
 | `APIFULL_TOKEN` | o mesmo token da APIFull do outro site |
 
+## Variáveis opcionais
+
+| Nome | Para que serve |
+|---|---|
+| `URL_BASE` | `https://softconsultas.com` (links de e-mail e de indicação) |
+| `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` | "Não sou um robô" (Cloudflare Turnstile) no cadastro, login e senha |
+| `META_PIXEL_ID` | Pixel da Meta (Instagram/Facebook) nas páginas |
+| `GOOGLE_TAG_ID` | Tag do Google (ex.: `G-XXXX` do Analytics ou `AW-XXXX` do Ads) |
+| `GOOGLE_ADS_CONV_CADASTRO` / `GOOGLE_ADS_CONV_RECARGA` | Conversões do Google Ads no formato `AW-XXXX/rótulo` |
+| `CONTATO_ANUNCIE` | Link do botão "Anuncie aqui" (padrão: WhatsApp) |
+
+## Páginas de campanha
+- `/para/limpa-nome`, `/para/advogados`, `/para/empresas`
+- Links prontos com UTM e o resultado por campanha ficam em **Admin → Campanhas**.
+
 ## Disco persistente (obrigatório)
 Render → serviço → **Disks → Add Disk**: Mount Path `/var/data`, tamanho 1 GB.
 Sem ele, cadastros, saldos e histórico são apagados a cada atualização.
