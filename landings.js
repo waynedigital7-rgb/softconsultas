@@ -65,31 +65,62 @@ export const PUBLICOS = {
   },
 };
 
+// Exemplo de resultado (fictício) mostrado no topo de cada página
+const EXEMPLOS = {
+  'limpa-nome': { titulo: 'Exemplo de diagnóstico', destaque: '3 restrições · R$ 5.517', linhas: [['Serasa', '2 registros', 0], ['SPC', '1 registro', 0], ['Boa Vista', 'Nada consta', 1], ['Banco Central (SCR)', 'Nada consta', 1], ['Protestos', '1 registro', 0]] },
+  advogados: { titulo: 'Exemplo de localização de bens', destaque: '2 veículos · 1 empresa', linhas: [['Veículos no CPF', '2 encontrados', 0], ['Imóveis', '1 encontrado', 0], ['Participação societária', '1 empresa', 0], ['Processos judiciais', '4 processos', 0], ['Protestos', 'Nada consta', 1]] },
+  empresas: { titulo: 'Exemplo de consulta de cliente', destaque: 'Score 412 · risco alto', linhas: [['Score de crédito', '412 / 1000', 0], ['Pendências financeiras', '2 registros', 0], ['Protestos', 'Nada consta', 1], ['Cheques sem fundo', 'Nada consta', 1], ['Situação do CNPJ', 'Ativa', 1]] },
+};
+const ICONE_RAIO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9z"/></svg>';
+const ICONE_PDF = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>';
+const ICONE_ESCUDO = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/></svg>';
 const ICONE_CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>';
 
-export function paginaLanding({ chave, cfg, produtos }) {
-  const qs = `?origem=${encodeURIComponent(chave)}`;
+export function paginaLanding({ chave, cfg, produtos, bonus = {}, consultasFeitas = 0, menor = 0 }) {
+  const ex = EXEMPLOS[chave];
   const top = produtos.slice(0, 5);
-  const selos = `<div class="selos" style="justify-content:center">${['Cadastro grátis', 'Sem mensalidade', 'Pague só pela consulta'].map((t) => `<span>${ICONE_CHECK} ${t}</span>`).join('')}</div>`;
+  const fim = bonus.ate ? bonus.ate.split('-').reverse().slice(0, 2).join('/') : '';
+  const faixaBonus = bonus.ativo ? `<div class="aviso ok" style="text-align:center;margin:0 auto 26px;max-width:760px"><strong>Oferta de lançamento:</strong> +${bonus.pct}% de crédito na primeira recarga${bonus.min ? ` a partir de ${reais(bonus.min)}` : ''}${fim ? `, até ${fim}` : ''}.</div>` : '';
   return `
-<section style="text-align:center;max-width:760px;margin:12px auto 36px">
-  <span class="tag">${esc(cfg.selo)}</span>
-  <h1 style="font-size:clamp(2rem,5vw,3.2rem);font-weight:800;letter-spacing:-.02em;margin:16px 0 12px">${esc(cfg.h1)} <em style="font-style:normal;color:var(--roxo)">${esc(cfg.destaque)}</em>.</h1>
-  <p class="muted" style="font-size:1.15rem;margin:0 auto 24px;max-width:600px">${esc(String(cfg.sub).split(/(?<=\.)\s/)[0])}</p>
-  <a class="btn" style="font-size:1.08rem;padding:16px 34px" href="/cadastro${qs}" data-evento="Lead">Criar conta grátis</a>
-  ${selos}
+<section class="hero" style="padding-top:6px;align-items:center">
+  <div>
+    <span class="tag">${esc(cfg.selo)}</span>
+    <h1 style="margin-top:14px">${esc(cfg.h1)} <em>${esc(cfg.destaque)}</em>.</h1>
+    <p class="muted" style="font-size:1.12rem;max-width:540px;margin-bottom:20px">${esc(String(cfg.sub).split(/(?<=\.)\s/)[0])}</p>
+    <form method="get" action="/cadastro" class="campo-consulta" data-consulta-topo>
+      <input type="hidden" name="origem" value="${esc(chave)}">
+      <input name="doc" type="text" inputmode="numeric" placeholder="Digite o CPF ou CNPJ" aria-label="CPF ou CNPJ para consultar" autocomplete="off">
+      <button class="btn" type="submit" data-evento="Lead">Consultar agora</button>
+    </form>
+    <p class="muted" style="font-size:.9rem;margin:10px 0 0">Cadastro grátis em 30 segundos · sem mensalidade${menor ? ` · consultas a partir de <strong style="color:var(--preto)">${reais(menor)}</strong>` : ''}</p>
+  </div>
+  ${ex ? `<div class="cartao" style="max-width:420px;justify-self:center;width:100%;box-shadow:0 30px 60px -30px rgba(159,49,211,.45)">
+    <div class="muted" style="font-size:.85rem">${esc(ex.titulo)}</div>
+    <div style="font-family:Montserrat,sans-serif;font-size:1.3rem;font-weight:800;margin:4px 0 10px">${esc(ex.destaque)}</div>
+    <table class="tabela">${ex.linhas.map(([a, b, ok]) => `<tr><td>${esc(a)}</td><td style="text-align:right;font-weight:700;color:${ok ? 'var(--ok)' : 'var(--erro)'}">${esc(b)}</td></tr>`).join('')}</table>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:12px;color:var(--roxo);font-weight:600;font-size:.9rem">${ICONE_PDF} Relatório em PDF na hora</div>
+  </div>` : ''}
 </section>
-${top.length ? `<section style="max-width:720px;margin:0 auto 36px">
-  <h2 style="font-size:1.3rem;text-align:center">Consultas mais usadas</h2>
+<div class="confianca" style="margin:-6px 0 30px">
+  <span>Bases: Serasa · SPC · Boa Vista · Banco Central · Cartórios</span><span>🔒 LGPD</span><span>Pix seguro via Asaas</span><span>CNPJ 20.801.827/0001-01</span>${consultasFeitas >= 100 ? `<span><strong>${consultasFeitas.toLocaleString('pt-BR')}</strong> consultas realizadas</span>` : ''}
+</div>
+${faixaBonus}
+<section class="grade" style="margin-bottom:34px">
+  <div class="cartao"><span style="color:var(--roxo)">${ICONE_RAIO}</span><h3 style="margin:8px 0 4px">Resultado em segundos</h3><p class="muted" style="margin:0">Sem formulários longos nem espera. Digite o documento e pronto.</p></div>
+  <div class="cartao"><span style="color:var(--roxo)">${ICONE_PDF}</span><h3 style="margin:8px 0 4px">PDF pronto para usar</h3><p class="muted" style="margin:0">Baixe, envie ao cliente ou anexe. Fica no histórico por 10 dias.</p></div>
+  <div class="cartao"><span style="color:var(--roxo)">${ICONE_ESCUDO}</span><h3 style="margin:8px 0 4px">Não funcionou? Dinheiro de volta</h3><p class="muted" style="margin:0">Se a consulta falhar, o valor volta na hora para o seu saldo.</p></div>
+</section>
+${top.length ? `<section style="max-width:720px;margin:0 auto 34px">
+  <h2 style="font-size:1.35rem;text-align:center">Preço por consulta, sem mensalidade</h2>
   <div class="lista">${top.map((p) => `<div class="item"><span class="ic">${ICONE_CHECK}</span><span class="tx"><strong>${esc(p.nome)}</strong></span><span class="pr"><strong>${reais(p.preco_centavos)}</strong><small>por consulta</small></span></div>`).join('')}</div>
 </section>` : ''}
-<section style="max-width:720px;margin:0 auto 36px;text-align:center">
-  <p style="font-weight:600;margin:0">1. Crie a conta grátis &nbsp;→&nbsp; 2. Recarregue por Pix &nbsp;→&nbsp; 3. Consulte e baixe o PDF</p>
-</section>
-<section style="max-width:720px;margin:0 auto 36px">
+<section style="max-width:720px;margin:0 auto 30px">
   ${cfg.faq.map(([q, r]) => `<details style="border-top:1px solid var(--borda);padding:14px 0"><summary style="cursor:pointer;font-weight:700">${esc(q)}</summary><p class="muted" style="margin:8px 0 0">${esc(r)}</p></details>`).join('')}
 </section>
-<section style="text-align:center;margin-bottom:10px">
-  <a class="btn" style="font-size:1.08rem;padding:16px 34px" href="/cadastro${qs}" data-evento="Lead">Começar agora, é grátis</a>
-</section>`;
+<section class="cartao" style="text-align:center;max-width:720px;margin:0 auto 10px;background:var(--preto);color:#fff;border:0">
+  <h2 style="font-size:1.5rem;color:#fff">Faça sua primeira consulta hoje</h2>
+  <p style="color:#E2D3EE;margin:0 0 18px">Crie a conta grátis em 30 segundos e pague só quando consultar.</p>
+  <a class="btn" style="font-size:1.05rem;padding:15px 32px" href="/cadastro?origem=${encodeURIComponent(chave)}" data-evento="Lead">Criar conta grátis</a>
+</section>
+<div class="cta-fixo"><span>Cadastro grátis · sem mensalidade</span><a class="btn" href="/cadastro?origem=${encodeURIComponent(chave)}" data-evento="Lead">Criar conta</a></div>`;
 }

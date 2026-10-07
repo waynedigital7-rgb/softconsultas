@@ -78,7 +78,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
 </form>`;
 }
 
-export function adminConfig({ minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, alerta = 5000, ok, erro }) {
+export function adminConfig({ minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, ok, erro }) {
   return `<h1 style="font-size:1.7rem">Configurações</h1>${menu('/admin/config')}${aviso(ok, erro)}
 <form class="cartao" method="post" action="/admin/config" style="max-width:640px">
   <div class="campo"><label for="markup">Margem sobre o custo APIFull (%)</label><input id="markup" name="markup" type="text" inputmode="numeric" value="${markup}">
@@ -87,6 +87,13 @@ export function adminConfig({ minimo, faixas, markup, dias = 10, comissaoMax = 1
   <div class="campo"><label for="faixas">Bônus de recarga</label>
     <input id="faixas" name="faixas" type="text" value="${esc(faixas.map((f) => `${f.a_partir_de / 100}=${f.percentual}`).join('; '))}">
     <small class="muted">Formato: valor=percentual, separados por ponto e vírgula. Ex.: <code>100=5; 300=10</code> (a partir de R$ 100 ganha 5%, a partir de R$ 300 ganha 10%). Deixe vazio para não dar bônus.</small></div>
+  <fieldset style="border:1px solid var(--borda);border-radius:14px;padding:14px 16px;margin:0 0 16px"><legend style="font-weight:700;padding:0 6px">Oferta de primeira recarga</legend>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="campo" style="flex:1 1 140px;margin:0"><label for="primeira_pct">Bônus (%)</label><input id="primeira_pct" name="primeira_pct" type="text" inputmode="numeric" value="${primeira.pct}"></div>
+      <div class="campo" style="flex:1 1 160px;margin:0"><label for="primeira_min">A partir de (R$)</label><input id="primeira_min" name="primeira_min" type="text" inputmode="decimal" value="${(primeira.min / 100).toFixed(2).replace('.', ',')}"></div>
+      <div class="campo" style="flex:1 1 180px;margin:0"><label for="primeira_ate">Válida até</label><input id="primeira_ate" name="primeira_ate" type="date" value="${primeira.ate || ''}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+    </div>
+    <small class="muted">Vale só na primeira recarga paga de cada cliente e aparece nas páginas de campanha. Coloque 0% para desligar.</small></fieldset>
   <div class="campo"><label for="dias">Dias de histórico disponível para o cliente</label><input id="dias" name="dias" type="text" inputmode="numeric" value="${dias}">
     <small class="muted">Depois desse prazo, o resultado e o PDF de cada consulta são apagados automaticamente (LGPD). O registro da consulta continua no Admin.</small></div>
   <div class="campo"><label for="comissao_maxima">Comissão máxima de indicação (%)</label><input id="comissao_maxima" name="comissao_maxima" type="text" inputmode="numeric" value="${comissaoMax}">

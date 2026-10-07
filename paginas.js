@@ -91,6 +91,13 @@ footer{color:var(--cinza);font-size:.85rem;text-align:center;padding:24px 20px;b
 .selos{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
 .selos span{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--borda);border-radius:999px;padding:6px 12px;font-size:.88rem;font-weight:600}
 .selos svg{color:var(--ok)}
+.cta-fixo{display:none}
+@media (max-width:700px){.cta-fixo{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:50;padding:10px 14px calc(10px + env(safe-area-inset-bottom));background:rgba(15,12,20,.96);gap:10px;align-items:center;justify-content:space-between;box-shadow:0 -8px 24px rgba(0,0,0,.25)}
+.cta-fixo span{color:#E2D3EE;font-size:.85rem}.cta-fixo .btn{min-height:44px;padding:10px 20px}body.com-cta{padding-bottom:72px}}
+.campo-consulta{display:flex;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid var(--borda);border-radius:18px;padding:10px;box-shadow:0 20px 40px -25px rgba(159,49,211,.5)}
+.campo-consulta input{flex:1 1 220px;border:0!important;font-size:1.08rem;outline:none}
+.campo-consulta .btn{flex:0 0 auto}
+.confianca{display:flex;gap:8px 18px;flex-wrap:wrap;justify-content:center;color:var(--cinza);font-size:.88rem;margin-top:14px}
 /* ---------- Animações ---------- */
 @keyframes subir{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes girar{to{transform:rotate(360deg)}}
@@ -124,7 +131,7 @@ a.cartao:hover{transform:translateY(-4px);box-shadow:0 14px 30px -18px rgba(159,
 .hero h1 em{font-style:normal;color:var(--roxo)}
 `;
 
-export function layout({ titulo, corpo, usuario, descricao = '' }) {
+export function layout({ titulo, corpo, usuario, descricao = '', minimo = false }) {
   const nav = usuario
     ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/limpa-nome">Limpa Nome</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
        <form method="post" action="/sair" style="margin:0"><button class="btn sec" style="min-height:40px;padding:8px 18px;color:#fff;border-color:#3A3046">Sair</button></form>`
@@ -141,7 +148,7 @@ export function layout({ titulo, corpo, usuario, descricao = '' }) {
 <style>${CSS}</style><script src="/app.js" defer></script>${scriptRobo()}${rastreioAtivo ? '<script src="/rastreio.js" defer></script>' : ''}</head><body>
 <header class="topo"><div class="in">
 <a class="marca" href="${usuario ? '/painel' : '/'}"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></a>
-<nav class="nav">${nav}</nav></div></header>
+<nav class="nav">${minimo && !usuario ? '<a href="/entrar" style="font-size:.92rem">Já tenho conta</a>' : nav}</nav></div></header>
 <main>${corpo}</main>
 <footer><strong>Cadastro grátis · Sem mensalidade · Você só paga pelas consultas</strong><br>Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01 · <a href="/termos">Termos de uso</a> · <a href="/privacidade">Privacidade</a></footer>
 </body></html>`;
@@ -187,7 +194,6 @@ export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
     <tr><td>Relatório em PDF</td><td style="text-align:right;color:var(--ok);font-weight:700">Pronto</td></tr></table>
   </div>
 </section>
-<section style="margin-bottom:28px">${bannerAnuncios(anuncios, contato)}</section>
 <section class="cartao" style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;justify-content:space-between">
   <div><span class="tag">Para profissionais de limpa nome</span><h2 style="margin:10px 0 6px">Área exclusiva com as consultas certas para cada caso</h2>
   <p class="muted" style="margin:0;max-width:620px">As consultas mais em conta para triagem e as mais completas para o diagnóstico: Serasa, SPC, Boa Vista, Banco Central, protestos e CADIN.</p></div>
@@ -197,19 +203,20 @@ export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
 export const paginaCadastro = ({ erro, v = {} }) => `
 <div class="cartao estreito">
   <h1 style="font-size:1.7rem">Criar conta grátis</h1>
-  <p class="muted">Leva menos de um minuto. <strong style="color:var(--ok)">O cadastro e o acesso são gratuitos</strong>: sem mensalidade, você só paga pelas consultas que fizer.</p>
+  <p class="muted">${v.consulta ? `Falta só um passo para consultar o documento <strong style="color:var(--preto)">${esc(v.consulta.length === 14 ? v.consulta.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5') : v.consulta.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4'))}</strong>. ` : 'Leva menos de um minuto. '}<strong style="color:var(--ok)">Grátis e sem mensalidade</strong>: você só paga pelas consultas.</p>
   ${aviso(erro)}
   <form method="post" action="/cadastro" novalidate>
-    <div class="campo"><label for="nome">Nome completo ou razão social</label><input id="nome" name="nome" type="text" autocomplete="name" required value="${esc(v.nome)}"></div>
+    ${v.consulta ? `<input type="hidden" name="consulta" value="${esc(v.consulta)}">` : ''}
+    <div class="campo"><label for="nome">Nome</label><input id="nome" name="nome" type="text" autocomplete="name" required value="${esc(v.nome)}"></div>
     <div class="campo"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="email" required value="${esc(v.email)}"></div>
-    <div class="campo"><label for="documento">CPF ou CNPJ</label><input id="documento" name="documento" type="text" inputmode="numeric" required value="${esc(v.documento)}"></div>
     <div class="campo"><label for="telefone">WhatsApp</label><input id="telefone" name="telefone" type="tel" autocomplete="tel" placeholder="(00) 00000-0000" required value="${esc(v.telefone)}"></div>
-    <div class="campo"><label for="senha">Senha</label><input id="senha" name="senha" type="password" autocomplete="new-password" minlength="8" required><small class="muted">Mínimo de 8 caracteres.</small></div>
+    <div class="campo"><label for="senha">Crie uma senha</label><input id="senha" name="senha" type="password" autocomplete="new-password" minlength="8" required><small class="muted">Mínimo de 8 caracteres.</small></div>
     <label class="check"><input type="checkbox" name="aceite" value="1" required><span>Li e aceito os <a href="/termos" target="_blank">Termos de uso</a> e a <a href="/privacidade" target="_blank">Política de privacidade</a>.</span></label>
     ${robo()}
     <button class="btn largo" type="submit">Criar minha conta grátis</button>
   </form>
-  <p class="muted" style="text-align:center;margin:18px 0 0">Já tem conta? <a href="/entrar">Entrar</a></p>
+  <p class="muted" style="text-align:center;font-size:.88rem;margin:14px 0 0">🔒 Seus dados protegidos conforme a LGPD · Pagamentos por Pix via Asaas</p>
+  <p class="muted" style="text-align:center;margin:10px 0 0">Já tem conta? <a href="/entrar">Entrar</a></p>
 </div>`;
 
 export const paginaEntrar = ({ erro, ok, email = '' }) => `

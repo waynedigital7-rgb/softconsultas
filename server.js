@@ -218,10 +218,11 @@ function garantirCodigo(usuario) {
 }
 
 rota('GET', '/', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel')
-  : pagina(res, 'Consultas para o seu negócio', P.paginaInicial({ anuncios: anunciosParaExibir(), contato: contatoAnuncie() }), null)));
+  : pagina(res, 'Consultas para o seu negócio', P.paginaInicial({}), null)));
 
 // Cadastro
-rota('GET', '/cadastro', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel') : pagina(res, 'Criar conta', P.paginaCadastro({}), null)));
+rota('GET', '/cadastro', ({ res, usuario, url }) => (usuario ? redirecionar(res, '/consultas')
+  : pagina(res, 'Criar conta grátis', P.paginaCadastro({ v: { consulta: A.soNumeros(url.searchParams.get('doc') || '').slice(0, 14) } }), null)));
 rota('POST', '/cadastro', async ({ req, res }) => {
   const f = await corpoForm(req);
   const v = {
@@ -229,13 +230,14 @@ rota('POST', '/cadastro', async ({ req, res }) => {
     email: String(f.email || '').trim().toLowerCase().slice(0, 160),
     documento: A.soNumeros(f.documento),
     telefone: A.soNumeros(f.telefone).replace(/^55(?=\d{10,11}$)/, ''),
+    consulta: A.soNumeros(f.consulta || '').slice(0, 14),
   };
   const erro = (m) => pagina(res, 'Criar conta', P.paginaCadastro({ erro: m, v }), null, 400);
   if (!A.limitar(`cad:${ipDe(req)}`, 10, 60)) return erro('Muitas tentativas. Aguarde alguns minutos e tente de novo.');
   if (!(await passouNoRobo(req, f))) return erro('Confirme que você não é um robô.');
   if (v.nome.length < 3) return erro('Informe seu nome completo ou a razão social.');
   if (!A.emailValido(v.email)) return erro('Informe um e-mail válido.');
-  if (!A.documentoValido(v.documento)) return erro('CPF ou CNPJ inválido.');
+  if (v.documento && !A.documentoValido(v.documento)) return erro('CPF ou CNPJ inválido.');
   if (v.telefone.length < 10 || v.telefone.length > 11) return erro('Informe seu WhatsApp com DDD.');
   if (String(f.senha || '').length < 8) return erro('A senha precisa ter pelo menos 8 caracteres.');
   if (f.aceite !== '1') return erro('Para continuar, aceite os Termos de uso e a Política de privacidade.');
@@ -254,7 +256,8 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   const token = A.criarSessao(Number(r.lastInsertRowid));
   enviarEmail({ para: v.email, assunto: 'Bem-vindo à Soft Consultas', html: emailBoasVindas(v.nome, `${urlBase(req)}/painel`) })
     .catch((e) => console.error('e-mail boas-vindas:', e.message));
-  redirecionar(res, '/painel?bemvindo=1', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0'] });
+  const docConsulta = A.soNumeros(f.consulta || '').slice(0, 14);
+  redirecionar(res, docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : '/painel?bemvindo=1', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0'] });
 });
 
 // Login
@@ -338,7 +341,22 @@ rota('POST', '/conta/senha', exigeLogin(async ({ req, res, usuario, token }) => 
 
 // ======================= CARTEIRA (recarga por Pix) =======================
 const faixasBonus = () => { try { return JSON.parse(lerConfig('bonus_faixas') || '[]'); } catch { return []; } };
-const bonusPara = (v) => { let p = 0; for (const f of faixasBonus()) if (v >= f.a_partir_de) p = Math.max(p, f.percentual); return Math.round((v * p) / 100); };
+// Bônus de primeira recarga (oferta de lançamento), configurável no Admin
+function bonusPrimeira() {
+  const pct = Number(lerConfig('bonus_primeira_percentual') || 0);
+  const min = Number(lerConfig('bonus_primeira_minimo_centavos') || 0);
+  const ate = lerConfig('bonus_primeira_ate') || '';
+  const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  return { pct, min, ate, ativo: pct > 0 && (!ate || hoje <= ate) };
+}
+const ehPrimeiraRecarga = (uid) => !db.prepare("SELECT 1 FROM recargas WHERE usuario_id = ? AND status = 'paga'").get(uid);
+const bonusPara = (v, uid) => {
+  let p = 0;
+  for (const f of faixasBonus()) if (v >= f.a_partir_de) p = Math.max(p, f.percentual);
+  const bp = bonusPrimeira();
+  if (uid && bp.ativo && v >= bp.min && ehPrimeiraRecarga(uid)) p = Math.max(p, bp.pct);
+  return Math.round((v * p) / 100);
+};
 const VALOR_MAXIMO = 500000; // R$ 5.000 por recarga
 
 // Credita uma recarga uma única vez (webhook e verificação manual podem chamar ao mesmo tempo)
@@ -359,14 +377,22 @@ function creditarRecarga(recargaId) {
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => pagina(res, 'Recarregar',
-  PA.paginaRecarregar({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus() }), usuario)));
+const dadosRecarga = (usuario) => ({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(),
+  primeira: bonusPrimeira().ativo && ehPrimeiraRecarga(usuario.id) ? bonusPrimeira() : null, pedirDocumento: !usuario.documento });
+rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => pagina(res, 'Recarregar', PA.paginaRecarregar(dadosRecarga(usuario)), usuario)));
 
 rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = Number(lerConfig('recarga_minima_centavos'));
   const valor = String(f.outro || '').trim() ? centavos(f.outro) : centavos(f.valor);
-  const erro = (m) => pagina(res, 'Recarregar', PA.paginaRecarregar({ minimo, faixas: faixasBonus(), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Recarregar', PA.paginaRecarregar({ ...dadosRecarga(usuario), erro: m }), usuario, 400);
+  // CPF/CNPJ é pedido só na primeira recarga (exigido pelo pagamento)
+  if (!usuario.documento) {
+    const doc = A.soNumeros(f.documento);
+    if (!A.documentoValido(doc)) return erro('Informe um CPF ou CNPJ válido para emitir o Pix.');
+    db.prepare('UPDATE usuarios SET documento = ? WHERE id = ?').run(doc, usuario.id);
+    usuario.documento = doc;
+  }
   if (!Number.isFinite(valor) || valor < minimo) return erro(`O valor mínimo de recarga é ${P.reais(minimo)}.`);
   if (valor > VALOR_MAXIMO) return erro(`O valor máximo por recarga é ${P.reais(VALOR_MAXIMO)}.`);
   if (!A.limitar(`rec:${usuario.id}`, 10, 60)) return erro('Muitas recargas geradas em pouco tempo. Aguarde alguns minutos.');
@@ -376,7 +402,7 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
       clienteId = (await AS.criarCliente(usuario)).id;
       db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
     }
-    const bonus = bonusPara(valor);
+    const bonus = bonusPara(valor, usuario.id);
     const rid = Number(db.prepare('INSERT INTO recargas (usuario_id, valor_centavos, bonus_centavos) VALUES (?, ?, ?)').run(usuario.id, valor, bonus).lastInsertRowid);
     const cob = await AS.criarCobranca({ clienteId, valorCentavos: valor, recargaId: rid });
     let pix = null;
@@ -598,7 +624,7 @@ rota('GET', '/historico', exigeLogin(({ res, usuario, url }) => {
   const consultas = busca
     ? db.prepare('SELECT * FROM consultas WHERE usuario_id = ? AND (produto LIKE ? OR parametro LIKE ? OR parametro LIKE ?) ORDER BY id DESC LIMIT 200').all(usuario.id, termo, termo.toUpperCase(), doc)
     : db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 200').all(usuario.id);
-  pagina(res, 'Histórico', PA.paginaHistorico({ consultas, busca, dias: diasHistorico() }), usuario);
+  pagina(res, 'Histórico', (usuario.admin ? '' : `<div style="margin-bottom:18px">${P.bannerAnuncios(anunciosParaExibir(), contatoAnuncie())}</div>`) + PA.paginaHistorico({ consultas, busca, dias: diasHistorico() }), usuario);
 }));
 
 // ======================= INDICAÇÕES =======================
@@ -813,18 +839,20 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
-  minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
+  minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
 
 rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = centavos(f.minimo), markup = Number(String(f.markup || '').replace(',', '.'));
-  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), erro: m }), usuario, 400);
   const dias = Number(f.dias);
   if (!Number.isInteger(dias) || dias < 1 || dias > 365) return erro('O prazo do histórico precisa ser entre 1 e 365 dias.');
   const comissaoMax = Number(f.comissao_maxima), saqueMin = centavos(f.saque_minimo);
   if (!Number.isInteger(comissaoMax) || comissaoMax < 0 || comissaoMax > 300) return erro('Comissão máxima inválida (0 a 300%).');
   if (!Number.isFinite(saqueMin) || saqueMin < 100) return erro('Saque mínimo inválido.');
+  const bpPct = Number(String(f.primeira_pct ?? '0').replace(',', '.')), bpMin = centavos(f.primeira_min || '0'), bpAte = /^\d{4}-\d{2}-\d{2}$/.test(f.primeira_ate || '') ? f.primeira_ate : '';
+  if (!Number.isFinite(bpPct) || bpPct < 0 || bpPct > 100 || !Number.isFinite(bpMin) || bpMin < 0) return erro('Bônus de primeira recarga inválido.');
   const alerta = centavos(f.alerta_apifull);
   if (!Number.isFinite(alerta) || alerta < 0) return erro('Valor de alerta do saldo APIFull inválido.');
   if (!Number.isFinite(minimo) || minimo < 500) return erro('A recarga mínima precisa ser de pelo menos R$ 5,00.');
@@ -842,6 +870,9 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('comissao_maxima', comissaoMax);
   gravarConfig('saque_minimo_centavos', saqueMin);
   gravarConfig('alerta_saldo_apifull_centavos', alerta);
+  gravarConfig('bonus_primeira_percentual', bpPct);
+  gravarConfig('bonus_primeira_minimo_centavos', bpMin);
+  gravarConfig('bonus_primeira_ate', bpAte);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
   registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, alerta APIFull ${P.reais(alerta)}`);
@@ -982,7 +1013,10 @@ rota('GET', '/para/:publico', ({ res, usuario, params }) => {
   if (!cfg) return redirecionar(res, '/');
   const ativos = db.prepare("SELECT * FROM produtos WHERE ativo = 1 AND endpoint <> ''").all();
   const produtos = cfg.consultas.map((e) => ativos.find((p) => p.endpoint === e)).filter(Boolean);
-  html(res, P.layout({ titulo: cfg.titulo, descricao: cfg.descricaoMeta, corpo: paginaLanding({ chave: params.publico, cfg, produtos }), usuario }));
+  const consultasFeitas = db.prepare("SELECT COUNT(*) n FROM consultas WHERE status = 'concluida'").get().n;
+  const menor = Math.min(...produtos.map((p) => p.preco_centavos).filter((v) => v > 0), Infinity);
+  html(res, P.layout({ titulo: cfg.titulo, descricao: cfg.descricaoMeta, minimo: true,
+    corpo: paginaLanding({ chave: params.publico, cfg, produtos, bonus: bonusPrimeira(), consultasFeitas, menor: Number.isFinite(menor) ? menor : 0 }), usuario }));
 });
 
 rota('GET', '/admin/campanhas', exigeAdmin(({ res, usuario, url }) => {

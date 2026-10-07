@@ -30,6 +30,23 @@ document.addEventListener('DOMContentLoaded', () => {
     auto();
   });
 
+  // Barra fixa de cadastro no celular (páginas de campanha)
+  if (document.querySelector('.cta-fixo')) document.body.classList.add('com-cta');
+
+  // Documento digitado no topo da página de campanha: preenche a consulta depois do cadastro
+  const docUrl = new URLSearchParams(location.search).get('doc');
+  if (docUrl) { try { sessionStorage.setItem('sc_doc', docUrl.replace(/\D/g, '').slice(0, 14)); } catch {} }
+  const campoValor = document.querySelector('form[data-consulta] #valor');
+  if (campoValor && !campoValor.value) {
+    try {
+      const d = sessionStorage.getItem('sc_doc') || '', t = campoValor.getAttribute('data-tipo');
+      const serve = (t === 'cpf' && d.length === 11) || (t === 'cnpj' && d.length === 14) || (t === 'cpf_cnpj' && (d.length === 11 || d.length === 14));
+      if (serve) campoValor.value = d;
+    } catch {}
+  }
+  const topo = document.querySelector('form[data-consulta-topo]');
+  if (topo) topo.addEventListener('submit', () => { const i = topo.querySelector('[name=doc]'); i.value = i.value.replace(/\D/g, '').slice(0, 14); if (!i.value) i.disabled = true; });
+
   // Eventos de campanha em botões (ex.: "Criar conta" nas páginas de campanha)
   document.querySelectorAll('[data-evento]').forEach((a) => a.addEventListener('click', () => { if (window.scEvento) window.scEvento(a.getAttribute('data-evento')); }));
 

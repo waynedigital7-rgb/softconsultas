@@ -136,7 +136,7 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, b
   <div id="aviso-nova-aba" class="aviso ok" hidden>Sua consulta está abrindo em uma <strong>nova aba</strong>. O PDF também fica no <a href="/historico"><strong>Histórico</strong></a> com o botão <strong>Baixar PDF</strong>.</div>
   <form method="post" action="/consultas/${esc(produto.slug)}" target="_blank" data-consulta>
     <div class="campo"><label for="valor">${ROTULO_DOC[produto.documento]}</label>
-      <input id="valor" name="valor" type="text" ${produto.documento === 'placa' ? 'autocapitalize="characters"' : 'inputmode="numeric"'} required value="${esc(v.valor)}"></div>
+      <input id="valor" name="valor" type="text" data-tipo="${esc(produto.documento)}" ${produto.documento === 'placa' ? 'autocapitalize="characters"' : 'inputmode="numeric"'} required value="${esc(v.valor)}"></div>
     <div class="campo"><label for="finalidade">Finalidade da consulta</label>
       <select id="finalidade" name="finalidade" required style="font:inherit;padding:13px 15px;border:1.5px solid #D6CCE0;border-radius:12px;min-height:48px;background:#fff">
         <option value="">Selecione...</option>
@@ -213,13 +213,14 @@ export function paginaHistorico({ consultas, busca = '', dias = 10 }) {
 </table></div>` : '<div class="vazio">Nenhuma consulta encontrada.</div>'}</div>`;
 }
 
-export function paginaRecarregar({ minimo, faixas, erro }) {
+export function paginaRecarregar({ minimo, faixas, erro, primeira = null, pedirDocumento = false }) {
   const sugestoes = [3000, 5000, 10000, 20000, 30000, 50000].filter((v) => v >= minimo);
-  const bonusDe = (v) => { let p = 0; for (const f of faixas) if (v >= f.a_partir_de) p = Math.max(p, f.percentual); return p; };
+  const bonusDe = (v) => { let p = 0; for (const f of faixas) if (v >= f.a_partir_de) p = Math.max(p, f.percentual); if (primeira && v >= primeira.min) p = Math.max(p, primeira.pct); return p; };
   return `
 <div class="cartao estreito" style="max-width:600px">
   <h1 style="font-size:1.6rem">Recarregar créditos</h1>
   <p class="muted">Pague por Pix e o saldo cai na hora. Recarga mínima de ${reais(minimo)}. <strong>Sem mensalidade:</strong> o saldo é usado só nas consultas que você fizer.</p>
+  ${primeira ? `<div class="aviso ok" style="border:2px solid var(--ok)"><strong>Oferta de primeira recarga:</strong> +${primeira.pct}% de crédito${primeira.min ? ` recarregando a partir de ${reais(primeira.min)}` : ''}${primeira.ate ? `, válida até ${primeira.ate.split('-').reverse().join('/')}` : ''}.</div>` : ''}
   ${faixas.length ? `<div class="aviso ok">${faixas.map((f) => `Recarregando a partir de ${reais(f.a_partir_de)}, ganhe <strong>+${f.percentual}%</strong> de bônus`).join('<br>')}</div>` : ''}
   ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
   <form method="post" action="/recarregar">
@@ -228,6 +229,8 @@ export function paginaRecarregar({ minimo, faixas, erro }) {
         <input type="radio" name="valor" value="${v / 100}" ${i === 1 ? 'checked' : ''} style="accent-color:var(--roxo);width:18px;height:18px">
         <span><strong>${reais(v)}</strong>${bonusDe(v) ? `<br><small style="color:var(--ok);font-weight:700">+${reais(Math.round((v * bonusDe(v)) / 100))} bônus</small>` : ''}</span></label>`).join('')}
     </div>
+    ${pedirDocumento ? `<div class="campo"><label for="documento">Seu CPF ou CNPJ (para emitir o Pix)</label><input id="documento" name="documento" type="text" inputmode="numeric" required>
+      <small class="muted">Pedimos só uma vez. Com CNPJ, as consultas de empresa e as sensíveis são liberadas automaticamente.</small></div>` : ''}
     <div class="campo"><label for="outro">Ou digite outro valor (R$)</label><input id="outro" name="outro" type="text" inputmode="decimal" placeholder="Ex.: 75"></div>
     <button class="btn largo" type="submit">Gerar Pix</button>
   </form>
