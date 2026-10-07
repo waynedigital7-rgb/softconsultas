@@ -1,5 +1,5 @@
 // Páginas de destino para campanhas (públicas, sem login)
-import { esc, reais, faixaGratis } from './paginas.js';
+import { esc, reais } from './paginas.js';
 
 // Conteúdo de cada público. "consultas" = endpoints em destaque (só aparecem se estiverem ativos no catálogo).
 export const PUBLICOS = {
@@ -69,48 +69,27 @@ const ICONE_CHECK = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"
 
 export function paginaLanding({ chave, cfg, produtos }) {
   const qs = `?origem=${encodeURIComponent(chave)}`;
-  const lista = produtos.length ? `<div class="lista">${produtos.map((p) => `
-    <div class="item">
-      <span class="ic">${ICONE_CHECK}</span>
-      <span class="tx"><strong>${esc(p.nome)}</strong><span>${esc(String(p.descricao || '').split(/(?<=[.!?])\s/)[0])}</span></span>
-      <span class="pr"><strong>${reais(p.preco_centavos)}</strong><small>por consulta</small></span>
-    </div>`).join('')}</div>` : '';
+  const top = produtos.slice(0, 5);
+  const selos = `<div class="selos" style="justify-content:center">${['Cadastro grátis', 'Sem mensalidade', 'Pague só pela consulta'].map((t) => `<span>${ICONE_CHECK} ${t}</span>`).join('')}</div>`;
   return `
-<section class="hero" style="padding-top:8px">
-  <div>
-    <span class="tag">${esc(cfg.selo)}</span>
-    <h1 style="margin-top:14px">${esc(cfg.h1)} <em>${esc(cfg.destaque)}</em>.</h1>
-    <p class="muted" style="font-size:1.12rem;max-width:560px">${esc(cfg.sub)}</p>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:22px">
-      <a class="btn" href="/cadastro${qs}" data-evento="Lead">Criar conta grátis</a>
-      <a class="btn sec" href="#consultas">Ver consultas e preços</a>
-    </div>
-    <div class="selos">${['Cadastro grátis', 'Sem mensalidade', 'Pague só pela consulta', 'PDF na hora'].map((t) => `<span>${ICONE_CHECK} ${t}</span>`).join('')}</div>
-  </div>
-  <div class="grade" style="grid-template-columns:1fr">
-    ${cfg.dores.map(([t, d]) => `<div class="cartao"><h3 style="margin-bottom:6px">${esc(t)}</h3><p class="muted" style="margin:0">${esc(d)}</p></div>`).join('')}
-  </div>
+<section style="text-align:center;max-width:760px;margin:12px auto 36px">
+  <span class="tag">${esc(cfg.selo)}</span>
+  <h1 style="font-size:clamp(2rem,5vw,3.2rem);font-weight:800;letter-spacing:-.02em;margin:16px 0 12px">${esc(cfg.h1)} <em style="font-style:normal;color:var(--roxo)">${esc(cfg.destaque)}</em>.</h1>
+  <p class="muted" style="font-size:1.15rem;margin:0 auto 24px;max-width:600px">${esc(String(cfg.sub).split(/(?<=\.)\s/)[0])}</p>
+  <a class="btn" style="font-size:1.08rem;padding:16px 34px" href="/cadastro${qs}" data-evento="Lead">Criar conta grátis</a>
+  ${selos}
 </section>
-<section style="margin:4px 0 8px">${faixaGratis()}</section>
-${lista ? `<section id="consultas" style="margin:10px 0 28px">
-  <h2 style="font-size:1.6rem">Consultas mais usadas</h2>
-  <p class="muted" style="margin-top:-4px">O acesso é grátis. Estes são os preços <strong>por consulta</strong>: você vê o valor antes de confirmar e só paga o que usar.</p>
-  ${lista}
-  <p style="margin-top:14px"><a class="btn" href="/cadastro${qs}" data-evento="Lead">Começar agora</a></p>
+${top.length ? `<section style="max-width:720px;margin:0 auto 36px">
+  <h2 style="font-size:1.3rem;text-align:center">Consultas mais usadas</h2>
+  <div class="lista">${top.map((p) => `<div class="item"><span class="ic">${ICONE_CHECK}</span><span class="tx"><strong>${esc(p.nome)}</strong></span><span class="pr"><strong>${reais(p.preco_centavos)}</strong><small>por consulta</small></span></div>`).join('')}</div>
 </section>` : ''}
-<section class="grade" style="margin-bottom:28px">
-  <div class="cartao"><h3>1. Crie sua conta grátis</h3><p class="muted" style="margin:0">Leva menos de um minuto e não tem custo.</p></div>
-  <div class="cartao"><h3>2. Recarregue por Pix</h3><p class="muted" style="margin:0">O saldo cai na hora, com bônus em recargas maiores.</p></div>
-  <div class="cartao"><h3>3. Consulte e baixe o PDF</h3><p class="muted" style="margin:0">Resultado na hora e histórico para baixar de novo.</p></div>
+<section style="max-width:720px;margin:0 auto 36px;text-align:center">
+  <p style="font-weight:600;margin:0">1. Crie a conta grátis &nbsp;→&nbsp; 2. Recarregue por Pix &nbsp;→&nbsp; 3. Consulte e baixe o PDF</p>
 </section>
-<section class="cartao" style="margin-bottom:28px;border:2px solid var(--roxo)"><p style="margin:0;font-weight:600">${esc(cfg.extra)}</p></section>
-<section class="cartao" style="margin-bottom:28px">
-  <h2 style="font-size:1.4rem">Perguntas frequentes</h2>
-  ${cfg.faq.map(([q, r]) => `<details style="border-top:1px solid var(--borda);padding:12px 0"><summary style="cursor:pointer;font-weight:700">${esc(q)}</summary><p class="muted" style="margin:8px 0 0">${esc(r)}</p></details>`).join('')}
+<section style="max-width:720px;margin:0 auto 36px">
+  ${cfg.faq.map(([q, r]) => `<details style="border-top:1px solid var(--borda);padding:14px 0"><summary style="cursor:pointer;font-weight:700">${esc(q)}</summary><p class="muted" style="margin:8px 0 0">${esc(r)}</p></details>`).join('')}
 </section>
 <section style="text-align:center;margin-bottom:10px">
-  <h2 style="font-size:1.6rem">Pronto para começar?</h2>
-  <p class="muted" style="margin-top:-4px">Criar a conta é grátis. Você só paga quando consultar.</p>
-  <a class="btn" href="/cadastro${qs}" data-evento="Lead">Criar conta grátis</a>
+  <a class="btn" style="font-size:1.08rem;padding:16px 34px" href="/cadastro${qs}" data-evento="Lead">Começar agora, é grátis</a>
 </section>`;
 }

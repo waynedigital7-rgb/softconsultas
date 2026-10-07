@@ -171,18 +171,20 @@ export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
 <section class="hero">
   <div>
     <span class="tag">Consultas para o seu negócio</span>
-    <h1 style="margin-top:14px">Informação de qualidade para <em>decidir com segurança</em>.</h1>
-    <p class="muted" style="font-size:1.15rem;max-width:520px">Consultas de crédito, empresas, veículos e muito mais, num só lugar. <strong style="color:var(--preto)">O cadastro é gratuito e você só paga pelas consultas que fizer</strong>, com relatório em PDF na hora.</p>
+    <h1 style="margin-top:14px">Consultas de crédito, veículos e empresas <em>em segundos</em>.</h1>
+    <p class="muted" style="font-size:1.15rem;max-width:500px">Cadastro grátis. Você só paga pelas consultas que fizer, com relatório em PDF na hora.</p>
     <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:24px">
       <a class="btn" href="/cadastro">Criar conta grátis</a><a class="btn sec" href="/entrar">Já tenho conta</a>
     </div>
-    <div class="selos">${['Cadastro grátis', 'Sem mensalidade', 'Pague só pela consulta', 'PDF na hora'].map((t) => `<span>${ICONE_OK} ${t}</span>`).join('')}</div>
+    <div class="selos">${['Cadastro grátis', 'Sem mensalidade', 'PDF na hora'].map((t) => `<span>${ICONE_OK} ${t}</span>`).join('')}</div>
   </div>
-  <div class="grade">
-    <div class="cartao"><h3>Crédito</h3><p class="muted" style="margin:0">Score, restrições, protestos e histórico de CPF e CNPJ.</p></div>
-    <div class="cartao"><h3>Veículos</h3><p class="muted" style="margin:0">Débitos, restrições e informações por placa.</p></div>
-    <div class="cartao"><h3>Cadastro gratuito</h3><p class="muted" style="margin:0">Sem mensalidade e sem adesão. Recarregue por Pix e pague só pelo que consultar.</p></div>
-    <div class="cartao"><h3>Relatório em PDF</h3><p class="muted" style="margin:0">Resultado na tela e PDF para baixar e arquivar.</p></div>
+  <div class="cartao" style="max-width:440px;justify-self:center;width:100%;box-shadow:0 30px 60px -30px rgba(159,49,211,.45)">
+    <div class="muted" style="font-size:.85rem">Exemplo de consulta</div>
+    <div style="font-family:Montserrat,sans-serif;font-size:1.35rem;font-weight:800;margin:4px 0 12px">Score 412 · 3 restrições</div>
+    <table class="tabela"><tr><td>Pendências financeiras</td><td style="text-align:right;color:var(--erro);font-weight:700">2 registros</td></tr>
+    <tr><td>Protestos</td><td style="text-align:right;color:var(--erro);font-weight:700">1 registro</td></tr>
+    <tr><td>Cheques sem fundo</td><td style="text-align:right;color:var(--ok);font-weight:700">Nada consta</td></tr>
+    <tr><td>Relatório em PDF</td><td style="text-align:right;color:var(--ok);font-weight:700">Pronto</td></tr></table>
   </div>
 </section>
 <section style="margin-bottom:28px">${bannerAnuncios(anuncios, contato)}</section>
