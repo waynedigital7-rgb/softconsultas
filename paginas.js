@@ -240,7 +240,7 @@ export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
 export const paginaCadastro = ({ erro, v = {} }) => `
 <div class="cartao estreito">
   <h1 style="font-size:1.7rem">Criar conta grátis</h1>
-  <p class="muted">${v.consulta ? `Falta só um passo para consultar o documento <strong style="color:var(--preto)">${esc(v.consulta.length === 14 ? v.consulta.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5') : v.consulta.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4'))}</strong>. ` : 'Leva menos de um minuto. '}<strong style="color:var(--ok)">Grátis e sem mensalidade</strong>: você só paga pelas consultas.</p>
+  <p class="muted">${v.consulta && /[A-Z]/.test(v.consulta) ? `Falta só um passo para consultar a placa <strong style="color:var(--preto)">${esc(v.consulta)}</strong>. ` : v.consulta ? `Falta só um passo para consultar o documento <strong style="color:var(--preto)">${esc(v.consulta.length === 14 ? v.consulta.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5') : v.consulta.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4'))}</strong>. ` : 'Leva menos de um minuto. '}<strong style="color:var(--ok)">Grátis e sem mensalidade</strong>: você só paga pelas consultas.</p>
   ${aviso(erro)}
   <form method="post" action="/cadastro" novalidate>
     ${v.consulta ? `<input type="hidden" name="consulta" value="${esc(v.consulta)}">` : ''}

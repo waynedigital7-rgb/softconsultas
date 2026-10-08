@@ -222,7 +222,8 @@ rota('GET', '/', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel')
 
 // Cadastro
 rota('GET', '/cadastro', ({ res, usuario, url }) => (usuario ? redirecionar(res, '/consultas')
-  : pagina(res, 'Criar conta grátis', P.paginaCadastro({ v: { consulta: A.soNumeros(url.searchParams.get('doc') || '').slice(0, 14) } }), null)));
+  : pagina(res, 'Criar conta grátis', P.paginaCadastro({ v: { consulta: A.soNumeros(url.searchParams.get('doc') || '').slice(0, 14) || placaOk(url.searchParams.get('placa')) } }), null)));
+function placaOk(v) { const p = String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return /^[A-Z]{3}\d[A-Z0-9]\d{2}$/.test(p) ? p : ''; }
 rota('POST', '/cadastro', async ({ req, res }) => {
   const f = await corpoForm(req);
   const v = {
@@ -230,7 +231,7 @@ rota('POST', '/cadastro', async ({ req, res }) => {
     email: String(f.email || '').trim().toLowerCase().slice(0, 160),
     documento: A.soNumeros(f.documento),
     telefone: A.soNumeros(f.telefone).replace(/^55(?=\d{10,11}$)/, ''),
-    consulta: A.soNumeros(f.consulta || '').slice(0, 14),
+    consulta: placaOk(f.consulta) || A.soNumeros(f.consulta || '').slice(0, 14),
   };
   const erro = (m) => pagina(res, 'Criar conta', P.paginaCadastro({ erro: m, v }), null, 400);
   if (!A.limitar(`cad:${ipDe(req)}`, 10, 60)) return erro('Muitas tentativas. Aguarde alguns minutos e tente de novo.');
@@ -256,8 +257,9 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   const token = A.criarSessao(Number(r.lastInsertRowid));
   enviarEmail({ para: v.email, assunto: 'Bem-vindo à Soft Consultas', html: emailBoasVindas(v.nome, `${urlBase(req)}/painel`) })
     .catch((e) => console.error('e-mail boas-vindas:', e.message));
-  const docConsulta = A.soNumeros(f.consulta || '').slice(0, 14);
-  redirecionar(res, docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : '/painel?bemvindo=1', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0'] });
+  const placaConsulta = placaOk(f.consulta);
+  const docConsulta = placaConsulta ? '' : A.soNumeros(f.consulta || '').slice(0, 14);
+  redirecionar(res, placaConsulta ? `/consultas/categoria/veiculos?bemvindo=1&placa=${placaConsulta}` : docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : '/painel?bemvindo=1', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0'] });
 });
 
 // Login
@@ -769,23 +771,25 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
     endpoint: String(f.endpoint || '').trim(), link: String(f.link || '').trim(), campo: String(f.campo || 'document').trim() || 'document',
     custo_centavos: custo, ordem: Number(f.ordem) || 100, ativo: f.ativo === '1' ? 1 : 0, sensivel: f.sensivel === '1' ? 1 : 0,
     destaque_limpa_nome: ['economica', 'completa'].includes(f.destaque_limpa_nome) ? f.destaque_limpa_nome : '',
+    markup_percentual: String(f.markup_proprio ?? '').trim() === '' ? null : Number(String(f.markup_proprio).replace(',', '.')),
   };
   const erro = (m) => pagina(res, 'Admin · Editar consulta', PD.adminProdutoForm({ p, markup: lerConfig('markup_percentual'), erro: m }), usuario, 400);
   if (!p.nome || !p.categoria) return erro('Preencha o nome e a categoria.');
   if (!Number.isFinite(custo) || custo <= 0) return erro('Informe o custo da consulta na APIFull.');
   if (p.endpoint && !/^[\w.-]+$/.test(p.endpoint)) return erro('Endpoint inválido: use só letras, números, ponto, hífen ou sublinhado.');
-  const preco = precoDe(custo);
+  if (p.markup_percentual !== null && (!Number.isFinite(p.markup_percentual) || p.markup_percentual < 0 || p.markup_percentual > 1000)) return erro('Margem própria inválida (0 a 1000%).');
+  const preco = p.markup_percentual !== null ? precoDe(custo, p.markup_percentual) : precoDe(custo);
   const antes = p.id ? db.prepare('SELECT nome, custo_centavos, ativo, endpoint FROM produtos WHERE id = ?').get(p.id) : null;
   registrar(usuario, p.id ? 'Editou consulta' : 'Criou consulta',
     `${p.nome}: custo ${P.reais(antes?.custo_centavos ?? 0)} → ${P.reais(custo)}, preço ${P.reais(preco)}, ${p.ativo ? 'ativa' : 'inativa'}${antes && antes.endpoint !== p.endpoint ? `, endpoint ${antes.endpoint || '—'} → ${p.endpoint}` : ''}`);
   if (p.id) {
-    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=?, sensivel=?, destaque_limpa_nome=? WHERE id=?`)
-      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome, p.id);
+    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=?, sensivel=?, destaque_limpa_nome=?, markup_percentual=? WHERE id=?`)
+      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome, p.markup_percentual, p.id);
   } else {
     let slug = p.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'consulta';
     while (db.prepare('SELECT 1 FROM produtos WHERE slug = ?').get(slug)) slug += '-2';
-    db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ordem, ativo, sensivel, destaque_limpa_nome) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(slug, p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome);
+    db.prepare(`INSERT INTO produtos (slug, nome, categoria, descricao, documento, endpoint, link, campo, custo_centavos, preco_centavos, ordem, ativo, sensivel, destaque_limpa_nome, markup_percentual) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(slug, p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome, p.markup_percentual);
   }
   redirecionar(res, '/admin/produtos?ok=1');
 }));
@@ -816,9 +820,10 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
       if (existente) {
         const c = temCusto ? custo : existente.custo_centavos;
         const ativo = c > 0 ? (existente.endpoint ? existente.ativo : 1) : 0;
+        const mkp = existente.markup_percentual;
         db.prepare(`UPDATE produtos SET nome=?, categoria=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ativo=?,
           descricao=COALESCE(NULLIF(?, ''), descricao) WHERE id=?`)
-          .run(nome, cat, doc, endpoint, endpoint, campo, c, precoDe(c), ativo, descricao || '', existente.id);
+          .run(nome, cat, doc, endpoint, endpoint, campo, c, mkp !== null && mkp !== undefined ? precoDe(c, mkp) : precoDe(c), ativo, descricao || '', existente.id);
         atualizadas++;
         if (!ativo) inativas++;
       } else {

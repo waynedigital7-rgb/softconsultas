@@ -213,6 +213,8 @@ if (!colunas('usuarios').includes('utm_campaign')) db.exec("ALTER TABLE usuarios
 if (!colunas('usuarios').includes('utm_content')) db.exec("ALTER TABLE usuarios ADD COLUMN utm_content TEXT NOT NULL DEFAULT ''");
 if (!colunas('usuarios').includes('pagina_entrada')) db.exec("ALTER TABLE usuarios ADD COLUMN pagina_entrada TEXT NOT NULL DEFAULT ''");
 // Conta interna: usa o saldo da APIFull e consulta a preço de custo (como o admin), sem acesso ao painel administrativo
+// Margem própria por consulta (vazia = usa a margem geral)
+if (!colunas('produtos').includes('markup_percentual')) db.exec('ALTER TABLE produtos ADD COLUMN markup_percentual REAL');
 if (!colunas('usuarios').includes('interno')) db.exec('ALTER TABLE usuarios ADD COLUMN interno INTEGER NOT NULL DEFAULT 0');
 if (!colunas('usuarios').includes('liberado_sensivel')) db.exec('ALTER TABLE usuarios ADD COLUMN liberado_sensivel INTEGER NOT NULL DEFAULT 0');
 // Programa de indicação
@@ -285,8 +287,10 @@ export const precoDe = (custoCentavos, markup = Number(db.prepare("SELECT valor 
   Math.round(Number(custoCentavos) * (1 + markup / 100));
 export function recalcularPrecos() {
   const m = Number(lerConfig('markup_percentual') ?? 150);
-  for (const p of db.prepare('SELECT id, custo_centavos FROM produtos').all()) {
-    db.prepare('UPDATE produtos SET preco_centavos = ? WHERE id = ?').run(precoDe(p.custo_centavos, m), p.id);
+  const temColuna = db.prepare('PRAGMA table_info(produtos)').all().some((c) => c.name === 'markup_percentual');
+  for (const p of db.prepare(`SELECT id, custo_centavos${temColuna ? ', markup_percentual' : ''} FROM produtos`).all()) {
+    const mk = p.markup_percentual !== null && p.markup_percentual !== undefined ? Number(p.markup_percentual) : m;
+    db.prepare('UPDATE produtos SET preco_centavos = ? WHERE id = ?').run(precoDe(p.custo_centavos, mk), p.id);
   }
 }
 

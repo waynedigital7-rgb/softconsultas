@@ -36,16 +36,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Documento digitado no topo da página de campanha: preenche a consulta depois do cadastro
   const docUrl = new URLSearchParams(location.search).get('doc');
   if (docUrl) { try { sessionStorage.setItem('sc_doc', docUrl.replace(/\D/g, '').slice(0, 14)); } catch {} }
+  const placaUrl = new URLSearchParams(location.search).get('placa');
+  if (placaUrl) { try { sessionStorage.setItem('sc_placa', placaUrl.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7)); } catch {} }
   const campoValor = document.querySelector('form[data-consulta] #valor');
   if (campoValor && !campoValor.value) {
     try {
       const d = sessionStorage.getItem('sc_doc') || '', t = campoValor.getAttribute('data-tipo');
       const serve = (t === 'cpf' && d.length === 11) || (t === 'cnpj' && d.length === 14) || (t === 'cpf_cnpj' && (d.length === 11 || d.length === 14));
       if (serve) campoValor.value = d;
+      const pl = sessionStorage.getItem('sc_placa') || '';
+      if (t === 'placa' && pl) campoValor.value = pl;
     } catch {}
   }
   const topo = document.querySelector('form[data-consulta-topo]');
-  if (topo) topo.addEventListener('submit', () => { const i = topo.querySelector('[name=doc]'); i.value = i.value.replace(/\D/g, '').slice(0, 14); if (!i.value) i.disabled = true; });
+  if (topo) topo.addEventListener('submit', () => {
+    const i = topo.querySelector('[name=doc]'), pl = topo.querySelector('[name=placa]');
+    if (i) { i.value = i.value.replace(/\D/g, '').slice(0, 14); if (!i.value) i.disabled = true; }
+    if (pl) { pl.value = pl.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 7); if (!pl.value) pl.disabled = true; }
+  });
 
   // Eventos de campanha em botões (ex.: "Criar conta" nas páginas de campanha)
   document.querySelectorAll('[data-evento]').forEach((a) => a.addEventListener('click', () => { if (window.scEvento) window.scEvento(a.getAttribute('data-evento')); }));

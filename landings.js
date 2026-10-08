@@ -43,6 +43,23 @@ export const PUBLICOS = {
       ['E as consultas com dados pessoais?', 'São liberadas para contas de escritório (CNPJ) ou após análise, e exigem finalidade legítima, conforme a LGPD.'],
     ],
   },
+  veiculos: {
+    titulo: 'Consulta veicular pela placa: leilão, roubo e débitos',
+    descricaoMeta: 'Cadastro grátis. Consulte pela placa se o veículo tem leilão, roubo ou furto, débitos de IPVA e multas, Renajud e recall. Relatório em PDF na hora.',
+    selo: 'Para lojas, revendas e compradores',
+    h1: 'Consulte a placa antes de',
+    destaque: 'fechar negócio.',
+    sub: 'Leilão, roubo e furto, débitos de IPVA e multas, Renajud e recall a partir da placa. Evite prejuízo antes de comprar ou vender.',
+    placa: true,
+    dores: [],
+    consultas: ['leilao', 'roubo-furto', 'debitos-veicular', 'renajud', 'ic-recall', 'ic-bin-estadual', 'csv-renainf-renajud-recall-bin-proprietario', 'ic-vipcar'],
+    extra: '',
+    faq: [
+      ['O cadastro é pago? Tem mensalidade?', 'Não. O cadastro e o acesso são gratuitos. Você recarrega por Pix e paga apenas pelas consultas que fizer.'],
+      ['Preciso de algum dado além da placa?', 'Não. As consultas veiculares funcionam só com a placa (formato antigo ou Mercosul).'],
+      ['Serve para lojas e revendas?', 'Sim. Consulte cada carro que entra no estoque e guarde o PDF para mostrar ao comprador.'],
+    ],
+  },
   empresas: {
     titulo: 'Consulta de crédito para empresas',
     descricaoMeta: 'Cadastro grátis. Consulte CPF e CNPJ antes de vender a prazo: score, restrições, protestos e dados da empresa. Sem mensalidade, relatório na hora.',
@@ -71,6 +88,8 @@ const VISUAL = {
     notif: [['Diagnóstico pronto ✅', '3 restrições em 2 bases. PDF pronto para a reunião.', 'agora'], ['Triagem concluída', 'Nada consta no Banco Central.', '2 min']], frase: 'Feche mais clientes com o <em>diagnóstico na mão.</em>' },
   empresas: { doc: '11.222.333/0001-81', titulo: 'Consulta de cliente', valor: 'Score 412 · risco alto', linhas: [['Pendências', '2 registros', 0], ['Protestos', 'Nada consta', 1], ['Cheques sem fundo', 'Nada consta', 1], ['Situação do CNPJ', 'Ativa', 1]],
     notif: [['Atenção: score 412 ⚠️', 'Cliente com 2 restrições. Melhor pedir entrada.', 'agora'], ['CNPJ ativo ✅', 'Nenhum protesto encontrado.', '1 min']], frase: 'O calote avisa. <em>Você só precisa consultar.</em>' },
+  veiculos: { doc: 'BRA2E19', titulo: 'Consulta veicular', valor: '⚠️ Veículo de leilão', linhas: [['Leilão', 'Registro encontrado', 0], ['Roubo e furto', 'Nada consta', 1], ['Débitos (IPVA e multas)', 'R$ 1.284,50', 0], ['Renajud', 'Nada consta', 1]],
+    notif: [['Atenção: veículo de leilão ⚠️', 'Registro em leilão encontrado. Negocie o preço.', 'agora'], ['Débitos encontrados', 'IPVA e multas somam R$ 1.284,50.', '1 min']], frase: 'Leilão, roubo e dívida <em>aparecem antes do negócio.</em>' },
   advogados: { doc: '390.533.447-05', titulo: 'Localização de bens', valor: '2 veículos · 1 empresa', linhas: [['Veículos', '2 encontrados', 0], ['Imóveis', '1 encontrado', 0], ['Empresas', '1 participação', 0], ['Processos', '4 processos', 0]],
     notif: [['Bens localizados ✅', '2 veículos e 1 imóvel em nome do devedor.', 'agora'], ['Certidões emitidas', 'Relatório com data e protocolo.', '3 min']], frase: 'A execução <em>volta a andar.</em>' },
 };
@@ -106,7 +125,8 @@ export function paginaLanding({ chave, cfg, produtos, bonus = {}, consultasFeita
       <p class="lp-sub">${esc(String(cfg.sub).split(/(?<=\.)\s/)[0])}</p>
       <form method="get" action="/cadastro" class="campo-consulta" data-consulta-topo>
         <input type="hidden" name="origem" value="${esc(chave)}">
-        <input name="doc" type="text" inputmode="numeric" placeholder="Digite o CPF ou CNPJ" aria-label="CPF ou CNPJ para consultar" autocomplete="off">
+        ${cfg.placa ? '<input name="placa" type="text" placeholder="Digite a placa (ex.: BRA2E19)" aria-label="Placa do veículo" autocomplete="off" maxlength="8" style="text-transform:uppercase">'
+          : '<input name="doc" type="text" inputmode="numeric" placeholder="Digite o CPF ou CNPJ" aria-label="CPF ou CNPJ para consultar" autocomplete="off">'}
         <button class="btn" type="submit" data-evento="Lead">Consultar agora</button>
       </form>
       <div class="lp-linha">

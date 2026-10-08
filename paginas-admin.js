@@ -42,7 +42,7 @@ export function adminProdutos({ produtos, markup, ok }) {
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>Consulta</th><th>Categoria</th><th>Endpoint</th><th>Custo</th><th>Preço</th><th>Lucro por consulta</th><th>Status</th><th></th></tr>
   ${produtos.map((p) => `<tr><td><strong>${esc(p.nome)}</strong>${p.custo_centavos ? '' : ' <span class="tag" style="color:var(--erro)">sem custo</span>'}${p.sensivel ? ' <span class="tag">sensível</span>' : ''}</td><td>${esc(p.categoria)}</td><td><code>${esc(p.endpoint || '—')}</code></td>
-    <td>${reais(p.custo_centavos)}</td><td><strong>${reais(p.preco_centavos)}</strong></td>
+    <td>${reais(p.custo_centavos)}</td><td><strong>${reais(p.preco_centavos)}</strong>${p.markup_percentual !== null && p.markup_percentual !== undefined ? `<br><small class="tag">margem ${p.markup_percentual}%</small>` : ''}</td>
     <td>${p.custo_centavos ? `<strong style="color:var(--ok)">${reais(p.preco_centavos - p.custo_centavos)}</strong><br><small class="muted">${Math.round(((p.preco_centavos - p.custo_centavos) / p.custo_centavos) * 100)}% sobre o custo</small>` : '—'}</td>
     <td>${p.ativo && p.endpoint ? '<span style="color:var(--ok);font-weight:700">Ativa</span>' : '<span class="muted">Inativa</span>'}</td>
     <td><a href="/admin/produtos/editar?id=${p.id}">Editar</a></td></tr>`).join('')}
@@ -66,7 +66,8 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
   ${campo('link', 'Link na APIFull (normalmente igual ao endpoint)', p.link)}
   ${campo('campo', 'Nome do campo enviado (padrão: document; para placa geralmente: placa)', p.campo || 'document')}
   ${campo('custo', 'Custo na APIFull (R$)', p.custo_centavos != null ? (p.custo_centavos / 100).toFixed(2).replace('.', ',') : '', 'inputmode="decimal" required')}
-  <p class="muted" style="margin-top:-8px">Preço de venda calculado automaticamente: custo + ${markup}%.</p>
+  ${campo('markup_proprio', `Margem própria desta consulta (%) · deixe vazio para usar a geral (${markup}%)`, p.markup_percentual ?? '', 'inputmode="decimal"')}
+  <p class="muted" style="margin-top:-8px">Preço de venda = custo + margem. Use uma margem própria para deixar consultas específicas mais competitivas (ex.: veículos com 80%).</p>
   ${campo('ordem', 'Ordem no catálogo (menor aparece primeiro)', p.ordem ?? 100, 'inputmode="numeric"')}
   <label class="check"><input type="checkbox" name="ativo" value="1" ${p.ativo ? 'checked' : ''}><span>Ativa (visível para os clientes)</span></label>
   <label class="check"><input type="checkbox" name="sensivel" value="1" ${p.sensivel ? 'checked' : ''}><span>Consulta sensível (só contas CNPJ ou clientes liberados por você)</span></label>
@@ -361,7 +362,7 @@ export function adminAnuncios({ anuncios, ok, erro }) {
 // ---------- Campanhas de tráfego pago ----------
 export function adminCampanhas({ ini, fim, linhas, rastreio, base }) {
   const site = base || 'https://softconsultas.com';
-  const paginas = [['limpa-nome', 'Profissionais de limpa nome'], ['advogados', 'Advogados'], ['empresas', 'Empresas']];
+  const paginas = [['limpa-nome', 'Profissionais de limpa nome'], ['veiculos', 'Veículos (lojas, revendas e compradores)'], ['advogados', 'Advogados'], ['empresas', 'Empresas']];
   const exemplo = (pub, fonte, meio) => `${site}/para/${pub}?utm_source=${fonte}&utm_medium=${meio}&utm_campaign=${pub}`;
   const tot = linhas.reduce((t, l) => ({ c: t.c + l.cadastros, p: t.p + l.pagantes, r: t.r + l.recarregado, l: t.l + l.lucro }), { c: 0, p: 0, r: 0, l: 0 });
   return `<h1 style="font-size:1.7rem">Campanhas</h1>${menu('/admin/campanhas')}
