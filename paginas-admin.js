@@ -18,7 +18,7 @@ ${baixo ? `<div class="aviso erro" role="alert"><strong>Saldo da APIFull baixo: 
   <div class="cartao" style="${baixo ? 'border-color:var(--erro)' : ''}"><div class="muted">Saldo na APIFull</div>
     <div style="font-family:Montserrat;font-size:1.8rem;font-weight:800;color:${baixo ? 'var(--erro)' : 'inherit'}">${m.saldoApiFull === null ? '—' : reais(m.saldoApiFull)}</div>
     <div class="muted" style="font-size:.85rem">alerta abaixo de ${reais(m.alertaApiFull)} · <a href="https://app.apifull.com.br" target="_blank" rel="noopener">recarregar</a></div></div>
-  ${num('Consultas internas (admin)', m.internas, `custo ${reais(m.custoInternas)}, pago direto na APIFull`)}
+  ${num('Consultas internas (admin e contas internas)', m.internas, `custo ${reais(m.custoInternas)}, pago direto na APIFull`)}
 </div>
 <div class="grade" style="margin-bottom:18px">
   ${num('Clientes', m.clientes, `${m.clientesMes} nos últimos 30 dias`)}
@@ -111,7 +111,8 @@ export function adminClientes({ clientes, busca = '', ok, erro }) {
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>Cliente</th><th>Documento</th><th>WhatsApp</th><th>Saldo</th><th>Desde</th><th>Consultas sensíveis</th><th>Ajustar saldo</th></tr>
   ${clientes.map((c) => `<tr><td><strong>${esc(c.nome)}</strong><br><span class="muted">${esc(c.email)}</span>${c.ativo ? '' : ' <span style="color:var(--erro)">(desativado)</span>'}</td>
-    <td>${esc(formatarDoc(c.documento))}</td><td>${esc(c.telefone)}</td><td><strong>${reais(c.saldo)}</strong></td><td>${dt(c.criado_em).slice(0, 10)}</td>
+    <td>${esc(formatarDoc(c.documento))}</td><td>${esc(c.telefone)}</td><td><strong>${reais(c.saldo)}</strong>${c.admin ? '<br><span class="tag">admin</span>' : c.interno ? '<br><span class="tag">interna · saldo APIFull</span>' : ''}
+      ${c.admin ? '' : `<form method="post" action="/admin/clientes/interno" style="margin:6px 0 0"><input type="hidden" name="id" value="${c.id}"><input type="hidden" name="interno" value="${c.interno ? 0 : 1}"><button class="btn sec" style="min-height:30px;padding:4px 10px;font-size:.78rem">${c.interno ? 'Remover conta interna' : 'Tornar conta interna'}</button></form>`}</td><td>${dt(c.criado_em).slice(0, 10)}</td>
     <td>${c.documento.length === 14 ? '<span class="muted">liberadas (CNPJ)</span>' : `<form method="post" action="/admin/clientes/sensivel" style="margin:0"><input type="hidden" name="id" value="${c.id}"><input type="hidden" name="liberar" value="${c.liberado_sensivel ? 0 : 1}">
       <button class="btn ${c.liberado_sensivel ? 'sec' : ''}" style="min-height:36px;padding:6px 12px;font-size:.85rem">${c.liberado_sensivel ? 'Liberadas · bloquear' : 'Liberar'}</button></form>`}</td>
     <td><form method="post" action="/admin/clientes/ajuste" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">

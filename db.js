@@ -212,6 +212,8 @@ if (!colunas('usuarios').includes('utm_medium')) db.exec("ALTER TABLE usuarios A
 if (!colunas('usuarios').includes('utm_campaign')) db.exec("ALTER TABLE usuarios ADD COLUMN utm_campaign TEXT NOT NULL DEFAULT ''");
 if (!colunas('usuarios').includes('utm_content')) db.exec("ALTER TABLE usuarios ADD COLUMN utm_content TEXT NOT NULL DEFAULT ''");
 if (!colunas('usuarios').includes('pagina_entrada')) db.exec("ALTER TABLE usuarios ADD COLUMN pagina_entrada TEXT NOT NULL DEFAULT ''");
+// Conta interna: usa o saldo da APIFull e consulta a preço de custo (como o admin), sem acesso ao painel administrativo
+if (!colunas('usuarios').includes('interno')) db.exec('ALTER TABLE usuarios ADD COLUMN interno INTEGER NOT NULL DEFAULT 0');
 if (!colunas('usuarios').includes('liberado_sensivel')) db.exec('ALTER TABLE usuarios ADD COLUMN liberado_sensivel INTEGER NOT NULL DEFAULT 0');
 // Programa de indicação
 if (!colunas('usuarios').includes('codigo_indicacao')) db.exec('ALTER TABLE usuarios ADD COLUMN codigo_indicacao TEXT');

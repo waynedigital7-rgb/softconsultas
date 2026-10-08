@@ -7,7 +7,7 @@ Plataforma de consultas com cadastro, carteira de créditos (recarga por Pix), c
 | Nome | Valor |
 |---|---|
 | `DATA_DIR` | `/var/data` (pasta do disco persistente) |
-| `ADMIN_EMAIL` | seu e-mail (a conta criada com ele vira administradora) |
+| `ADMIN_EMAIL` | seu e-mail (a conta criada com ele vira administradora). Aceita vários, separados por vírgula |
 | `RESEND_API_KEY` | chave do Resend (e-mails de boas-vindas e recuperação de senha) |
 | `EMAIL_REMETENTE` | `Soft Consultas <contato@softcredito.com.br>` (até verificar o softconsultas.com no Resend) |
 | `ASAAS_URL` | `https://api.asaas.com/v3` (conta real) |
@@ -19,6 +19,7 @@ Plataforma de consultas com cadastro, carteira de créditos (recarga por Pix), c
 
 | Nome | Para que serve |
 |---|---|
+| `CONTAS_INTERNAS` | E-mails (separados por vírgula) que usam o saldo da APIFull e consultam a preço de custo, como o admin, mas sem acesso ao painel administrativo |
 | `URL_BASE` | `https://softconsultas.com` (links de e-mail e de indicação) |
 | `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` | "Não sou um robô" (Cloudflare Turnstile) no cadastro, login e senha |
 | `META_PIXEL_ID` | Pixel da Meta (Instagram/Facebook) nas páginas |

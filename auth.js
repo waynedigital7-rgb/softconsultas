@@ -33,7 +33,7 @@ export function criarSessao(usuarioId) {
 export function usuarioDaSessao(token) {
   if (!token) return null;
   return db.prepare(`
-    SELECT u.id, u.nome, u.email, u.documento, u.telefone, u.admin, u.indicado_por, u.codigo_indicacao, u.comissao_percentual, u.chave_pix, u.liberado_sensivel
+    SELECT u.id, u.nome, u.email, u.documento, u.telefone, u.admin, u.indicado_por, u.codigo_indicacao, u.comissao_percentual, u.chave_pix, u.liberado_sensivel, u.interno
     FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id
     WHERE s.token_hash = ? AND s.expira_em > datetime('now') AND u.ativo = 1`).get(sha256(token)) || null;
 }

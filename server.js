@@ -243,7 +243,7 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   if (f.aceite !== '1') return erro('Para continuar, aceite os Termos de uso e a Política de privacidade.');
   if (db.prepare('SELECT 1 FROM usuarios WHERE email = ?').get(v.email)) return erro('Já existe uma conta com esse e-mail. Faça login ou recupere a senha.');
 
-  const admin = process.env.ADMIN_EMAIL && process.env.ADMIN_EMAIL.toLowerCase() === v.email ? 1 : 0;
+  const admin = String(process.env.ADMIN_EMAIL || '').split(',').map((x) => x.trim().toLowerCase()).includes(v.email) ? 1 : 0;
   const ref = String(cookies(req).sc_ref || '').toUpperCase();
   const indicador = ref ? db.prepare('SELECT id FROM usuarios WHERE codigo_indicacao = ? AND ativo = 1').get(ref) : null;
   let org = {};
@@ -453,7 +453,7 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
 });
 
 // Admin enxerga (e usa) o saldo real da APIFull; clientes, a carteira interna
-const saldoExibido = async (usuario) => (usuario.admin ? await saldoApiFull() : saldoCentavos(usuario.id));
+const saldoExibido = async (usuario) => (usuario.interno ? await saldoApiFull() : saldoCentavos(usuario.id));
 
 // ======================= RETENÇÃO DO HISTÓRICO =======================
 const diasHistorico = () => Math.max(1, Number(lerConfig('dias_historico') || 10));
@@ -475,7 +475,7 @@ const produtosAtivos = () => db.prepare("SELECT * FROM produtos WHERE ativo = 1 
 // Administrador consulta a preço de custo (sem margem)
 // Indicado paga o preço normal + a comissão escolhida pelo indicador (a nossa margem não muda)
 function comissaoDoIndicador(usuario) {
-  if (!usuario?.indicado_por || usuario.admin) return null;
+  if (!usuario?.indicado_por || usuario.interno) return null;
   const ind = db.prepare('SELECT id, comissao_percentual FROM usuarios WHERE id = ? AND ativo = 1').get(usuario.indicado_por);
   if (!ind || ind.id === usuario.id) return null;
   const max = Number(lerConfig('comissao_maxima') ?? 100);
@@ -484,7 +484,7 @@ function comissaoDoIndicador(usuario) {
 const produtosPara = (usuario) => {
   const ind = comissaoDoIndicador(usuario);
   return produtosAtivos().map((p) => {
-    if (usuario?.admin) return { ...p, preco_centavos: p.custo_centavos, precoCusto: true, comissao_centavos: 0, indicador_id: null };
+    if (usuario?.interno) return { ...p, preco_centavos: p.custo_centavos, precoCusto: true, comissao_centavos: 0, indicador_id: null };
     const com = ind ? Math.round((p.preco_centavos * ind.pct) / 100) : 0;
     return { ...p, preco_base: p.preco_centavos, preco_centavos: p.preco_centavos + com, comissao_centavos: com, indicador_id: com > 0 ? ind.id : null };
   });
@@ -492,7 +492,7 @@ const produtosPara = (usuario) => {
 const PLACA = /^[A-Z]{3}\d[A-Z0-9]\d{2}$/;
 const PALAVRAS_SENSIVEIS = /mandado|antecedente|pessoas relacionadas|endere[cç]|telefone|celular|cpf completo|e-?mail|parente|grafo|contato|localiza|ve[ií]culos por cpf|radar|rastreamento/i;
 // Pode fazer consultas sensíveis? Empresas (CNPJ) e admin sim; pessoa física só com liberação do admin
-const podeSensivel = (u) => !!(u?.admin || u?.liberado_sensivel || String(u?.documento || '').length === 14);
+const podeSensivel = (u) => !!(u?.admin || u?.interno || u?.liberado_sensivel || String(u?.documento || '').length === 14);
 function validarValor(tipo, bruto) {
   if (tipo === 'placa') {
     const v = String(bruto || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -523,7 +523,7 @@ rota('GET', '/consultas/categoria/:cat', exigeLogin(async ({ res, usuario, url, 
 rota('GET', '/consultas/:slug', exigeLogin(async ({ res, usuario, params }) => {
   const produto = produtosPara(usuario).find((p) => p.slug === params.slug);
   if (!produto) return redirecionar(res, '/consultas');
-  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.admin, bloqueada: produto.sensivel && !podeSensivel(usuario) }), usuario);
+  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.interno, bloqueada: produto.sensivel && !podeSensivel(usuario) }), usuario);
 }));
 
 rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }) => {
@@ -531,7 +531,7 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   if (!produto) return redirecionar(res, '/consultas');
   const f = await corpoForm(req);
   const v = { valor: f.valor, finalidade: f.finalidade };
-  const erro = async (m) => pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.admin, erro: m, v }), usuario, 400);
+  const erro = async (m) => pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.interno, erro: m, v }), usuario, 400);
   if (produto.sensivel && !podeSensivel(usuario)) return erro('Esta consulta contém dados sensíveis e precisa de liberação. Fale com o suporte.');
   const val = validarValor(produto.documento, f.valor);
   if (val.erro) return erro(val.erro);
@@ -543,11 +543,11 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   let cid;
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (!usuario.admin && saldoCentavos(usuario.id) < produto.preco_centavos) { db.exec('ROLLBACK'); return erro('Saldo insuficiente. Faça uma recarga para continuar.'); }
+    if (!usuario.interno && saldoCentavos(usuario.id) < produto.preco_centavos) { db.exec('ROLLBACK'); return erro('Saldo insuficiente. Faça uma recarga para continuar.'); }
     cid = Number(db.prepare(`INSERT INTO consultas (usuario_id, produto_id, produto, parametro, finalidade, status, preco_centavos, custo_centavos, indicador_id, comissao_centavos)
       VALUES (?, ?, ?, ?, ?, 'processando', ?, ?, ?, ?)`).run(usuario.id, produto.id, produto.nome, val.v, f.finalidade, produto.preco_centavos, produto.custo_centavos, produto.indicador_id, produto.comissao_centavos).lastInsertRowid);
     // Admin consulta direto no saldo da APIFull: nada é descontado da carteira interna
-    if (!usuario.admin) {
+    if (!usuario.interno) {
       db.prepare("INSERT INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'consulta', ?, ?, ?)")
         .run(usuario.id, -produto.preco_centavos, `Consulta: ${produto.nome}`, `con_${cid}`);
     }
@@ -572,7 +572,7 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   } catch (e) {
     console.error('consulta falhou', cid, e.message);
     db.prepare("UPDATE consultas SET status = 'falhou', erro = ?, custo_centavos = 0, comissao_centavos = 0 WHERE id = ?").run(String(e.message).slice(0, 500), cid);
-    if (!usuario.admin) {
+    if (!usuario.interno) {
       db.prepare("INSERT OR IGNORE INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno', ?, ?, ?)")
         .run(usuario.id, produto.preco_centavos, `Estorno: ${produto.nome}`, `est_${cid}`);
     }
@@ -624,7 +624,7 @@ rota('GET', '/historico', exigeLogin(({ res, usuario, url }) => {
   const consultas = busca
     ? db.prepare('SELECT * FROM consultas WHERE usuario_id = ? AND (produto LIKE ? OR parametro LIKE ? OR parametro LIKE ?) ORDER BY id DESC LIMIT 200').all(usuario.id, termo, termo.toUpperCase(), doc)
     : db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 200').all(usuario.id);
-  pagina(res, 'Histórico', (usuario.admin ? '' : `<div style="margin-bottom:18px">${P.bannerAnuncios(anunciosParaExibir(), contatoAnuncie())}</div>`) + PA.paginaHistorico({ consultas, busca, dias: diasHistorico() }), usuario);
+  pagina(res, 'Histórico', (usuario.interno ? '' : `<div style="margin-bottom:18px">${P.bannerAnuncios(anunciosParaExibir(), contatoAnuncie())}</div>`) + PA.paginaHistorico({ consultas, busca, dias: diasHistorico() }), usuario);
 }));
 
 // ======================= INDICAÇÕES =======================
@@ -734,15 +734,15 @@ rota('GET', '/admin', exigeAdmin(async ({ res, usuario }) => {
     qtdRecargas: g("SELECT COUNT(*) n FROM recargas WHERE status='paga'").n,
     bonus: g("SELECT COALESCE(SUM(bonus_centavos),0) s FROM recargas WHERE status='paga'").s,
     saldos: g('SELECT COALESCE(SUM(valor_centavos),0) s FROM transacoes').s,
-    consultas: g("SELECT COUNT(*) n FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=0").n,
+    consultas: g("SELECT COUNT(*) n FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 0 AND u.interno = 0)").n,
     falhas: g("SELECT COUNT(*) n FROM consultas WHERE status='falhou'").n,
-    faturamento: g("SELECT COALESCE(SUM(c.preco_centavos - c.comissao_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=0").s,
+    faturamento: g("SELECT COALESCE(SUM(c.preco_centavos - c.comissao_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 0 AND u.interno = 0)").s,
     comissoes: g("SELECT COALESCE(SUM(comissao_centavos),0) s FROM consultas WHERE status='concluida'").s,
     saquesPendentes: g("SELECT COALESCE(SUM(valor_centavos),0) s FROM saques WHERE status='pendente'").s,
     qtdSaquesPendentes: g("SELECT COUNT(*) n FROM saques WHERE status='pendente'").n,
-    custo: g("SELECT COALESCE(SUM(c.custo_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=0").s,
-    internas: g("SELECT COUNT(*) n FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=1").n,
-    custoInternas: g("SELECT COALESCE(SUM(c.custo_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND u.admin=1").s,
+    custo: g("SELECT COALESCE(SUM(c.custo_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 0 AND u.interno = 0)").s,
+    internas: g("SELECT COUNT(*) n FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 1 OR u.interno = 1)").n,
+    custoInternas: g("SELECT COALESCE(SUM(c.custo_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 1 OR u.interno = 1)").s,
     saldoApiFull: await saldoApiFull({ forcar: true }),
     alertaApiFull: Number(lerConfig('alerta_saldo_apifull_centavos') ?? 5000),
   };
@@ -899,6 +899,16 @@ rota('POST', '/admin/clientes/ajuste', exigeAdmin(async ({ req, res, usuario }) 
   redirecionar(res, '/admin/clientes?ok=1');
 }));
 
+rota('POST', '/admin/clientes/interno', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const cli = db.prepare('SELECT id, nome, email, admin FROM usuarios WHERE id = ?').get(Number(f.id));
+  if (!cli || cli.admin) return redirecionar(res, '/admin/clientes');
+  const valor = f.interno === '1' ? 1 : 0;
+  db.prepare('UPDATE usuarios SET interno = ? WHERE id = ?').run(valor, cli.id);
+  registrar(usuario, valor ? 'Tornou conta interna (saldo APIFull)' : 'Removeu conta interna', `${cli.nome} (${cli.email})`);
+  redirecionar(res, '/admin/clientes?ok=1');
+}));
+
 rota('POST', '/admin/clientes/sensivel', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const cli = db.prepare('SELECT id, nome, email FROM usuarios WHERE id = ?').get(Number(f.id));
@@ -910,7 +920,7 @@ rota('POST', '/admin/clientes/sensivel', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/consultas', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Consultas feitas', PD.adminConsultas({
-  consultas: db.prepare('SELECT c.*, u.nome AS cliente, u.admin AS interno FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300').all(),
+  consultas: db.prepare('SELECT c.*, u.nome AS cliente, (u.admin OR u.interno) AS interno FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300').all(),
 }), usuario)));
 
 rota('GET', '/admin/recargas', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Recargas', PD.adminRecargas({
@@ -1029,7 +1039,7 @@ rota('GET', '/admin/campanhas', exigeAdmin(({ res, usuario, url }) => {
       COALESCE(SUM((SELECT SUM(valor_centavos) FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')), 0) AS recarregado,
       COALESCE(SUM((SELECT COUNT(*) FROM consultas c WHERE c.usuario_id = u.id AND c.status = 'concluida')), 0) AS consultas,
       COALESCE(SUM((SELECT SUM(c.preco_centavos - c.comissao_centavos - c.custo_centavos) FROM consultas c WHERE c.usuario_id = u.id AND c.status = 'concluida')), 0) AS lucro
-    FROM usuarios u WHERE u.admin = 0 AND date(u.criado_em, '-3 hours') BETWEEN ? AND ?
+    FROM usuarios u WHERE (u.admin = 0 AND u.interno = 0) AND date(u.criado_em, '-3 hours') BETWEEN ? AND ?
     GROUP BY campanha, fonte ORDER BY lucro DESC, cadastros DESC`).all(ini, fim);
   pagina(res, 'Admin · Campanhas', PD.adminCampanhas({ ini, fim, linhas, rastreio: RASTREIO, base: process.env.URL_BASE || '' }), usuario);
 }));
@@ -1040,7 +1050,7 @@ rota('GET', '/limpa-nome', exigeLogin(async ({ res, usuario }) => {
   pagina(res, 'Área Limpa Nome', PA.paginaLimpaNome({
     economicas: todos.filter((p) => p.destaque_limpa_nome === 'economica').sort((a, b) => a.preco_centavos - b.preco_centavos),
     completas: todos.filter((p) => p.destaque_limpa_nome === 'completa').sort((a, b) => a.preco_centavos - b.preco_centavos),
-    saldo: await saldoExibido(usuario), admin: !!usuario.admin,
+    saldo: await saldoExibido(usuario), admin: !!usuario.interno,
   }), usuario);
 }));
 
@@ -1058,7 +1068,7 @@ rota('GET', '/admin/financeiro', exigeAdmin(async ({ res, usuario, url }) => {
   const { ini, fim } = periodoDe(url);
   // datas gravadas em UTC; o filtro usa o dia de Brasília
   const filtro = `date(c.criado_em, '-3 hours') BETWEEN ? AND ?`;
-  const base = `FROM consultas c JOIN usuarios u ON u.id = c.usuario_id WHERE c.status = 'concluida' AND u.admin = 0 AND ${filtro}`;
+  const base = `FROM consultas c JOIN usuarios u ON u.id = c.usuario_id WHERE c.status = 'concluida' AND (u.admin = 0 AND u.interno = 0) AND ${filtro}`;
   const q = (sql) => db.prepare(sql).all(ini, fim);
   const g = (sql) => db.prepare(sql).get(ini, fim);
   const totais = g(`SELECT COUNT(*) n, COALESCE(SUM(c.preco_centavos),0) bruto, COALESCE(SUM(c.comissao_centavos),0) comissoes,
@@ -1076,8 +1086,8 @@ rota('GET', '/admin/financeiro', exigeAdmin(async ({ res, usuario, url }) => {
       SELECT r.pago_em AS quando, 'Recarga' AS tipo, u.nome AS cliente, 'Pix' AS item, r.valor_centavos AS valor, NULL AS lucro FROM recargas r JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.status = 'paga' AND date(r.pago_em, '-3 hours') BETWEEN ? AND ?
       UNION ALL
-      SELECT c.criado_em, CASE WHEN u.admin = 1 THEN 'Consulta interna' ELSE 'Consulta' END, u.nome, c.produto, c.preco_centavos,
-        CASE WHEN u.admin = 1 THEN NULL ELSE c.preco_centavos - c.comissao_centavos - c.custo_centavos END
+      SELECT c.criado_em, CASE WHEN (u.admin = 1 OR u.interno = 1) THEN 'Consulta interna' ELSE 'Consulta' END, u.nome, c.produto, c.preco_centavos,
+        CASE WHEN (u.admin = 1 OR u.interno = 1) THEN NULL ELSE c.preco_centavos - c.comissao_centavos - c.custo_centavos END
         FROM consultas c JOIN usuarios u ON u.id = c.usuario_id WHERE c.status = 'concluida' AND date(c.criado_em, '-3 hours') BETWEEN ? AND ?
       UNION ALL
       SELECT k.criado_em, 'Comissão', u.nome, k.descricao, k.valor_centavos, NULL FROM comissoes k JOIN usuarios u ON u.id = k.usuario_id
@@ -1088,7 +1098,7 @@ rota('GET', '/admin/financeiro', exigeAdmin(async ({ res, usuario, url }) => {
     ) ORDER BY quando DESC LIMIT 300`).all(ini, fim, ini, fim, ini, fim, ini, fim);
   pagina(res, 'Admin · Financeiro', PD.adminFinanceiro({
     ini, fim, totais, recargas, novos, diario, porProduto, topGasto, topComissao, extrato,
-    saldoApiFull: await saldoApiFull(), clientesTotal: db.prepare('SELECT COUNT(*) n FROM usuarios WHERE admin = 0').get().n,
+    saldoApiFull: await saldoApiFull(), clientesTotal: db.prepare('SELECT COUNT(*) n FROM usuarios WHERE admin = 0 AND interno = 0').get().n,
     saldoCarteiras: db.prepare('SELECT COALESCE(SUM(valor_centavos),0) s FROM transacoes').get().s,
   }), usuario);
 }));
@@ -1159,10 +1169,16 @@ const servidor = http.createServer(async (req, res) => {
     }
     const token = cookies(req)[A.COOKIE];
     const usuario = A.usuarioDaSessao(token);
-    // Quem tem o e-mail do ADMIN_EMAIL vira administrador (mesmo se a conta foi criada antes da variável)
-    if (usuario && !usuario.admin && process.env.ADMIN_EMAIL && usuario.email === process.env.ADMIN_EMAIL.trim().toLowerCase()) {
-      db.prepare('UPDATE usuarios SET admin = 1 WHERE id = ?').run(usuario.id);
-      usuario.admin = 1;
+    // E-mails do ADMIN_EMAIL viram administradores; os de CONTAS_INTERNAS viram contas internas (aceitam vários, separados por vírgula)
+    if (usuario) {
+      const lista = (v) => String(v || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+      if (!usuario.admin && lista(process.env.ADMIN_EMAIL).includes(usuario.email)) {
+        db.prepare('UPDATE usuarios SET admin = 1 WHERE id = ?').run(usuario.id); usuario.admin = 1;
+      }
+      if (!usuario.interno && lista(process.env.CONTAS_INTERNAS).includes(usuario.email)) {
+        db.prepare('UPDATE usuarios SET interno = 1 WHERE id = ?').run(usuario.id); usuario.interno = 1;
+      }
+      usuario.interno = usuario.admin || usuario.interno ? 1 : 0;
     }
     await fn({ req, res, url, token, usuario, params });
   } catch (e) {

@@ -70,7 +70,7 @@ const listaProdutos = (lista) => `<div class="lista">${lista.map(itemProduto).jo
 const cabecalho = (titulo, sub, saldo, admin) => `
 <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:18px">
   <div><h1 style="font-size:1.8rem;margin:0">${titulo}</h1><p class="muted" style="margin:4px 0 0">${sub}</p></div>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">${admin ? '<div class="tag" style="font-size:.9rem;padding:8px 14px">Admin: preços de custo</div>' : ''}<div class="tag" style="font-size:.9rem;padding:8px 14px">${admin ? 'Saldo APIFull' : 'Saldo'}: ${saldo === null ? 'indisponível' : reais(saldo)}</div></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">${admin ? '<div class="tag" style="font-size:.9rem;padding:8px 14px">Preços de custo</div>' : ''}<div class="tag" style="font-size:.9rem;padding:8px 14px">${admin ? 'Saldo APIFull' : 'Saldo'}: ${saldo === null ? 'indisponível' : reais(saldo)}</div></div>
 </div>`;
 
 const ORDEM_CATEGORIAS = ['Dívidas e Crédito', 'Veículos', 'Dados', 'Empresas', 'Análise de Mercado', 'Certidões', 'Compliance', 'Jurídico', 'Ferramentas'];
@@ -126,7 +126,7 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, b
   <h1 style="font-size:1.6rem;margin-top:12px">${esc(produto.nome)}</h1>
   <p class="muted">${esc(produto.descricao)}</p>
   <div style="display:flex;justify-content:space-between;background:var(--fundo);border-radius:14px;padding:14px 16px;margin:16px 0">
-    <div><div class="muted" style="font-size:.85rem">Valor da consulta${produto.precoCusto ? ' <span class="tag">preço de custo · admin</span>' : ''}</div><strong style="font-size:1.3rem;font-family:Montserrat">${reais(produto.preco_centavos)}</strong></div>
+    <div><div class="muted" style="font-size:.85rem">Valor da consulta${produto.precoCusto ? ' <span class="tag">preço de custo</span>' : ''}</div><strong style="font-size:1.3rem;font-family:Montserrat">${reais(produto.preco_centavos)}</strong></div>
     <div style="text-align:right"><div class="muted" style="font-size:.85rem">${admin ? 'Saldo APIFull' : 'Seu saldo'}</div><strong style="font-size:1.3rem;font-family:Montserrat">${saldo === null ? '—' : reais(saldo)}</strong></div>
   </div>
   ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}

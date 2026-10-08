@@ -98,6 +98,43 @@ footer{color:var(--cinza);font-size:.85rem;text-align:center;padding:24px 20px;b
 .campo-consulta input{flex:1 1 220px;border:0!important;font-size:1.08rem;outline:none}
 .campo-consulta .btn{flex:0 0 auto}
 .confianca{display:flex;gap:8px 18px;flex-wrap:wrap;justify-content:center;color:var(--cinza);font-size:.88rem;margin-top:14px}
+/* ---------- Páginas de campanha (visual dos criativos) ---------- */
+body{overflow-x:hidden}
+.lp-hero{margin:-32px calc(50% - 50vw) 0;padding:56px 22px 64px;color:#fff;
+  background:radial-gradient(70% 90% at 85% 0%,#5b1f86 0%,rgba(91,31,134,0) 60%),radial-gradient(60% 80% at 0% 100%,#3a1157 0%,rgba(58,17,87,0) 70%),#0F0C14}
+.lp-hero-in{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:center}
+.lp-selo-pub{display:inline-block;background:#9F31D3;color:#fff;font-weight:700;font-size:.85rem;padding:7px 14px;border-radius:999px}
+.lp-hero h1{font-family:Montserrat,sans-serif;font-weight:800;font-size:clamp(2.3rem,5.2vw,3.8rem);line-height:1.04;letter-spacing:-.03em;margin:18px 0 14px;color:#fff}
+.lp-hero h1 em{font-style:normal;color:#D9A8F5}
+.lp-sub{color:#E2D3EE;font-size:1.12rem;max-width:540px;margin:0 0 22px}
+.lp-hero .campo-consulta{max-width:560px;border:0}
+.lp-linha{display:flex;gap:10px 16px;flex-wrap:wrap;align-items:center;margin-top:14px;color:#CFC0DC;font-size:.92rem}
+.lp-linha strong{color:#fff}
+.lp-oferta{background:#21C07A;color:#06261A;font-weight:800;padding:7px 14px;border-radius:999px;font-size:.9rem}
+.lp-cel{justify-self:center;width:300px;background:#0d0a12;border-radius:40px;padding:11px;transform:rotate(-4deg);box-shadow:0 40px 80px -30px rgba(0,0,0,.8),0 0 0 2px #2a2233;animation:subir .7s cubic-bezier(.2,.7,.2,1) both}
+.lp-tela{background:#F7F3FB;border-radius:30px;padding:20px 16px;color:#0F0C14;display:flex;flex-direction:column;gap:11px}
+.lp-top{display:flex;align-items:center;gap:7px;font-weight:700;font-size:.85rem}.lp-top img{width:22px;height:22px}
+.lp-busca{background:#fff;border:1.5px solid #E4D6F0;border-radius:14px;padding:9px 10px;font-size:.88rem;display:flex;justify-content:space-between;align-items:center}
+.lp-busca b{background:#9F31D3;color:#fff;font-size:.72rem;padding:6px 10px;border-radius:999px}
+.lp-res{background:#fff;border-radius:16px;padding:12px 13px;box-shadow:0 10px 26px -18px rgba(159,49,211,.6)}
+.lp-res .t{font-size:.72rem;color:#6b6377}.lp-res .v{font-family:Montserrat,sans-serif;font-weight:800;font-size:1.02rem;margin:2px 0 6px}
+.lp-res .l{display:flex;justify-content:space-between;font-size:.8rem;padding:6px 0;border-top:1px solid #F0E8F6}
+.lp-res .ruim{color:#C2271D;font-weight:700}.lp-res .ok{color:#178A50;font-weight:700}
+.lp-pdf{display:flex;gap:6px;align-items:center;color:#9F31D3;font-weight:700;font-size:.8rem}.lp-pdf svg{width:16px;height:16px}
+.lp-notifs{display:grid;grid-template-columns:1fr 1fr;gap:30px;align-items:center;max-width:1000px;margin:0 auto 40px}
+.lp-notifs h2{font-family:Montserrat,sans-serif;font-size:clamp(1.6rem,3.4vw,2.4rem);line-height:1.1;letter-spacing:-.02em;margin:0}
+.lp-notifs h2 em{font-style:normal;color:var(--roxo)}
+.lp-notif-col{display:flex;flex-direction:column;gap:12px}
+.lp-notif{display:flex;gap:14px;align-items:flex-start;background:#fff;border:1px solid var(--borda);border-radius:24px;padding:16px 18px;box-shadow:0 20px 40px -26px rgba(15,12,20,.45);animation:subir .6s cubic-bezier(.2,.7,.2,1) both}
+.lp-notif.seg{transform:scale(.96);opacity:.9;animation-delay:.15s}
+.lp-notif img{width:48px;height:48px;border-radius:13px;background:#9F31D3;padding:8px;flex:none}
+.lp-notif .app{display:flex;justify-content:space-between;font-size:.8rem;color:var(--cinza)}.lp-notif .app b{color:var(--preto)}
+.lp-notif .m{font-weight:700;margin-top:2px}.lp-notif .d{color:#3d3547;font-size:.92rem}
+.lp-final{text-align:center;max-width:760px;margin:0 auto 10px;padding:40px 24px;border-radius:28px;color:#fff;
+  background:radial-gradient(80% 120% at 100% 0%,#5b1f86 0%,rgba(91,31,134,0) 60%),#0F0C14}
+.lp-final h2{color:#fff;font-size:1.6rem;margin:0 0 6px}.lp-final p{color:#E2D3EE;margin:0 0 18px}
+.lp-btn-claro{background:#fff!important;color:var(--preto)!important;font-size:1.05rem;padding:15px 32px}
+@media (max-width:860px){.lp-hero-in{grid-template-columns:1fr}.lp-cel{width:270px;margin-top:6px}.lp-notifs{grid-template-columns:1fr}.lp-hero{padding:34px 18px 46px}}
 /* ---------- Animações ---------- */
 @keyframes subir{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes girar{to{transform:rotate(360deg)}}
@@ -266,11 +303,11 @@ export const botoesPdf = (id) => `<span style="display:inline-flex;gap:6px;flex-
 
 export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#' }) => `
 <h1 style="font-size:1.8rem">Olá, ${esc(usuario.nome.split(' ')[0])}</h1>
-${!usuario.admin && !transacoes.length ? faixaGratis() : ''}
+${!usuario.admin && !usuario.interno && !transacoes.length ? faixaGratis() : ''}
 <p class="muted" style="margin-top:-4px">Bem-vindo ao seu painel.</p>
 <div class="grade" style="margin:22px 0">
-  ${usuario.admin ? `<div class="saldo">
-    <div style="color:#D9B8F0;font-weight:600">Saldo na APIFull (conta admin)</div>
+  ${usuario.interno || usuario.admin ? `<div class="saldo">
+    <div style="color:#D9B8F0;font-weight:600">Saldo na APIFull (conta ${usuario.admin ? 'admin' : 'interna'})</div>
     <div class="valor">${saldo === null ? 'Indisponível' : reais(saldo)}</div>
     <p style="color:#CFC6DA;font-size:.9rem;margin:6px 0 0">Suas consultas saem direto deste saldo, a preço de custo.</p>
     <a class="btn" href="https://app.apifull.com.br" target="_blank" rel="noopener" style="margin-top:14px">Recarregar na APIFull</a>
@@ -290,7 +327,7 @@ ${!usuario.admin && !transacoes.length ? faixaGratis() : ''}
     <a class="btn" href="/indicacoes">Pegar meu link</a>
   </div>
 </div>
-${usuario.admin ? '' : `<div style="margin-bottom:18px">${bannerAnuncios(anuncios, contato)}</div>`}
+${usuario.admin || usuario.interno ? '' : `<div style="margin-bottom:18px">${bannerAnuncios(anuncios, contato)}</div>`}
 <div class="cartao" style="margin-bottom:18px">
   <h3>Últimas consultas</h3>
   ${consultas.length ? `<div class="rolar"><table class="tabela"><tr><th>Data</th><th>Consulta</th><th>Documento</th><th>Valor</th><th>Status</th></tr>
