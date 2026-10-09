@@ -23,7 +23,7 @@ export function criarCobranca({ clienteId, valorCentavos, recargaId }) {
     method: 'POST',
     body: JSON.stringify({
       customer: clienteId,
-      billingType: 'UNDEFINED',
+      billingType: 'PIX',
       value: valorCentavos / 100,
       dueDate: venc,
       description: `Recarga de créditos - Soft Consultas #${recargaId}`,

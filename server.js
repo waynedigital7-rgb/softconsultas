@@ -51,12 +51,15 @@ function cookies(req) {
   const out = {};
   for (const p of String(req.headers.cookie || '').split(';')) {
     const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+    if (i > 0) { const v = p.slice(i + 1).trim(); try { out[p.slice(0, i).trim()] = decodeURIComponent(v); } catch { out[p.slice(0, i).trim()] = v; } }
   }
   return out;
 }
 const ehHttps = (req) => String(req.headers['x-forwarded-proto'] || '').split(',')[0] === 'https';
-const ipDe = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+// IP real: Cloudflare/Render informam em cabeçalho próprio; no X-Forwarded-For vale o último (adicionado pelo proxy)
+const ipDe = (req) => String(req.headers['cf-connecting-ip'] || req.headers['true-client-ip']
+  || String(req.headers['x-forwarded-for'] || '').split(',').map((x) => x.trim()).filter(Boolean).pop()
+  || req.socket.remoteAddress || '').trim();
 const urlBase = (req) => process.env.URL_BASE || `${ehHttps(req) ? 'https' : 'http'}://${req.headers.host}`;
 
 async function corpoForm(req, limite = 20000) {
@@ -151,7 +154,7 @@ const RASTREIO = {
 };
 RASTREIO.ativo = !!(RASTREIO.meta || RASTREIO.google);
 const DOM_META = RASTREIO.meta ? ' https://connect.facebook.net https://www.facebook.com' : '';
-const DOM_GOOGLE = RASTREIO.google ? ' https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.google.com https://googleads.g.doubleclick.net https://*.doubleclick.net https://www.googleadservices.com' : '';
+const DOM_GOOGLE = RASTREIO.google ? ' https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.google.com https://www.google.com.br https://googleads.g.doubleclick.net https://*.doubleclick.net https://www.googleadservices.com' : '';
 P.configurarRastreio(RASTREIO.ativo);
 const CABECALHOS = {
   'Content-Security-Policy': `default-src 'self'; script-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; frame-src${CF || DOM_GOOGLE ? `${CF}${DOM_GOOGLE}` : " 'none'"}; connect-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:${DOM_META}${DOM_GOOGLE}; form-action 'self'; frame-ancestors 'none'; base-uri 'self'`,
@@ -362,12 +365,29 @@ const bonusPara = (v, uid) => {
 const VALOR_MAXIMO = 500000; // R$ 5.000 por recarga
 
 // Credita uma recarga uma única vez (webhook e verificação manual podem chamar ao mesmo tempo)
+// Bônus recalculado no momento do pagamento: o de primeira recarga vale uma única vez por conta e por CPF/CNPJ
+function bonusNoPagamento(r) {
+  let p = 0;
+  for (const f of faixasBonus()) if (r.valor_centavos >= f.a_partir_de) p = Math.max(p, f.percentual);
+  const bp = bonusPrimeira();
+  if (bp.ativo && r.valor_centavos >= bp.min) {
+    const doc = db.prepare('SELECT documento FROM usuarios WHERE id = ?').get(r.usuario_id)?.documento || '';
+    const jaPagou = db.prepare("SELECT 1 FROM recargas WHERE usuario_id = ? AND status = 'paga' AND id <> ?").get(r.usuario_id, r.id)
+      || (doc && db.prepare("SELECT 1 FROM recargas rc JOIN usuarios u ON u.id = rc.usuario_id WHERE u.documento = ? AND rc.status = 'paga' AND rc.id <> ?").get(doc, r.id));
+    if (!jaPagou) p = Math.max(p, bp.pct);
+  }
+  return Math.min(r.bonus_centavos || 0, Math.round((r.valor_centavos * p) / 100));
+}
+
 function creditarRecarga(recargaId) {
-  const r = db.prepare('SELECT * FROM recargas WHERE id = ?').get(recargaId);
-  if (!r || r.status === 'paga') return false;
+  const r0 = db.prepare('SELECT * FROM recargas WHERE id = ?').get(recargaId);
+  if (!r0 || r0.status === 'paga') return false;
   db.exec('BEGIN IMMEDIATE');
   try {
-    db.prepare("UPDATE recargas SET status = 'paga', pago_em = datetime('now') WHERE id = ? AND status <> 'paga'").run(r.id);
+    const r = db.prepare('SELECT * FROM recargas WHERE id = ?').get(recargaId);
+    if (r.status === 'paga') { db.exec('COMMIT'); return false; }
+    r.bonus_centavos = bonusNoPagamento(r);
+    db.prepare("UPDATE recargas SET status = 'paga', pago_em = datetime('now'), bonus_centavos = ? WHERE id = ? AND status <> 'paga'").run(r.bonus_centavos, r.id);
     db.prepare("INSERT OR IGNORE INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'recarga', ?, ?, ?)")
       .run(r.usuario_id, r.valor_centavos, 'Recarga via Pix', `rec_${r.id}`);
     if (r.bonus_centavos > 0) {
@@ -461,6 +481,20 @@ const saldoExibido = async (usuario) => (usuario.interno ? await saldoApiFull() 
 const diasHistorico = () => Math.max(1, Number(lerConfig('dias_historico') || 10));
 const expirou = (c) => c.status === 'concluida' && !c.resultado;
 async function limparExpiradas() {
+  // Consultas que ficaram "processando" (queda ou reinício do servidor no meio): marca como falha e devolve o valor
+  const travadas = db.prepare(`SELECT c.id, c.usuario_id, c.produto, c.preco_centavos, u.interno FROM consultas c JOIN usuarios u ON u.id = c.usuario_id
+    WHERE c.status = 'processando' AND c.criado_em < datetime('now', '-30 minutes')`).all();
+  for (const c of travadas) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (db.prepare("UPDATE consultas SET status = 'falhou', erro = 'Interrompida (servidor reiniciado). Valor estornado.', custo_centavos = 0, comissao_centavos = 0 WHERE id = ? AND status = 'processando'").run(c.id).changes === 1 && !c.interno) {
+        db.prepare("INSERT OR IGNORE INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno', ?, ?, ?)")
+          .run(c.usuario_id, c.preco_centavos, `Estorno: ${c.produto}`, `est_${c.id}`);
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); console.error('estorno travada:', e.message); }
+  }
+  if (travadas.length) console.log(`Consultas interrompidas estornadas: ${travadas.length}`);
   const dias = diasHistorico();
   const lista = db.prepare(`SELECT id FROM consultas WHERE status = 'concluida' AND resultado IS NOT NULL AND criado_em < datetime('now', ?)`).all(`-${dias} days`);
   for (const { id } of lista) {
@@ -694,10 +728,15 @@ rota('GET', '/admin/saques', exigeAdmin(({ res, usuario, url }) => pagina(res, '
   ok: url.searchParams.get('ok') ? 'Saque atualizado.' : '', erro: url.searchParams.get('erro') || '',
 }), usuario)));
 
+const saquesEmAndamento = new Set();
 rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const s = db.prepare("SELECT * FROM saques WHERE id = ? AND status = 'pendente'").get(Number(f.id));
   if (!s) return redirecionar(res, '/admin/saques');
+  // Trava: o mesmo saque não pode ser processado duas vezes ao mesmo tempo (clique duplo, duas abas, dois admins)
+  if (saquesEmAndamento.has(s.id)) return redirecionar(res, `/admin/saques?erro=${encodeURIComponent('Este saque já está sendo processado. Aguarde e atualize a página.')}`);
+  saquesEmAndamento.add(s.id);
+  try {
   // Pagar automaticamente pelo Asaas (Pix sai da conta Asaas para a chave do usuário)
   if (f.acao === 'asaas') {
     try {
@@ -714,9 +753,9 @@ rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res, usuario }) 
   db.exec('BEGIN IMMEDIATE');
   try {
     if (f.acao === 'pagar') {
-      db.prepare("UPDATE saques SET status = 'pago', resolvido_em = datetime('now'), observacao = ? WHERE id = ?").run(String(f.obs || '').slice(0, 200), s.id);
+      if (db.prepare("UPDATE saques SET status = 'pago', resolvido_em = datetime('now'), observacao = ? WHERE id = ? AND status = 'pendente'").run(String(f.obs || '').slice(0, 200), s.id).changes !== 1) { db.exec('ROLLBACK'); return redirecionar(res, '/admin/saques'); }
     } else {
-      db.prepare("UPDATE saques SET status = 'recusado', resolvido_em = datetime('now'), observacao = ? WHERE id = ?").run(String(f.obs || '').slice(0, 200), s.id);
+      if (db.prepare("UPDATE saques SET status = 'recusado', resolvido_em = datetime('now'), observacao = ? WHERE id = ? AND status = 'pendente'").run(String(f.obs || '').slice(0, 200), s.id).changes !== 1) { db.exec('ROLLBACK'); return redirecionar(res, '/admin/saques'); }
       db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno_saque', ?, ?, ?)")
         .run(s.usuario_id, s.valor_centavos, `Saque #${s.id} recusado: valor devolvido`, `estsaque_${s.id}`);
     }
@@ -724,6 +763,7 @@ rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res, usuario }) 
   } catch (e) { db.exec('ROLLBACK'); throw e; }
   registrar(usuario, f.acao === 'pagar' ? 'Marcou saque como pago' : 'Recusou saque', `Saque #${s.id} de ${P.reais(s.valor_centavos)} para a chave ${s.chave_pix}${f.obs ? ` (${String(f.obs).slice(0, 200)})` : ''}`);
   redirecionar(res, '/admin/saques?ok=1');
+  } finally { saquesEmAndamento.delete(s.id); }
 }));
 
 // ======================= ADMIN =======================
