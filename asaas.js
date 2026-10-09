@@ -64,3 +64,8 @@ export function transferirPix({ valorCentavos, chave, descricao }) {
     body: JSON.stringify({ value: valorCentavos / 100, operationType: 'PIX', pixAddressKey: k.chave, pixAddressKeyType: k.tipo, description: descricao }),
   });
 }
+
+// Paga um Pix "copia e cola" com o saldo da conta Asaas (usado no repasse para a APIFull)
+export const pagarPixCopiaECola = ({ payload, valorCentavos, descricao }) =>
+  asaas('/pix/qrCodes/pay', { method: 'POST', body: JSON.stringify({ qrCode: { payload }, value: valorCentavos / 100, description: descricao }) });
+export const saldoConta = () => asaas('/finance/balance');

@@ -195,3 +195,25 @@ export async function saldoApiFull({ forcar = false } = {}) {
   return cacheSaldo.valor;
 }
 export const limparCacheSaldo = () => { cacheSaldo.em = 0; };
+
+// Gera uma cobrança Pix de recarga de créditos na própria APIFull e devolve o código "copia e cola"
+function acharPixCopiaECola(obj, prof = 0) {
+  if (prof > 6 || obj == null) return null;
+  if (typeof obj === 'string') return /^000201/.test(obj.trim()) ? obj.trim() : null;
+  if (typeof obj === 'object') for (const v of Object.values(obj)) { const r = acharPixCopiaECola(v, prof + 1); if (r) return r; }
+  return null;
+}
+export async function gerarRecargaApiFull(valorCentavos) {
+  const base = process.env.APIFULL_URL || 'https://api.apifull.com.br/api/';
+  const r = await fetch(`${base}credits/insert`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.APIFULL_TOKEN}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount: (valorCentavos / 100).toFixed(2), payment_method: 'pix' }),
+    signal: AbortSignal.timeout(30000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || (j.status && !['sucesso', 'success', 'ok'].includes(String(j.status).toLowerCase()))) throw new Error(`APIFull recusou a recarga: ${j.message || j.mensagem || j.status || r.status}`);
+  const payload = acharPixCopiaECola(j);
+  if (!payload) throw new Error(`APIFull não devolveu o código Pix. Resposta: ${JSON.stringify(j).slice(0, 300)}`);
+  return { payload, resposta: j };
+}

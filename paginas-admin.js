@@ -3,7 +3,7 @@ import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
-  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
+  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/operacao', 'Operação'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
 const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
@@ -111,7 +111,8 @@ export function adminClientes({ clientes, busca = '', ok, erro }) {
   <input type="text" name="busca" value="${esc(busca)}" placeholder="Nome, e-mail ou documento" aria-label="Buscar cliente" style="flex:1 1 220px"><button class="btn">Buscar</button></form>
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>Cliente</th><th>Documento</th><th>WhatsApp</th><th>Saldo</th><th>Desde</th><th>Consultas sensíveis</th><th>Ajustar saldo</th></tr>
-  ${clientes.map((c) => `<tr><td><strong>${esc(c.nome)}</strong><br><span class="muted">${esc(c.email)}</span>${c.ativo ? '' : ' <span style="color:var(--erro)">(desativado)</span>'}</td>
+  ${clientes.map((c) => `<tr><td><strong>${esc(c.nome)}</strong><br><span class="muted">${esc(c.email)}</span>${c.ativo ? '' : ' <span style="color:var(--erro);font-weight:700">(bloqueado)</span>'}
+      ${c.admin ? '' : `<form method="post" action="/admin/clientes/ativo" style="margin:6px 0 0"><input type="hidden" name="id" value="${c.id}"><input type="hidden" name="ativo" value="${c.ativo ? 0 : 1}"><button class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.8rem${c.ativo ? ';color:var(--erro)' : ''}" ${c.ativo ? `data-confirmar="Bloquear ${esc(c.nome)}? A pessoa é desconectada e não consegue mais entrar. O saldo fica preservado."` : ''}>${c.ativo ? 'Bloquear' : 'Reativar'}</button></form>`}</td>
     <td>${esc(formatarDoc(c.documento))}</td><td>${esc(c.telefone)}</td><td><strong>${reais(c.saldo)}</strong>${c.admin ? '<br><span class="tag">admin</span>' : c.interno ? '<br><span class="tag">interna · saldo APIFull</span>' : ''}
       ${c.admin ? '' : `<form method="post" action="/admin/clientes/interno" style="margin:6px 0 0"><input type="hidden" name="id" value="${c.id}"><input type="hidden" name="interno" value="${c.interno ? 0 : 1}"><button class="btn sec" style="min-height:30px;padding:4px 10px;font-size:.78rem">${c.interno ? 'Remover conta interna' : 'Tornar conta interna'}</button></form>`}</td><td>${dt(c.criado_em).slice(0, 10)}</td>
     <td>${c.documento.length === 14 ? '<span class="muted">liberadas (CNPJ)</span>' : `<form method="post" action="/admin/clientes/sensivel" style="margin:0"><input type="hidden" name="id" value="${c.id}"><input type="hidden" name="liberar" value="${c.liberado_sensivel ? 0 : 1}">
@@ -124,8 +125,8 @@ export function adminClientes({ clientes, busca = '', ok, erro }) {
 </table></div></div>`;
 }
 
-export function adminConsultas({ consultas }) {
-  return `<h1 style="font-size:1.7rem">Consultas feitas</h1>${menu('/admin/consultas')}
+export function adminConsultas({ consultas, ok, erro }) {
+  return `<h1 style="font-size:1.7rem">Consultas feitas</h1>${menu('/admin/consultas')}${aviso(ok, erro)}
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>#</th><th>Data</th><th>Cliente</th><th>Consulta</th><th>Documento</th><th>Finalidade</th><th>Cliente pagou</th><th>Custo APIFull</th><th>Comissão</th><th>Seu lucro</th><th>Status</th></tr>
   ${consultas.map((c) => `<tr><td>${c.id}</td><td>${dt(c.criado_em)}</td><td>${esc(c.cliente)}</td><td>${esc(c.produto)}</td><td>${esc(formatarDoc(c.parametro))}</td>
@@ -133,16 +134,17 @@ export function adminConsultas({ consultas }) {
     <td>${c.interno ? '<span class="muted">interna</span>' : reais(c.preco_centavos)}</td><td>${reais(c.custo_centavos || 0)}</td>
     <td>${c.comissao_centavos ? reais(c.comissao_centavos) : '—'}</td>
     <td>${c.status === 'concluida' && !c.interno ? `<strong style="color:var(--ok)">${reais(c.preco_centavos - (c.comissao_centavos || 0) - (c.custo_centavos || 0))}</strong>` : '—'}</td>
-    <td>${c.status === 'concluida' ? 'Concluída' : c.status === 'falhou' ? `<span style="color:var(--erro)" title="${esc(c.erro || '')}">Falhou</span>` : 'Processando'}</td></tr>`).join('')}
+    <td>${c.status === 'concluida' ? (c.estornada ? '<span class="muted">Concluída · estornada</span>' : `Concluída${c.interno ? '' : `<form method="post" action="/admin/consultas/estornar" style="margin:6px 0 0;display:flex;gap:4px;flex-wrap:wrap"><input type="hidden" name="id" value="${c.id}"><input type="text" name="motivo" placeholder="Motivo" aria-label="Motivo do estorno" style="width:110px;min-height:32px;padding:4px 8px"><button class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.8rem" data-confirmar="Devolver ${reais(c.preco_centavos)} ao cliente?">Estornar</button></form>`}`) : c.status === 'falhou' ? `<span style="color:var(--erro)" title="${esc(c.erro || '')}">Falhou · estornada</span>` : 'Processando'}</td></tr>`).join('')}
 </table></div></div>`;
 }
 
-export function adminRecargas({ recargas }) {
-  return `<h1 style="font-size:1.7rem">Recargas</h1>${menu('/admin/recargas')}
+export function adminRecargas({ recargas, ok, erro }) {
+  return `<h1 style="font-size:1.7rem">Recargas</h1>${menu('/admin/recargas')}${aviso(ok, erro)}
+<p class="muted">Cliente diz que pagou e o saldo não entrou? Use <strong>Conferir no Asaas</strong>: se o Pix foi pago, o crédito entra na hora (nunca em dobro).</p>
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>#</th><th>Data</th><th>Cliente</th><th>Valor</th><th>Bônus</th><th>Status</th><th>Pago em</th></tr>
   ${recargas.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td>${esc(r.cliente)}</td><td>${reais(r.valor_centavos)}</td><td>${reais(r.bonus_centavos)}</td>
-    <td>${r.status === 'paga' ? '<span style="color:var(--ok);font-weight:700">Paga</span>' : 'Pendente'}</td><td>${dt(r.pago_em)}</td></tr>`).join('')}
+    <td>${r.status === 'paga' ? '<span style="color:var(--ok);font-weight:700">Paga</span>' : `Pendente${r.asaas_id ? `<form method="post" action="/admin/recargas/verificar" style="margin:6px 0 0"><input type="hidden" name="id" value="${r.id}"><button class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.8rem">Conferir no Asaas</button></form>` : ''}`}</td><td>${dt(r.pago_em)}</td></tr>`).join('')}
 </table></div></div>`;
 }
 
@@ -396,4 +398,42 @@ export function adminCampanhas({ ini, fim, linhas, rastreio, base }) {
   </table>
   <p class="muted" style="font-size:.88rem;margin-bottom:0">Eventos enviados: visita de página, clique em "Criar conta" (Lead), cadastro concluído (CompleteRegistration / sign_up) e recarga paga com o valor (Purchase).</p>
 </div>`;
+}
+
+export function adminOperacao({ aviso: texto, pausadas, repasse, acumulado, repasses, saldoApiFull, saldoAsaas, ok, erro }) {
+  const st = { pago: '<span style="color:var(--ok);font-weight:700">Pago</span>', erro: '<span style="color:var(--erro);font-weight:700">Falhou</span>', processando: 'Processando', enviado: '<span style="color:#9A6B00;font-weight:700">Enviado ao Asaas</span>', cancelado: '<span class="muted">Cancelado</span>' };
+  return `<h1 style="font-size:1.7rem">Operação</h1>${menu('/admin/operacao')}${aviso(ok, erro)}
+<div class="grade" style="margin-bottom:18px">
+  ${num('Saldo na APIFull', saldoApiFull === null ? '—' : reais(saldoApiFull), 'paga as consultas dos clientes')}
+  ${num('Saldo na conta Asaas', saldoAsaas === null ? '—' : reais(saldoAsaas), 'de onde sai o repasse (conta compartilhada com a Soft Crédito)')}
+  ${num('Acumulado para repassar', reais(acumulado.valor), `${acumulado.ids.length} recarga(s) paga(s) desde que o repasse foi ligado`)}
+</div>
+
+<form class="cartao" method="post" action="/admin/operacao/repasse" style="max-width:720px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Repasse automático para a APIFull</h2>
+  <p class="muted" style="margin-top:0">Quando ligado, uma parte de cada recarga paga pelos clientes vira saldo na APIFull: o sistema gera um Pix de recarga na APIFull e paga com o saldo do Asaas, sozinho. Valores pequenos são somados até o lote mínimo. Só entram recargas pagas <strong>depois</strong> de ligar.</p>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${repasse.ativo ? 'checked' : ''} style="width:22px;height:22px"> Repasse automático ligado</label>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 160px"><label for="pct">Percentual de cada recarga (%)</label><input id="pct" name="pct" type="text" inputmode="decimal" value="${repasse.pct}"></div>
+    <div class="campo" style="flex:1 1 180px"><label for="minimo">Repassar quando juntar (R$)</label><input id="minimo" name="minimo" type="text" inputmode="decimal" value="${(repasse.minimo / 100).toFixed(2).replace('.', ',')}"><small class="muted">Mínimo R$ 10,00 (regra da APIFull).</small></div>
+  </div>
+  <button class="btn" type="submit">Salvar repasse</button>
+</form>
+<form method="post" action="/admin/operacao/repassar-agora" style="margin:-6px 0 18px"><button class="btn sec" data-confirmar="Repassar agora ${reais(acumulado.valor)} para a APIFull?" ${acumulado.valor < 1000 ? 'disabled' : ''}>Repassar agora o acumulado (${reais(acumulado.valor)})</button></form>
+
+<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Histórico de repasses</h2>
+${repasses.length ? `<div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Valor</th><th>Origem</th><th>Status</th><th></th></tr>
+${repasses.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td><strong>${reais(r.valor_centavos)}</strong></td><td>${esc(r.origem)}</td>
+  <td>${st[r.status] || esc(r.status)}${r.erro ? `<br><small class="muted">${esc(r.erro)}</small>` : ''}</td>
+  <td>${r.status === 'erro' ? `<form method="post" action="/admin/operacao/repasse-tentar" style="display:flex;gap:6px;margin:0"><input type="hidden" name="id" value="${r.id}"><button class="btn sec" name="acao" value="tentar" style="min-height:32px;padding:4px 10px;font-size:.8rem">Tentar de novo</button><button class="btn sec" name="acao" value="cancelar" style="min-height:32px;padding:4px 10px;font-size:.8rem">Cancelar</button></form>` : ''}</td></tr>`).join('')}</table></div>` : '<p class="muted">Nenhum repasse ainda.</p>'}
+</div>
+
+<form class="cartao" method="post" action="/admin/operacao/aviso" style="max-width:720px">
+  <h2 style="font-size:1.2rem;margin-top:0">Aviso geral e manutenção</h2>
+  <div class="campo"><label for="aviso">Aviso no topo para todos os clientes logados</label><input id="aviso" name="aviso" type="text" maxlength="300" value="${esc(texto)}" placeholder="Ex.: Instabilidade na base de veículos. Já estamos resolvendo.">
+    <small class="muted">Deixe vazio para não mostrar nada.</small></div>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px;font-weight:700;color:${pausadas ? 'var(--erro)' : 'inherit'}"><input type="checkbox" name="pausadas" value="1" ${pausadas ? 'checked' : ''} style="width:22px;height:22px"> Pausar novas consultas (manutenção)</label>
+  <p class="muted" style="margin-top:-6px">Use se a APIFull estiver fora do ar ou sem saldo: ninguém é cobrado e o cliente vê uma mensagem de manutenção. Recargas continuam funcionando.</p>
+  <button class="btn" type="submit">Salvar</button>
+</form>`;
 }

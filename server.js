@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar, pastaAnuncios } from './db.js';
 import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
-import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo } from './apifull.js';
+import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo, gerarRecargaApiFull } from './apifull.js';
 import { pdfGenerico } from './pdf.js';
 import * as PA from './paginas-app.js';
 import * as PD from './paginas-admin.js';
@@ -175,8 +175,13 @@ function redirecionar(res, para, extra = {}) {
 const AVISO_DISCO = `<div class="aviso erro" role="alert" style="font-size:1rem"><strong>ATENÇÃO: os dados NÃO estão sendo salvos no disco permanente.</strong>
   Cadastros, saldos, consultas e preços serão apagados na próxima atualização do site. No Render, confira em <strong>Disks</strong> se existe um disco com Mount Path <code>/var/data</code>
   e em <strong>Environment</strong> se <code>DATA_DIR</code> = <code>/var/data</code>. Pasta atual: <code>${P.esc(armazenamento.pasta)}</code>${armazenamento.erro ? `<br>${P.esc(armazenamento.erro)}` : ''}</div>`;
+// Aviso geral (configurado no Admin) aparece no topo para todos os clientes logados
+const avisoGeral = (usuario) => {
+  const t = usuario ? String(lerConfig('aviso_geral') || '').trim() : '';
+  return t ? `<div class="aviso" role="status" style="background:#FFF6E0;border-color:#F0C24B;color:#5A4300">${P.esc(t)}</div>` : '';
+};
 const pagina = (res, titulo, corpo, usuario, status, extra) =>
-  html(res, P.layout({ titulo, corpo: (usuario?.admin && !armazenamento.persistente ? AVISO_DISCO : '') + corpo, usuario }), status, extra);
+  html(res, P.layout({ titulo, corpo: (usuario?.admin && !armazenamento.persistente ? AVISO_DISCO : '') + avisoGeral(usuario) + corpo, usuario }), status, extra);
 
 // Bloqueia envios de formulário vindos de outros sites
 function origemValida(req) {
@@ -399,6 +404,63 @@ function creditarRecarga(recargaId) {
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
+
+// ======================= REPASSE AUTOMÁTICO PARA A APIFULL =======================
+// A cada recarga paga (depois de ligado), um percentual vai para a APIFull: o sistema gera um Pix de recarga
+// na APIFull e paga com o saldo da conta Asaas. Junta valores pequenos até o mínimo configurado.
+const repasseCfg = () => ({
+  ativo: lerConfig('repasse_ativo') === '1',
+  pct: Number(lerConfig('repasse_percentual') || 0),
+  minimo: Math.max(1000, Number(lerConfig('repasse_minimo_centavos') || 5000)),
+  desde: lerConfig('repasse_desde') || '',
+});
+function repasseAcumulado() {
+  const c = repasseCfg();
+  if (!c.desde || c.pct <= 0) return { valor: 0, ids: [] };
+  const lista = db.prepare("SELECT id, valor_centavos FROM recargas WHERE status = 'paga' AND repasse_id IS NULL AND pago_em >= ?").all(c.desde);
+  return { valor: Math.floor(lista.reduce((t, r) => t + r.valor_centavos, 0) * c.pct / 100), ids: lista.map((r) => r.id) };
+}
+let repasseRodando = false;
+async function executarRepasse(id) {
+  const rp = db.prepare('SELECT * FROM repasses_apifull WHERE id = ?').get(id);
+  if (!rp || ['pago', 'enviado'].includes(rp.status)) return;
+  try {
+    const { payload, resposta } = await gerarRecargaApiFull(rp.valor_centavos);
+    db.prepare("UPDATE repasses_apifull SET apifull_ref = ?, status = 'processando', erro = NULL WHERE id = ?").run(JSON.stringify(resposta).slice(0, 2000), id);
+    const pg = await AS.pagarPixCopiaECola({ payload, valorCentavos: rp.valor_centavos, descricao: `Recarga APIFull - repasse Soft Consultas #${id}` });
+    // DONE = Pix já saiu; outros status (ex.: aguardando autorização no app do Asaas) ficam como "enviado"
+    const final = String(pg.status || '').toUpperCase() === 'DONE' ? 'pago' : 'enviado';
+    db.prepare("UPDATE repasses_apifull SET status = ?, asaas_id = ?, pago_em = datetime('now'), erro = ? WHERE id = ?").run(final, pg.id || null, final === 'enviado' ? `Asaas: ${pg.status || 'sem status'} (confira/autorize no app do Asaas)` : null, id);
+    registrar(null, 'Repasse APIFull pago', `#${id} de ${P.reais(rp.valor_centavos)} · Asaas ${pg.id || '-'} (${pg.status || '-'})`);
+    limparCacheSaldo();
+  } catch (e) {
+    console.error('repasse APIFull:', e.message);
+    db.prepare("UPDATE repasses_apifull SET status = 'erro', erro = ? WHERE id = ?").run(String(e.message).slice(0, 500), id);
+    registrar(null, 'Repasse APIFull falhou', `#${id} de ${P.reais(rp.valor_centavos)}: ${e.message}`);
+  }
+}
+// forcar: botão "Repassar agora" (ignora o mínimo do lote, respeitando o mínimo de R$ 10 da APIFull)
+async function processarRepasse({ forcar = false, origem = 'automatico' } = {}) {
+  const c = repasseCfg();
+  if ((!c.ativo && !forcar) || repasseRodando) return null;
+  repasseRodando = true;
+  try {
+    const { valor, ids } = repasseAcumulado();
+    if (!ids.length || valor < (forcar ? 1000 : c.minimo)) return null;
+    let id;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      id = Number(db.prepare('INSERT INTO repasses_apifull (valor_centavos, recargas, origem) VALUES (?, ?, ?)').run(valor, ids.join(','), origem).lastInsertRowid);
+      const marca = db.prepare('UPDATE recargas SET repasse_id = ? WHERE id = ? AND repasse_id IS NULL');
+      for (const rid of ids) marca.run(id, rid);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    await executarRepasse(id);
+    return id;
+  } finally { repasseRodando = false; }
+}
+setInterval(() => processarRepasse().catch((e) => console.error('repasse:', e.message)), 30 * 60 * 1000).unref();
+
 const dadosRecarga = (usuario) => ({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(),
   primeira: bonusPrimeira().ativo && ehPrimeiraRecarga(usuario.id) ? bonusPrimeira() : null, pedirDocumento: !usuario.documento });
 rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => pagina(res, 'Recarregar', PA.paginaRecarregar(dadosRecarga(usuario)), usuario)));
@@ -453,7 +515,7 @@ rota('GET', '/api/recarga/:id/status', async ({ res, usuario, params }) => {
   if (r.asaas_id && A.limitar(`st:${r.id}`, 30, 5)) {
     try {
       const c = await AS.buscarCobranca(r.asaas_id);
-      if (AS.STATUS_PAGO.includes(c.status)) { creditarRecarga(r.id); return json(res, { pago: true, valor: r.valor_centavos / 100 }); }
+      if (AS.STATUS_PAGO.includes(c.status)) { if (creditarRecarga(r.id)) processarRepasse().catch((e) => console.error('repasse:', e.message)); return json(res, { pago: true, valor: r.valor_centavos / 100 }); }
     } catch (e) { console.warn('status recarga:', e.message); }
   }
   json(res, { pago: false });
@@ -471,7 +533,7 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
   const rid = Number(ref.slice(AS.PREFIXO.length));
   const r = db.prepare('SELECT * FROM recargas WHERE id = ?').get(rid);
   if (!r || r.asaas_id !== payment.id || Math.round(Number(payment.value) * 100) < r.valor_centavos) return;
-  try { creditarRecarga(rid); } catch (e) { console.error('crédito recarga:', e.message); }
+  try { if (creditarRecarga(rid)) processarRepasse().catch((e) => console.error('repasse:', e.message)); } catch (e) { console.error('crédito recarga:', e.message); }
 });
 
 // Admin enxerga (e usa) o saldo real da APIFull; clientes, a carteira interna
@@ -568,6 +630,7 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   const f = await corpoForm(req);
   const v = { valor: f.valor, finalidade: f.finalidade };
   const erro = async (m) => pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.interno, erro: m, v }), usuario, 400);
+  if (lerConfig('consultas_pausadas') === '1' && !usuario.admin) return erro('As consultas estão temporariamente em manutenção. Seu saldo está preservado. Tente novamente em alguns minutos.');
   if (produto.sensivel && !podeSensivel(usuario)) return erro('Esta consulta contém dados sensíveis e precisa de liberação. Fale com o suporte.');
   const val = validarValor(produto.documento, f.valor);
   if (val.erro) return erro(val.erro);
@@ -766,6 +829,115 @@ rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res, usuario }) 
   } finally { saquesEmAndamento.delete(s.id); }
 }));
 
+
+// ======================= OPERAÇÃO (aviso geral, pausa e repasse APIFull) =======================
+rota('GET', '/admin/operacao', exigeAdmin(async ({ res, usuario, url }) => {
+  let saldoAsaas = null;
+  try { saldoAsaas = Math.round(Number((await AS.saldoConta()).balance) * 100); } catch (e) { console.warn('saldo Asaas:', e.message); }
+  pagina(res, 'Admin · Operação', PD.adminOperacao({
+    aviso: lerConfig('aviso_geral') || '', pausadas: lerConfig('consultas_pausadas') === '1', repasse: repasseCfg(), acumulado: repasseAcumulado(),
+    repasses: db.prepare('SELECT * FROM repasses_apifull ORDER BY id DESC LIMIT 100').all(), saldoApiFull: await saldoApiFull(), saldoAsaas,
+    ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '',
+  }), usuario);
+}));
+
+rota('POST', '/admin/operacao/aviso', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const texto = String(f.aviso || '').trim().slice(0, 300);
+  const pausar = f.pausadas === '1' ? '1' : '0';
+  const antes = lerConfig('consultas_pausadas');
+  gravarConfig('aviso_geral', texto);
+  gravarConfig('consultas_pausadas', pausar);
+  registrar(usuario, 'Alterou aviso/pausa', `aviso: "${texto || '(nenhum)'}" · consultas ${pausar === '1' ? 'PAUSADAS' : 'liberadas'}${antes !== pausar ? ' (mudou)' : ''}`);
+  redirecionar(res, `/admin/operacao?ok=${encodeURIComponent('Aviso e status das consultas salvos.')}`);
+}));
+
+rota('POST', '/admin/operacao/repasse', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const pct = Number(String(f.pct || '').replace(',', '.')), minimo = centavos(f.minimo);
+  const volta = (m, ok) => redirecionar(res, `/admin/operacao?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  if (!Number.isFinite(pct) || pct < 0 || pct > 100) return volta('Percentual inválido (0 a 100).');
+  if (!Number.isFinite(minimo) || minimo < 1000) return volta('O lote mínimo precisa ser de pelo menos R$ 10,00 (mínimo da APIFull).');
+  const ligar = f.ativo === '1', estava = lerConfig('repasse_ativo') === '1';
+  // Ao ligar, só entram as recargas pagas a partir de agora (o que já foi pago antes não é repassado)
+  if (ligar && !estava) gravarConfig('repasse_desde', db.prepare("SELECT datetime('now') AS d").get().d);
+  gravarConfig('repasse_ativo', ligar ? '1' : '0');
+  gravarConfig('repasse_percentual', pct);
+  gravarConfig('repasse_minimo_centavos', minimo);
+  registrar(usuario, 'Alterou repasse APIFull', `${ligar ? 'LIGADO' : 'desligado'} · ${pct}% de cada recarga · lote mínimo ${P.reais(minimo)}`);
+  volta('Repasse automático salvo.', true);
+}));
+
+rota('POST', '/admin/operacao/repassar-agora', exigeAdmin(async ({ res, usuario }) => {
+  if (repasseAcumulado().valor < 1000) return redirecionar(res, `/admin/operacao?erro=${encodeURIComponent('O valor acumulado ainda é menor que R$ 10,00 (mínimo da APIFull).')}`);
+  const id = await processarRepasse({ forcar: true, origem: `manual (${usuario.email})` });
+  const rp = id ? db.prepare('SELECT status, erro FROM repasses_apifull WHERE id = ?').get(id) : null;
+  if (!rp) return redirecionar(res, `/admin/operacao?erro=${encodeURIComponent('Já existe um repasse em andamento. Aguarde e atualize a página.')}`);
+  redirecionar(res, ['pago', 'enviado'].includes(rp.status) ? `/admin/operacao?ok=${encodeURIComponent(`Repasse #${id} pago.`)}` : `/admin/operacao?erro=${encodeURIComponent(`Repasse #${id} falhou: ${rp.erro || ''}`)}`);
+}));
+
+rota('POST', '/admin/operacao/repasse-tentar', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const rp = db.prepare("SELECT * FROM repasses_apifull WHERE id = ? AND status = 'erro'").get(Number(f.id));
+  if (!rp || repasseRodando) return redirecionar(res, '/admin/operacao');
+  if (f.acao === 'cancelar') {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare("UPDATE repasses_apifull SET status = 'cancelado' WHERE id = ? AND status = 'erro'").run(rp.id);
+      db.prepare('UPDATE recargas SET repasse_id = NULL WHERE repasse_id = ?').run(rp.id);
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    registrar(usuario, 'Cancelou repasse APIFull', `#${rp.id} de ${P.reais(rp.valor_centavos)} (valores voltam para o acumulado)`);
+    return redirecionar(res, `/admin/operacao?ok=${encodeURIComponent(`Repasse #${rp.id} cancelado. O valor voltou para o acumulado.`)}`);
+  }
+  repasseRodando = true;
+  try { await executarRepasse(rp.id); } finally { repasseRodando = false; }
+  registrar(usuario, 'Tentou de novo repasse APIFull', `#${rp.id}`);
+  const st = db.prepare('SELECT status, erro FROM repasses_apifull WHERE id = ?').get(rp.id);
+  redirecionar(res, ['pago', 'enviado'].includes(st.status) ? `/admin/operacao?ok=${encodeURIComponent(`Repasse #${rp.id} pago.`)}` : `/admin/operacao?erro=${encodeURIComponent(`Repasse #${rp.id} falhou de novo: ${st.erro || ''}`)}`);
+}));
+
+// Bloquear / reativar cliente (bloqueado não entra e é desconectado na hora)
+rota('POST', '/admin/clientes/ativo', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const cli = db.prepare('SELECT id, nome, email, admin FROM usuarios WHERE id = ?').get(Number(f.id));
+  if (!cli || cli.admin) return redirecionar(res, '/admin/clientes');
+  const ativo = f.ativo === '1' ? 1 : 0;
+  db.prepare('UPDATE usuarios SET ativo = ? WHERE id = ?').run(ativo, cli.id);
+  if (!ativo) A.encerrarTodasSessoes(cli.id);
+  registrar(usuario, ativo ? 'Reativou cliente' : 'Bloqueou cliente', `${cli.nome} (${cli.email})${f.motivo ? ` · motivo: ${String(f.motivo).slice(0, 120)}` : ''}`);
+  redirecionar(res, '/admin/clientes?ok=1');
+}));
+
+// Conferir no Asaas uma recarga que ficou pendente (credita se já foi paga)
+rota('POST', '/admin/recargas/verificar', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const r = db.prepare("SELECT * FROM recargas WHERE id = ? AND status <> 'paga'").get(Number(f.id));
+  if (!r || !r.asaas_id) return redirecionar(res, '/admin/recargas');
+  try {
+    const c = await AS.buscarCobranca(r.asaas_id);
+    if (AS.STATUS_PAGO.includes(c.status)) {
+      creditarRecarga(r.id);
+      processarRepasse().catch((e) => console.error('repasse:', e.message));
+      registrar(usuario, 'Conferiu recarga no Asaas e creditou', `Recarga #${r.id} de ${P.reais(r.valor_centavos)} (${c.status})`);
+      return redirecionar(res, `/admin/recargas?ok=${encodeURIComponent(`Recarga #${r.id} estava paga e foi creditada.`)}`);
+    }
+    return redirecionar(res, `/admin/recargas?erro=${encodeURIComponent(`Recarga #${r.id} ainda não foi paga no Asaas (status: ${c.status}).`)}`);
+  } catch (e) {
+    return redirecionar(res, `/admin/recargas?erro=${encodeURIComponent(`Não foi possível consultar o Asaas: ${e.message}`)}`);
+  }
+}));
+
+// Estorno manual de uma consulta concluída (ex.: cliente reclamou de resultado vazio)
+rota('POST', '/admin/consultas/estornar', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const c = db.prepare("SELECT c.*, u.interno, u.admin FROM consultas c JOIN usuarios u ON u.id = c.usuario_id WHERE c.id = ? AND c.status = 'concluida'").get(Number(f.id));
+  if (!c || c.interno || c.admin) return redirecionar(res, '/admin/consultas');
+  const r = db.prepare("INSERT OR IGNORE INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno', ?, ?, ?)")
+    .run(c.usuario_id, c.preco_centavos, `Estorno: ${c.produto}`, `est_${c.id}`);
+  if (r.changes) registrar(usuario, 'Estornou consulta', `#${c.id} ${c.produto} · ${P.reais(c.preco_centavos)}${f.motivo ? ` · motivo: ${String(f.motivo).slice(0, 120)}` : ''}`);
+  redirecionar(res, `/admin/consultas?ok=${encodeURIComponent(r.changes ? `Consulta #${c.id} estornada.` : `A consulta #${c.id} já tinha sido estornada.`)}`);
+}));
 // ======================= ADMIN =======================
 rota('GET', '/admin', exigeAdmin(async ({ res, usuario }) => {
   const g = (sql, ...a) => db.prepare(sql).get(...a);
@@ -964,12 +1136,16 @@ rota('POST', '/admin/clientes/sensivel', exigeAdmin(async ({ req, res, usuario }
   redirecionar(res, '/admin/clientes?ok=1');
 }));
 
-rota('GET', '/admin/consultas', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Consultas feitas', PD.adminConsultas({
-  consultas: db.prepare('SELECT c.*, u.nome AS cliente, (u.admin OR u.interno) AS interno FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300').all(),
+rota('GET', '/admin/consultas', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Consultas feitas', PD.adminConsultas({
+  consultas: db.prepare(`SELECT c.*, u.nome AS cliente, (u.admin OR u.interno) AS interno,
+    EXISTS (SELECT 1 FROM transacoes t WHERE t.tipo = 'estorno' AND t.referencia = 'est_' || c.id) AS estornada
+    FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300`).all(),
+  ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '',
 }), usuario)));
 
-rota('GET', '/admin/recargas', exigeAdmin(({ res, usuario }) => pagina(res, 'Admin · Recargas', PD.adminRecargas({
+rota('GET', '/admin/recargas', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Recargas', PD.adminRecargas({
   recargas: db.prepare('SELECT r.*, u.nome AS cliente FROM recargas r JOIN usuarios u ON u.id = r.usuario_id ORDER BY r.id DESC LIMIT 300').all(),
+  ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '',
 }), usuario)));
 
 // ======================= REDE DE CLIENTES E REGISTRO =======================

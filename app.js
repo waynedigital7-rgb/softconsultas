@@ -65,8 +65,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Indicador de carregamento ao enviar formulários (exceto o de consulta, que abre nova aba)
   document.querySelectorAll('form[method="post"]:not([data-consulta])').forEach((f) => f.addEventListener('submit', (e) => {
+    if (e.defaultPrevented) return;
+    // Evita envio duplicado (clique duplo em pagar, estornar, repassar etc.)
+    if (f.dataset.enviando) { e.preventDefault(); return; }
+    f.dataset.enviando = '1';
+    setTimeout(() => { delete f.dataset.enviando; }, 15000);
     const b = e.submitter || f.querySelector('button[type=submit], button:not([type])');
-    if (b && !e.defaultPrevented) setTimeout(() => b.classList.add('carregando'), 0);
+    if (b) setTimeout(() => b.classList.add('carregando'), 0);
   }));
   // Copiar código Pix
   const copiar = document.getElementById('copiar');

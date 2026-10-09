@@ -259,6 +259,22 @@ db.exec(`
     criado_em TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+// Repasse automático para a APIFull (parte de cada recarga paga vira saldo na APIFull)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS repasses_apifull (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    valor_centavos INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'processando',
+    recargas TEXT NOT NULL DEFAULT '',
+    apifull_ref TEXT,
+    asaas_id TEXT,
+    erro TEXT,
+    origem TEXT NOT NULL DEFAULT 'automatico',
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    pago_em TEXT
+  );
+`);
+if (!colunas('recargas').includes('repasse_id')) db.exec('ALTER TABLE recargas ADD COLUMN repasse_id INTEGER');
 export const registrar = (usuario, acao, detalhe = '') =>
   db.prepare('INSERT INTO registro_admin (admin_email, acao, detalhe) VALUES (?, ?, ?)').run(usuario?.email || 'sistema', acao, String(detalhe).slice(0, 1000));
 
@@ -276,6 +292,12 @@ const padrao = {
   comissao_maxima: '100',
   alerta_saldo_apifull_centavos: '5000',
   saque_minimo_centavos: '5000',
+  repasse_ativo: '0',
+  repasse_percentual: '20',
+  repasse_minimo_centavos: '5000',
+  repasse_desde: '',
+  aviso_geral: '',
+  consultas_pausadas: '0',
   bonus_faixas: JSON.stringify([{ a_partir_de: 10000, percentual: 5 }, { a_partir_de: 30000, percentual: 10 }]),
 };
 for (const [k, v] of Object.entries(padrao)) db.prepare('INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)').run(k, v);
