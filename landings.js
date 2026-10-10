@@ -110,12 +110,13 @@ export function paginaLanding({ chave, cfg, produtos, bonus = {}, consultasFeita
   if (top.length) menor = Math.min(...top.map((p) => p.preco_centavos).filter((v) => v > 0));
   const fim = bonus.ate ? bonus.ate.split('-').reverse().slice(0, 2).join('/') : '';
   const fecha = /[.?!]$/.test(cfg.destaque) ? '' : '.';
-  const celular = vi ? `<div class="lp-cel" aria-hidden="true"><div class="lp-tela">
+  // O celular de exemplo é clicável: quem toca no "Consultar" desenhado vai direto para o cadastro
+  const celular = vi ? `<a class="lp-cel" href="/cadastro?origem=${encodeURIComponent(chave)}" data-evento="Lead" aria-label="Criar conta grátis e consultar" style="display:block;text-decoration:none;color:inherit"><div class="lp-tela">
       <div class="lp-top"><img src="/icone.png" alt=""> Soft Consultas</div>
       <div class="lp-busca"><span>${esc(vi.doc)}</span><b>Consultar</b></div>
       <div class="lp-res"><div class="t">${esc(vi.titulo)}</div><div class="v">${esc(vi.valor)}</div>
         ${vi.linhas.map(([a, b, ok]) => `<div class="l"><span>${esc(a)}</span><span class="${ok ? 'ok' : 'ruim'}">${esc(b)}</span></div>`).join('')}</div>
-      <div class="lp-pdf">${ICONE_PDF} Baixar relatório em PDF</div></div></div>` : '';
+      <div class="lp-pdf">${ICONE_PDF} Baixar relatório em PDF</div></div></a>` : '';
   return `
 <section class="lp-hero">
   <div class="lp-hero-in">
@@ -129,6 +130,7 @@ export function paginaLanding({ chave, cfg, produtos, bonus = {}, consultasFeita
           : '<input name="doc" type="text" inputmode="numeric" placeholder="Digite o CPF ou CNPJ" aria-label="CPF ou CNPJ para consultar" autocomplete="off">'}
         <button class="btn" type="submit" data-evento="Lead">Consultar agora</button>
       </form>
+      <a href="/cadastro?origem=${encodeURIComponent(chave)}" data-evento="Lead" style="display:inline-block;margin:10px 0 4px;color:#fff;font-weight:700;text-decoration:underline">Ou crie sua conta grátis em 30 segundos →</a>
       <div class="lp-linha">
         ${bonus.ativo ? `<span class="lp-oferta">+${bonus.pct}% na 1ª recarga${fim ? ` · até ${fim}` : ''}</span>` : ''}
         <span>Cadastro grátis · sem mensalidade${menor ? ` · a partir de <strong>${reais(menor)}</strong>` : ''}</span>
