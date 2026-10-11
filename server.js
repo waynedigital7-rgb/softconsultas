@@ -1475,6 +1475,15 @@ const servidor = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
       return res.end(scriptRastreio());
     }
+    // Imagens públicas de anúncios (pasta "criativos" do repositório): usadas pela Meta/Google para buscar os criativos
+    const criativo = req.method === 'GET' && /^\/criativos\/([a-z0-9-]{1,80})\.(png|jpe?g)$/.exec(url.pathname);
+    if (criativo) {
+      try {
+        const dados = await readFile(path.join(raiz, 'criativos', `${criativo[1]}.${criativo[2]}`));
+        res.writeHead(200, { 'Content-Type': criativo[2] === 'png' ? 'image/png' : 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+        return res.end(dados);
+      } catch { res.writeHead(404); return res.end(); }
+    }
     if (req.method === 'GET' && ARQUIVOS[url.pathname]) {
       const dados = await readFile(path.join(raiz, url.pathname.slice(1)));
       res.writeHead(200, { 'Content-Type': ARQUIVOS[url.pathname], 'Cache-Control': 'public, max-age=86400' });
