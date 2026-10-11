@@ -265,7 +265,8 @@ rota('POST', '/cadastro', async ({ req, res }) => {
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)`).run(v.nome, v.email, v.documento, v.telefone, A.gerarHashSenha(f.senha), admin, indicador?.id ?? null, codigoUnico(),
       t(org.origem || (indicador ? 'indicacao' : '')), t(org.utm_source), t(org.utm_medium), t(org.utm_campaign), t(org.utm_content), t(org.pagina));
   const token = A.criarSessao(Number(r.lastInsertRowid));
-  enviarEmail({ para: v.email, assunto: 'Bem-vindo à Soft Consultas', html: emailBoasVindas(v.nome, `${urlBase(req)}/painel`) })
+  const bv = montarEmail({ etapa: 'boasvindas', nome: v.nome, perfil: perfilDo({ origem: org.origem, utm_campaign: org.utm_campaign, pagina_entrada: org.pagina }), bonus: bonusPrimeira(), base: urlBase(req), sair: null });
+  enviarEmail({ para: v.email, assunto: bv.assunto, html: bv.html })
     .catch((e) => console.error('e-mail boas-vindas:', e.message));
   const placaConsulta = placaOk(f.consulta);
   const docConsulta = placaConsulta ? '' : A.soNumeros(f.consulta || '').slice(0, 14);
@@ -798,7 +799,7 @@ rota('GET', '/indicacoes', exigeLogin(({ req, res, usuario, url }) => {
   const msgs = { pct: 'Comissão atualizada.', conv: 'Comissões convertidas em créditos.', saque: 'Saque solicitado. Você recebe por Pix assim que for aprovado.' };
   pagina(res, 'Indicações', PA.paginaIndicacoes({
     link: `${urlBase(req)}/?ref=${codigo}`, usuario, indicados, extrato, saques,
-    saldo: saldoComissao(usuario.id), maximo: Number(lerConfig('comissao_maxima') ?? 100), minimoSaque: Number(lerConfig('saque_minimo_centavos') ?? 5000),
+    saldo: saldoComissao(usuario.id), maximo: Number(lerConfig('comissao_maxima') ?? 100), minimoSaque: Number(lerConfig('saque_minimo_centavos') ?? 5000), taxaSaque: taxaSaque(),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '',
   }), usuario);
 }));
@@ -826,6 +827,8 @@ rota('POST', '/indicacoes/converter', exigeLogin(async ({ req, res, usuario }) =
   redirecionar(res, '/indicacoes?ok=conv');
 }));
 
+// Taxa sobre saque de comissões (%), configurável no Admin. Depósitos (recargas) nunca podem ser sacados.
+const taxaSaque = () => Math.min(50, Math.max(0, Number(lerConfig('saque_taxa_percentual') ?? 5)));
 rota('POST', '/indicacoes/saque', exigeLogin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const valor = centavos(f.valor);
@@ -838,7 +841,8 @@ rota('POST', '/indicacoes/saque', exigeLogin(async ({ req, res, usuario }) => {
   db.exec('BEGIN IMMEDIATE');
   try {
     if (valor > saldoComissao(usuario.id)) { db.exec('ROLLBACK'); return erro('Valor maior que o seu saldo de comissões.'); }
-    const sid = Number(db.prepare('INSERT INTO saques (usuario_id, valor_centavos, chave_pix) VALUES (?, ?, ?)').run(usuario.id, valor, chave).lastInsertRowid);
+    const taxa = Math.round((valor * taxaSaque()) / 100);
+    const sid = Number(db.prepare('INSERT INTO saques (usuario_id, valor_centavos, chave_pix, taxa_centavos) VALUES (?, ?, ?, ?)').run(usuario.id, valor, chave, taxa).lastInsertRowid);
     db.prepare("INSERT INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'saque', ?, ?, ?)").run(usuario.id, -valor, `Saque via Pix #${sid}`, `saque_${sid}`);
     db.prepare('UPDATE usuarios SET chave_pix = ? WHERE id = ?').run(chave, usuario.id);
     db.exec('COMMIT');
@@ -863,10 +867,11 @@ rota('POST', '/admin/saques/resolver', exigeAdmin(async ({ req, res, usuario }) 
   // Pagar automaticamente pelo Asaas (Pix sai da conta Asaas para a chave do usuário)
   if (f.acao === 'asaas') {
     try {
-      const t = await AS.transferirPix({ valorCentavos: s.valor_centavos, chave: s.chave_pix, descricao: `Saque de comissão Soft Consultas #${s.id}` });
+      const liquido = s.valor_centavos - (s.taxa_centavos || 0);
+      const t = await AS.transferirPix({ valorCentavos: liquido, chave: s.chave_pix, descricao: `Saque de comissão Soft Consultas #${s.id}` });
       db.prepare("UPDATE saques SET status = 'pago', resolvido_em = datetime('now'), observacao = ?, asaas_transferencia_id = ? WHERE id = ? AND status = 'pendente'")
         .run(`Pix pelo Asaas (${t.status || 'enviado'})`, t.id || null, s.id);
-      registrar(usuario, 'Pagou saque pelo Asaas', `Saque #${s.id} de ${P.reais(s.valor_centavos)} para ${s.chave_pix} · transferência ${t.id || '-'} (${t.status || '-'})`);
+      registrar(usuario, 'Pagou saque pelo Asaas', `Saque #${s.id} de ${P.reais(s.valor_centavos)} (Pix de ${P.reais(liquido)}, taxa ${P.reais(s.taxa_centavos || 0)}) para ${s.chave_pix} · transferência ${t.id || '-'} (${t.status || '-'})`);
       return redirecionar(res, '/admin/saques?ok=1');
     } catch (e) {
       console.error('transferência asaas:', e.message);
@@ -981,7 +986,7 @@ rota('POST', '/admin/operacao/emails', exigeAdmin(async ({ req, res, usuario }) 
 }));
 
 rota('GET', '/admin/emails/previa', exigeAdmin(({ res, url }) => {
-  const etapa = ETAPAS.some((e) => e.chave === url.searchParams.get('etapa')) ? url.searchParams.get('etapa') : 'd1';
+  const etapa = [...ETAPAS.map((e) => e.chave), 'boasvindas'].includes(url.searchParams.get('etapa')) ? url.searchParams.get('etapa') : 'd1';
   const perfil = PERFIS.includes(url.searchParams.get('perfil')) ? url.searchParams.get('perfil') : 'geral';
   const m = montarEmail({ etapa, nome: 'Maria Silva', perfil, bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src * data:; style-src 'unsafe-inline'", 'X-Frame-Options': 'SAMEORIGIN' });
@@ -990,7 +995,7 @@ rota('GET', '/admin/emails/previa', exigeAdmin(({ res, url }) => {
 
 rota('POST', '/admin/emails/teste', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
-  const etapa = ETAPAS.some((e) => e.chave === f.etapa) ? f.etapa : 'd1';
+  const etapa = [...ETAPAS.map((e) => e.chave), 'boasvindas'].includes(f.etapa) ? f.etapa : 'd1';
   const perfil = PERFIS.includes(f.perfil) ? f.perfil : 'geral';
   try {
     const m = montarEmail({ etapa, nome: usuario.nome, perfil, bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
@@ -1055,7 +1060,7 @@ rota('GET', '/admin', exigeAdmin(async ({ res, usuario }) => {
     falhas: g("SELECT COUNT(*) n FROM consultas WHERE status='falhou'").n,
     faturamento: g("SELECT COALESCE(SUM(c.preco_centavos - c.comissao_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 0 AND u.interno = 0)").s,
     comissoes: g("SELECT COALESCE(SUM(comissao_centavos),0) s FROM consultas WHERE status='concluida'").s,
-    saquesPendentes: g("SELECT COALESCE(SUM(valor_centavos),0) s FROM saques WHERE status='pendente'").s,
+    saquesPendentes: g("SELECT COALESCE(SUM(valor_centavos - taxa_centavos),0) s FROM saques WHERE status='pendente'").s,
     qtdSaquesPendentes: g("SELECT COUNT(*) n FROM saques WHERE status='pendente'").n,
     custo: g("SELECT COALESCE(SUM(c.custo_centavos),0) s FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 0 AND u.interno = 0)").s,
     internas: g("SELECT COUNT(*) n FROM consultas c JOIN usuarios u ON u.id=c.usuario_id WHERE c.status='concluida' AND (u.admin = 1 OR u.interno = 1)").n,
@@ -1159,18 +1164,20 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
-  minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
+  minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
 
 rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = centavos(f.minimo), markup = Number(String(f.markup || '').replace(',', '.'));
-  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), erro: m }), usuario, 400);
   const dias = Number(f.dias);
   if (!Number.isInteger(dias) || dias < 1 || dias > 365) return erro('O prazo do histórico precisa ser entre 1 e 365 dias.');
   const comissaoMax = Number(f.comissao_maxima), saqueMin = centavos(f.saque_minimo);
   if (!Number.isInteger(comissaoMax) || comissaoMax < 0 || comissaoMax > 300) return erro('Comissão máxima inválida (0 a 300%).');
   if (!Number.isFinite(saqueMin) || saqueMin < 100) return erro('Saque mínimo inválido.');
+  const taxaS = Number(String(f.saque_taxa ?? '5').replace(',', '.'));
+  if (!Number.isFinite(taxaS) || taxaS < 0 || taxaS > 50) return erro('Taxa de saque inválida (0 a 50%).');
   const bpPct = Number(String(f.primeira_pct ?? '0').replace(',', '.')), bpMin = centavos(f.primeira_min || '0'), bpAte = /^\d{4}-\d{2}-\d{2}$/.test(f.primeira_ate || '') ? f.primeira_ate : '';
   if (!Number.isFinite(bpPct) || bpPct < 0 || bpPct > 100 || !Number.isFinite(bpMin) || bpMin < 0) return erro('Bônus de primeira recarga inválido.');
   const alerta = centavos(f.alerta_apifull);
@@ -1189,13 +1196,14 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('dias_historico', dias);
   gravarConfig('comissao_maxima', comissaoMax);
   gravarConfig('saque_minimo_centavos', saqueMin);
+  gravarConfig('saque_taxa_percentual', taxaS);
   gravarConfig('alerta_saldo_apifull_centavos', alerta);
   gravarConfig('bonus_primeira_percentual', bpPct);
   gravarConfig('bonus_primeira_minimo_centavos', bpMin);
   gravarConfig('bonus_primeira_ate', bpAte);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
-  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, alerta APIFull ${P.reais(alerta)}`);
+  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
   redirecionar(res, '/admin/config?ok=1');
 }));
 
@@ -1417,7 +1425,7 @@ rota('GET', '/admin/financeiro', exigeAdmin(async ({ res, usuario, url }) => {
       SELECT k.criado_em, 'Comissão', u.nome, k.descricao, k.valor_centavos, NULL FROM comissoes k JOIN usuarios u ON u.id = k.usuario_id
         WHERE k.tipo = 'comissao' AND date(k.criado_em, '-3 hours') BETWEEN ? AND ?
       UNION ALL
-      SELECT s.resolvido_em, 'Saque pago', u.nome, s.chave_pix, -s.valor_centavos, NULL FROM saques s JOIN usuarios u ON u.id = s.usuario_id
+      SELECT s.resolvido_em, 'Saque pago', u.nome, s.chave_pix, -(s.valor_centavos - s.taxa_centavos), NULL FROM saques s JOIN usuarios u ON u.id = s.usuario_id
         WHERE s.status = 'pago' AND date(s.resolvido_em, '-3 hours') BETWEEN ? AND ?
     ) ORDER BY quando DESC LIMIT 300`).all(ini, fim, ini, fim, ini, fim, ini, fim);
   pagina(res, 'Admin · Financeiro', PD.adminFinanceiro({

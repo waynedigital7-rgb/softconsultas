@@ -258,7 +258,7 @@ export function paginaPagarRecarga({ r }) {
 </div>`;
 }
 
-export function paginaIndicacoes({ link, usuario, indicados, extrato, saques, saldo, maximo, minimoSaque, ok, erro }) {
+export function paginaIndicacoes({ link, usuario, indicados, extrato, saques, saldo, maximo, minimoSaque, taxaSaque = 5, ok, erro }) {
   const pct = usuario.comissao_percentual ?? 30;
   const exemplo = 1458;
   const tipoTxt = { comissao: 'Comissão', saque: 'Saque', conversao: 'Conversão em créditos', estorno_saque: 'Saque devolvido' };
@@ -297,9 +297,9 @@ ${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso
     <div class="campo" style="margin:0;flex:0 1 160px"><label for="valor">Valor (R$)</label><input id="valor" name="valor" type="text" inputmode="decimal" placeholder="${(minimoSaque / 100).toFixed(2).replace('.', ',')}"></div>
     <button class="btn" type="submit" ${saldo >= minimoSaque ? '' : 'disabled'}>Solicitar saque</button>
   </form>
-  <p class="muted" style="font-size:.85rem;margin:10px 0 0">Saque mínimo de ${reais(minimoSaque)}. A chave Pix precisa ser do mesmo titular da conta.</p>
-  ${saques.length ? `<div class="rolar" style="margin-top:14px"><table class="tabela"><tr><th>Data</th><th>Valor</th><th>Status</th></tr>
-    ${saques.map((x) => `<tr><td>${dt(x.criado_em)}</td><td>${reais(x.valor_centavos)}</td><td>${statusSaque[x.status]}</td></tr>`).join('')}</table></div>` : ''}
+  <p class="muted" style="font-size:.85rem;margin:10px 0 0">Saque mínimo de ${reais(minimoSaque)}.${taxaSaque > 0 ? ` Taxa de saque: ${String(taxaSaque).replace('.', ',')}% (num saque de ${reais(10000)}, você recebe ${reais(Math.round(10000 * (1 - taxaSaque / 100)))}).` : ''} A chave Pix precisa ser do mesmo titular da conta. Só comissões podem ser sacadas; créditos de recarga são usados em consultas.</p>
+  ${saques.length ? `<div class="rolar" style="margin-top:14px"><table class="tabela"><tr><th>Data</th><th>Valor</th><th>Taxa</th><th>Você recebe</th><th>Status</th></tr>
+    ${saques.map((x) => `<tr><td>${dt(x.criado_em)}</td><td>${reais(x.valor_centavos)}</td><td>${reais(x.taxa_centavos || 0)}</td><td><strong>${reais(x.valor_centavos - (x.taxa_centavos || 0))}</strong></td><td>${statusSaque[x.status]}</td></tr>`).join('')}</table></div>` : ''}
 </div>
 <div class="cartao" style="margin-bottom:18px">
   <h3>Seus indicados (${indicados.length})</h3>

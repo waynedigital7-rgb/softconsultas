@@ -66,8 +66,8 @@ function moldura({ base, preheader, corpo, sair }) {
   </td></tr>
   <tr><td style="padding:28px 28px 8px;font-size:16px;line-height:1.55">${corpo}</td></tr>
   <tr><td style="padding:8px 28px 28px;font-size:12px;color:#7A7285;line-height:1.5">
-    Você recebeu este e-mail porque criou uma conta na Soft Consultas.<br>
-    <a href="${esc(sair)}" style="color:#7A7285">Não quero mais receber estes e-mails</a>
+    Você recebeu este e-mail porque criou uma conta na Soft Consultas.${sair ? `<br>
+    <a href="${esc(sair)}" style="color:#7A7285">Não quero mais receber estes e-mails</a>` : ''}
   </td></tr>
 </table></td></tr></table></body></html>`;
 }
@@ -83,6 +83,30 @@ export function montarEmail({ etapa, nome, perfil, bonus, base, sair, podeRespon
   const primeiro = esc(String(nome || '').trim().split(/\s+/)[0] || 'tudo bem');
   const utm = (c) => `?utm_source=email&utm_medium=automacao&utm_campaign=${c}`;
   const b = bonus?.ativo ? bonus : null;
+  if (etapa === 'boasvindas') {
+    return {
+      assunto: `Bem-vindo à Soft Consultas, ${primeiro}!`,
+      html: moldura({ base, sair: null, preheader: 'Sua conta está pronta. Veja como fazer sua primeira consulta.', corpo: `
+        <h1 style="font-size:22px;margin:0 0 12px">Sua conta está pronta, ${primeiro}!</h1>
+        <p>Agora você pode ${esc(p.gancho)} em poucos minutos, com relatório oficial em PDF.</p>
+        <p style="margin:6px 0"><strong>1.</strong> Recarregue via Pix (cai na hora).<br><strong>2.</strong> Escolha a consulta e digite o documento ou a placa.<br><strong>3.</strong> Receba o relatório em PDF.</p>
+        ${b ? caixaBonus(b) : ''}
+        ${botao(`${base}/painel${utm('boasvindas')}`, 'Acessar minha conta')}
+        <h2 style="font-size:18px;margin:26px 0 8px">Tudo o que você encontra na Soft Consultas</h2>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;font-size:15px">
+          ${[
+            ['💳', 'Crédito e negativações', 'Score, Serasa, SPC, Boa Vista, protestos, CADIN e dívidas no Banco Central.'],
+            ['🧾', 'Área Limpa Nome', 'Descubra em qual base seu nome (ou o do seu cliente) está negativado e o que negociar.'],
+            ['🚗', 'Veículos', 'Pela placa: leilão, sinistro, roubo e furto, débitos, multas, Renajud e recall.'],
+            ['🏢', 'Empresas (CNPJ)', 'Dados cadastrais, sócios, restrições e análise de crédito antes de vender a prazo.'],
+            ['👤', 'Pessoas (CPF)', 'Dados cadastrais e de contato atualizados, para localizar clientes e devedores.'],
+            ['📄', 'Relatório em PDF', 'Cada consulta gera o relatório oficial da fonte, pronto para baixar ou enviar.'],
+            ['🤝', 'Indique e ganhe', 'Compartilhe seu link e ganhe comissão em todas as consultas de quem você indicar.'],
+          ].map(([i, t, d]) => `<tr><td style="padding:8px 10px 8px 0;vertical-align:top;font-size:20px">${i}</td><td style="padding:8px 0;border-bottom:1px solid #EFEAF3"><strong>${t}</strong><br><span style="color:#5B5366;font-size:14px">${d}</span></td></tr>`).join('')}
+        </table>
+        <p style="font-size:14px;color:#5B5366;margin-top:18px">Sem mensalidade e sem fidelidade: você paga só pelas consultas que fizer. Guarde este e-mail: o acesso é sempre pelo site softconsultas.com com o seu e-mail e senha.</p>` }),
+    };
+  }
   if (etapa === 'd1') {
     return {
       assunto: b ? `${primeiro}, seu bônus de +${b.pct}% está esperando` : `${primeiro}, sua primeira consulta leva 2 minutos`,

@@ -249,6 +249,8 @@ db.exec(`
   );
 `);
 if (!colunas('saques').includes('asaas_transferencia_id')) db.exec('ALTER TABLE saques ADD COLUMN asaas_transferencia_id TEXT');
+// Taxa cobrada no saque de comissão (o Pix enviado é o valor menos a taxa)
+if (!colunas('saques').includes('taxa_centavos')) db.exec('ALTER TABLE saques ADD COLUMN taxa_centavos INTEGER NOT NULL DEFAULT 0');
 // Registro de alterações feitas no Admin (auditoria)
 db.exec(`
   CREATE TABLE IF NOT EXISTS registro_admin (
@@ -305,6 +307,7 @@ const padrao = {
   comissao_maxima: '100',
   alerta_saldo_apifull_centavos: '5000',
   saque_minimo_centavos: '5000',
+  saque_taxa_percentual: '5',
   repasse_ativo: '0',
   repasse_percentual: '20',
   repasse_minimo_centavos: '5000',

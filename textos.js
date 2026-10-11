@@ -11,6 +11,7 @@ export const TERMOS = `
 <h3>3. Créditos e pagamentos</h3>
 <p>As consultas são pagas com créditos adquiridos por Pix. O valor de cada consulta é exibido antes da confirmação. Créditos de bônus são promocionais e não podem ser sacados. Se uma consulta não for concluída por falha da fonte, o valor é devolvido automaticamente ao saldo.</p>
 <p>Créditos adquiridos e não utilizados podem ter reembolso solicitado pelo e-mail ${CONTATO}, descontadas as tarifas de pagamento, conforme a legislação de defesa do consumidor.</p>
+<p>Créditos de recarga não podem ser sacados na plataforma: são usados exclusivamente em consultas. Apenas comissões do programa de indicação podem ser sacadas por Pix, com desconto de uma taxa de saque informada na página de Indicações no momento da solicitação.</p>
 <h3>4. Uso permitido e finalidade das consultas</h3>
 <p>Ao realizar uma consulta, você declara uma finalidade legítima e garante possuir base legal para o tratamento dos dados, nos termos da Lei Geral de Proteção de Dados (Lei 13.709/2018), como proteção ao crédito, execução de contrato, prevenção a fraudes ou consulta dos seus próprios dados.</p>
 <p>É proibido usar a plataforma para: perseguir, assediar ou expor pessoas; discriminar; praticar fraudes; revender ou divulgar dados a terceiros sem autorização; ou qualquer finalidade ilegal. O uso indevido pode levar ao bloqueio imediato da conta, sem reembolso dos créditos, e à comunicação às autoridades.</p>

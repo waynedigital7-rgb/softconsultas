@@ -79,7 +79,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
 </form>`;
 }
 
-export function adminConfig({ minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, ok, erro }) {
+export function adminConfig({ minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, ok, erro }) {
   return `<h1 style="font-size:1.7rem">Configurações</h1>${menu('/admin/config')}${aviso(ok, erro)}
 <form class="cartao" method="post" action="/admin/config" style="max-width:640px">
   <div class="campo"><label for="markup">Margem sobre o custo APIFull (%)</label><input id="markup" name="markup" type="text" inputmode="numeric" value="${markup}">
@@ -101,6 +101,8 @@ export function adminConfig({ minimo, faixas, markup, dias = 10, comissaoMax = 1
     <small class="muted">Limite que cada usuário pode somar ao preço das consultas dos indicados.</small></div>
   <div class="campo"><label for="alerta_apifull">Avisar quando o saldo da APIFull ficar abaixo de (R$)</label><input id="alerta_apifull" name="alerta_apifull" type="text" inputmode="decimal" value="${(alerta / 100).toFixed(2).replace('.', ',')}"></div>
   <div class="campo"><label for="saque_minimo">Saque mínimo de comissões (R$)</label><input id="saque_minimo" name="saque_minimo" type="text" inputmode="decimal" value="${(saqueMin / 100).toFixed(2).replace('.', ',')}"></div>
+  <div class="campo"><label for="saque_taxa">Taxa sobre saque de comissões (%)</label><input id="saque_taxa" name="saque_taxa" type="text" inputmode="decimal" value="${taxaSaque}">
+    <small class="muted">Descontada do valor sacado: num saque de R$ 100 com 5%, o Pix enviado é de R$ 95. Recargas (depósitos) nunca podem ser sacadas, só comissões.</small></div>
   <button class="btn" type="submit">Salvar configurações</button>
 </form>`;
 }
@@ -174,16 +176,16 @@ ${resultado ? `<div class="aviso ok">${esc(resultado)}</div>` : ''}
 export function adminSaques({ saques, ok, erro }) {
   const st = { pendente: '<strong>Pendente</strong>', pago: '<span style="color:var(--ok);font-weight:700">Pago</span>', recusado: '<span style="color:var(--erro)">Recusado</span>' };
   return `<h1 style="font-size:1.7rem">Saques de comissão</h1>${menu('/admin/saques')}${aviso(ok, erro)}
-<p class="muted"><strong>Pagar via Asaas</strong> envia o Pix automaticamente da sua conta Asaas para a chave do usuário. Se preferir pagar por outro banco, faça o Pix e clique em <strong>Já paguei</strong>. Se recusar, o valor volta para o saldo de comissões do usuário. Antes de pagar, confira se a chave Pix é do mesmo titular (CPF/CNPJ) da conta.</p>
+<p class="muted"><strong>Pagar via Asaas</strong> envia o Pix automaticamente da sua conta Asaas para a chave do usuário. Se preferir pagar por outro banco, faça o Pix do valor da coluna <strong>Pix a enviar</strong> (já descontada a taxa) e clique em <strong>Já paguei</strong>. Se recusar, o valor volta para o saldo de comissões do usuário. Antes de pagar, confira se a chave Pix é do mesmo titular (CPF/CNPJ) da conta.</p>
 <div class="cartao"><div class="rolar"><table class="tabela">
-  <tr><th>#</th><th>Data</th><th>Usuário</th><th>Valor</th><th>Chave Pix</th><th>Status</th><th>Ação</th></tr>
+  <tr><th>#</th><th>Data</th><th>Usuário</th><th>Valor do saque</th><th>Taxa</th><th>Pix a enviar</th><th>Chave Pix</th><th>Status</th><th>Ação</th></tr>
   ${saques.map((x) => `<tr><td>${x.id}</td><td>${dt(x.criado_em)}</td><td>${esc(x.nome)}<br><span class="muted">${esc(formatarDoc(x.documento))}</span></td>
-    <td><strong>${reais(x.valor_centavos)}</strong></td><td><code>${esc(x.chave_pix)}</code></td><td>${st[x.status]}${x.observacao ? `<br><small class="muted">${esc(x.observacao)}</small>` : ''}</td>
+    <td>${reais(x.valor_centavos)}</td><td>${reais(x.taxa_centavos || 0)}</td><td><strong>${reais(x.valor_centavos - (x.taxa_centavos || 0))}</strong></td><td><code>${esc(x.chave_pix)}</code></td><td>${st[x.status]}${x.observacao ? `<br><small class="muted">${esc(x.observacao)}</small>` : ''}</td>
     <td>${x.status === 'pendente' ? `<form method="post" action="/admin/saques/resolver" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">
       <input type="hidden" name="id" value="${x.id}"><input type="text" name="obs" placeholder="Observação" aria-label="Observação" style="width:130px;min-height:40px;padding:8px">
-      <button class="btn" name="acao" value="asaas" style="min-height:40px;padding:8px 14px" data-confirmar="Enviar ${reais(x.valor_centavos)} por Pix pelo Asaas para a chave ${esc(x.chave_pix)}?">Pagar via Asaas</button>
+      <button class="btn" name="acao" value="asaas" style="min-height:40px;padding:8px 14px" data-confirmar="Enviar ${reais(x.valor_centavos - (x.taxa_centavos || 0))} por Pix pelo Asaas para a chave ${esc(x.chave_pix)}?">Pagar via Asaas</button>
       <button class="btn sec" name="acao" value="pagar" style="min-height:40px;padding:8px 14px">Já paguei</button>
-      <button class="btn sec" name="acao" value="recusar" style="min-height:40px;padding:8px 14px">Recusar</button></form>` : '-'}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhum saque solicitado.</td></tr>'}
+      <button class="btn sec" name="acao" value="recusar" style="min-height:40px;padding:8px 14px">Recusar</button></form>` : '-'}</td></tr>`).join('') || '<tr><td colspan="9" class="vazio">Nenhum saque solicitado.</td></tr>'}
 </table></div></div>`;
 }
 
@@ -445,9 +447,10 @@ ${repasses.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td><stron
 </form>
 <div class="cartao" style="max-width:720px;margin-bottom:18px">
   <h2 style="font-size:1.1rem;margin-top:0">Ver e testar os e-mails</h2>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${emails.etapasLista.map((e) => emails.perfis.map((pf) => `<a class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.78rem" target="_blank" rel="noopener" href="/admin/emails/previa?etapa=${e.chave}&perfil=${pf}">${e.chave.toUpperCase()} · ${pf}</a>`).join('')).join('')}</div>
+  <p class="muted" style="margin-top:0">O e-mail de <strong>boas-vindas</strong> é enviado sempre, logo após o cadastro (não depende do botão acima).</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${emails.perfis.map((pf) => `<a class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.78rem" target="_blank" rel="noopener" href="/admin/emails/previa?etapa=boasvindas&perfil=${pf}">BOAS-VINDAS · ${pf}</a>`).join('')}${emails.etapasLista.map((e) => emails.perfis.map((pf) => `<a class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.78rem" target="_blank" rel="noopener" href="/admin/emails/previa?etapa=${e.chave}&perfil=${pf}">${e.chave.toUpperCase()} · ${pf}</a>`).join('')).join('')}</div>
   <form method="post" action="/admin/emails/teste" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0">
-    <select name="etapa" aria-label="Etapa" style="min-height:40px">${emails.etapasLista.map((e) => `<option value="${e.chave}">${e.nome}</option>`).join('')}</select>
+    <select name="etapa" aria-label="Etapa" style="min-height:40px"><option value="boasvindas">Boas-vindas</option>${emails.etapasLista.map((e) => `<option value="${e.chave}">${e.nome}</option>`).join('')}</select>
     <select name="perfil" aria-label="Perfil" style="min-height:40px">${emails.perfis.map((pf) => `<option value="${pf}">${pf}</option>`).join('')}</select>
     <button class="btn sec">Enviar teste para o meu e-mail</button>
   </form>
