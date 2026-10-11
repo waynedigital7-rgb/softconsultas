@@ -13,6 +13,8 @@ import * as PD from './paginas-admin.js';
 import * as A from './auth.js';
 import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
+import { montarEmail, perfilDo, ETAPAS, PERFIS } from './emails-marketing.js';
+import { createHmac, randomBytes } from 'node:crypto';
 import { TERMOS, PRIVACIDADE } from './textos.js';
 import { PUBLICOS, paginaLanding } from './landings.js';
 
@@ -461,6 +463,64 @@ async function processarRepasse({ forcar = false, origem = 'automatico' } = {}) 
 }
 setInterval(() => processarRepasse().catch((e) => console.error('repasse:', e.message)), 30 * 60 * 1000).unref();
 
+
+// ======================= E-MAILS AUTOMÁTICOS (quem cadastrou e não recarregou) =======================
+// Segredo próprio (gerado uma vez e guardado no banco) para o link de descadastro
+if (!lerConfig('segredo_emails')) gravarConfig('segredo_emails', randomBytes(24).toString('hex'));
+const assinaturaSair = (uid) => createHmac('sha256', lerConfig('segredo_emails')).update(`sair:${uid}`).digest('hex').slice(0, 32);
+const linkSair = (uid) => `${process.env.URL_BASE || 'https://softconsultas.com'}/emails/sair?u=${uid}&t=${assinaturaSair(uid)}`;
+const baseEmails = () => process.env.URL_BASE || 'https://softconsultas.com';
+const emailsCfg = () => ({
+  ativo: lerConfig('emails_ativo') === '1',
+  desde: lerConfig('emails_desde') || '',
+  etapas: String(lerConfig('emails_etapas') || '').split(',').filter(Boolean),
+});
+let emailsRodando = false;
+async function processarEmails() {
+  const c = emailsCfg();
+  if (!c.ativo || !c.desde || emailsRodando || !process.env.RESEND_API_KEY) return;
+  emailsRodando = true;
+  try {
+    const bonus = bonusPrimeira();
+    for (const et of ETAPAS) {
+      if (!c.etapas.includes(et.chave)) continue;
+      // Só quem: cadastrou depois de ligar, ainda não pagou nenhuma recarga, aceita e-mails, está ativo e não é interno
+      const lista = db.prepare(`SELECT u.* FROM usuarios u
+        WHERE u.ativo = 1 AND u.admin = 0 AND u.interno = 0 AND u.aceita_emails = 1
+          AND u.criado_em >= ? AND u.criado_em <= datetime('now', ?)
+          AND u.criado_em >= datetime('now', '-30 days')
+          AND NOT EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')
+          AND NOT EXISTS (SELECT 1 FROM emails_enviados e WHERE e.usuario_id = u.id AND e.etapa = ?)
+          AND NOT EXISTS (SELECT 1 FROM emails_enviados e WHERE e.usuario_id = u.id AND e.criado_em > datetime('now', '-40 hours'))
+        ORDER BY u.id LIMIT 40`).all(c.desde, `-${et.horas} hours`, et.chave);
+      for (const u of lista) {
+        // Reserva antes de enviar: nunca manda a mesma etapa duas vezes
+        if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, et.chave, 'enviando').changes !== 1) continue;
+        try {
+          const m = montarEmail({ etapa: et.chave, nome: u.nome, perfil: perfilDo(u), bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
+          await enviarEmail({ para: u.email, assunto: m.assunto, html: m.html, cabecalhos: { 'List-Unsubscribe': `<${linkSair(u.id)}>` } });
+          db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, et.chave);
+        } catch (e) {
+          console.error('e-mail automático:', e.message);
+          db.prepare("UPDATE emails_enviados SET status = 'erro', erro = ? WHERE usuario_id = ? AND etapa = ?").run(String(e.message).slice(0, 300), u.id, et.chave);
+        }
+        await new Promise((r) => setTimeout(r, 700)); // ritmo suave para o provedor de e-mail
+      }
+    }
+  } finally { emailsRodando = false; }
+}
+setInterval(() => processarEmails().catch((e) => console.error('e-mails:', e.message)), 20 * 60 * 1000).unref();
+setTimeout(() => processarEmails().catch((e) => console.error('e-mails:', e.message)), 60 * 1000).unref();
+
+// Descadastro em um clique (link no rodapé de cada e-mail)
+rota('GET', '/emails/sair', ({ res, url }) => {
+  const uid = Number(url.searchParams.get('u'));
+  const ok = uid && url.searchParams.get('t') === assinaturaSair(uid);
+  if (ok) db.prepare('UPDATE usuarios SET aceita_emails = 0 WHERE id = ?').run(uid);
+  pagina(res, 'E-mails', P.paginaEmBreve(ok ? 'Pronto, você não vai mais receber estes e-mails' : 'Link inválido',
+    ok ? 'Sua conta continua ativa normalmente. Avisos importantes (como recuperação de senha) continuam chegando.' : 'Abra o link direto do e-mail que você recebeu.'), null, ok ? 200 : 400);
+});
+
 const dadosRecarga = (usuario) => ({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(),
   primeira: bonusPrimeira().ativo && ehPrimeiraRecarga(usuario.id) ? bonusPrimeira() : null, pedirDocumento: !usuario.documento });
 rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => pagina(res, 'Recarregar', PA.paginaRecarregar(dadosRecarga(usuario)), usuario)));
@@ -837,6 +897,10 @@ rota('GET', '/admin/operacao', exigeAdmin(async ({ res, usuario, url }) => {
   pagina(res, 'Admin · Operação', PD.adminOperacao({
     aviso: lerConfig('aviso_geral') || '', pausadas: lerConfig('consultas_pausadas') === '1', repasse: repasseCfg(), acumulado: repasseAcumulado(),
     repasses: db.prepare('SELECT * FROM repasses_apifull ORDER BY id DESC LIMIT 100').all(), saldoApiFull: await saldoApiFull(), saldoAsaas,
+    emails: { ...emailsCfg(), etapasLista: ETAPAS, perfis: PERFIS, temChave: !!process.env.RESEND_API_KEY,
+      enviados: db.prepare("SELECT etapa, status, COUNT(*) n FROM emails_enviados GROUP BY etapa, status").all(),
+      descadastrados: db.prepare('SELECT COUNT(*) n FROM usuarios WHERE aceita_emails = 0').get().n,
+      recargasDepois: db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN recargas r ON r.usuario_id = e.usuario_id AND r.status = 'paga' AND r.pago_em > e.criado_em WHERE e.status = 'enviado'`).get().n },
     ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '',
   }), usuario);
 }));
@@ -897,6 +961,45 @@ rota('POST', '/admin/operacao/repasse-tentar', exigeAdmin(async ({ req, res, usu
   redirecionar(res, ['pago', 'enviado'].includes(st.status) ? `/admin/operacao?ok=${encodeURIComponent(`Repasse #${rp.id} pago.`)}` : `/admin/operacao?erro=${encodeURIComponent(`Repasse #${rp.id} falhou de novo: ${st.erro || ''}`)}`);
 }));
 
+
+// ---- Admin: e-mails automáticos ----
+rota('POST', '/admin/operacao/emails', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const etapas = ETAPAS.map((e) => e.chave).filter((k) => f[`etapa_${k}`] === '1');
+  const ligar = f.ativo === '1', estava = lerConfig('emails_ativo') === '1';
+  if (ligar && !process.env.RESEND_API_KEY) return redirecionar(res, `/admin/operacao?erro=${encodeURIComponent('Falta a RESEND_API_KEY no Render: sem ela nenhum e-mail sai.')}`);
+  if (ligar && !estava) {
+    // Ao ligar: incluir quem se cadastrou nos últimos 7 dias (opcional) ou só os novos daqui pra frente
+    const desde = db.prepare(`SELECT datetime('now', ?) AS d`).get(f.incluir_recentes === '1' ? '-7 days' : '+0 seconds').d;
+    gravarConfig('emails_desde', desde);
+  }
+  gravarConfig('emails_ativo', ligar ? '1' : '0');
+  gravarConfig('emails_etapas', etapas.join(','));
+  registrar(usuario, 'Alterou e-mails automáticos', `${ligar ? 'LIGADO' : 'desligado'} · etapas: ${etapas.join(', ') || 'nenhuma'}${ligar && !estava && f.incluir_recentes === '1' ? ' · incluiu cadastros dos últimos 7 dias' : ''}`);
+  if (ligar) processarEmails().catch((e) => console.error('e-mails:', e.message));
+  redirecionar(res, `/admin/operacao?ok=${encodeURIComponent('E-mails automáticos salvos.')}`);
+}));
+
+rota('GET', '/admin/emails/previa', exigeAdmin(({ res, url }) => {
+  const etapa = ETAPAS.some((e) => e.chave === url.searchParams.get('etapa')) ? url.searchParams.get('etapa') : 'd1';
+  const perfil = PERFIS.includes(url.searchParams.get('perfil')) ? url.searchParams.get('perfil') : 'geral';
+  const m = montarEmail({ etapa, nome: 'Maria Silva', perfil, bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src * data:; style-src 'unsafe-inline'", 'X-Frame-Options': 'SAMEORIGIN' });
+  res.end(`<div style="font-family:Arial;padding:10px 16px;background:#0F0C14;color:#fff">Assunto: <strong>${P.esc(m.assunto)}</strong></div>${m.html}`);
+}));
+
+rota('POST', '/admin/emails/teste', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const etapa = ETAPAS.some((e) => e.chave === f.etapa) ? f.etapa : 'd1';
+  const perfil = PERFIS.includes(f.perfil) ? f.perfil : 'geral';
+  try {
+    const m = montarEmail({ etapa, nome: usuario.nome, perfil, bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+    await enviarEmail({ para: usuario.email, assunto: `[TESTE] ${m.assunto}`, html: m.html });
+    redirecionar(res, `/admin/operacao?ok=${encodeURIComponent(`E-mail de teste enviado para ${usuario.email}.`)}`);
+  } catch (e) {
+    redirecionar(res, `/admin/operacao?erro=${encodeURIComponent(`Falha ao enviar: ${e.message}`)}`);
+  }
+}));
 // Bloquear / reativar cliente (bloqueado não entra e é desconectado na hora)
 rota('POST', '/admin/clientes/ativo', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);

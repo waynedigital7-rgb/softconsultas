@@ -1,0 +1,119 @@
+// E-mails automáticos para quem se cadastrou e ainda não fez a primeira recarga
+// Cada e-mail é adaptado ao perfil do cliente (de onde ele veio: limpa nome, veículos, empresas, advogados)
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const reais = (c) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+export const PERFIS = ['limpa-nome', 'veiculos', 'empresas', 'advogados', 'geral'];
+export function perfilDo(u) {
+  const t = `${u.origem || ''} ${u.utm_campaign || ''} ${u.pagina_entrada || ''}`.toLowerCase();
+  if (/limpa|negativ|serasa|nome/.test(t)) return 'limpa-nome';
+  if (/veicul|placa|carro|leil/.test(t)) return 'veiculos';
+  if (/advog|devedor|jur/.test(t)) return 'advogados';
+  if (/empresa|cnpj|credito|crédito/.test(t)) return 'empresas';
+  return 'geral';
+}
+
+// Conteúdo por perfil
+const P = {
+  'limpa-nome': {
+    gancho: 'descobrir em qual base seu nome está negativado',
+    bases: ['Serasa, SPC e Boa Vista', 'Banco Central (dívidas bancárias)', 'Protestos em cartório e CADIN'],
+    exemplo: 'Você digita o CPF e, em minutos, recebe um PDF com as dívidas registradas no seu nome. Com isso você sabe exatamente o que negociar para limpar o nome.',
+    link: '/consultas', cta: 'Consultar meu CPF',
+  },
+  veiculos: {
+    gancho: 'conferir a placa antes de fechar negócio',
+    bases: ['Leilão e sinistro (perda total)', 'Roubo e furto, Renajud e restrições', 'Débitos de IPVA, multas e recall'],
+    exemplo: 'Carro de leilão ou com sinistro costuma valer bem menos na revenda e pode ter seguro recusado. Com a placa você descobre isso em minutos, antes de pagar.',
+    link: '/consultas/categoria/veiculos', cta: 'Consultar uma placa',
+  },
+  empresas: {
+    gancho: 'analisar um cliente antes de vender a prazo',
+    bases: ['Score e restrições do CPF ou CNPJ', 'Protestos e pendências financeiras', 'Dados cadastrais e sócios'],
+    exemplo: 'Antes de liberar um boleto ou um parcelamento, uma consulta de crédito mostra se o cliente tem dívidas em aberto. Um único calote evitado paga meses de consultas.',
+    link: '/consultas', cta: 'Analisar um cliente',
+  },
+  advogados: {
+    gancho: 'localizar devedores e bens para seus processos',
+    bases: ['Endereços e telefones atualizados', 'Veículos e vínculos empresariais', 'Score, protestos e restrições'],
+    exemplo: 'Na fase de execução, localizar o devedor e o patrimônio é o que faz o processo andar. Os relatórios saem em PDF, prontos para anexar.',
+    link: '/consultas', cta: 'Fazer uma consulta',
+  },
+  geral: {
+    gancho: 'consultar CPF, CNPJ e veículos em minutos',
+    bases: ['Crédito, score e negativações', 'Dados cadastrais de pessoas e empresas', 'Histórico de veículos pela placa'],
+    exemplo: 'Você escolhe a consulta, digita o documento ou a placa e recebe o relatório oficial em PDF na hora. Sem mensalidade: paga só o que usar.',
+    link: '/consultas', cta: 'Ver as consultas',
+  },
+};
+
+// Etapas da sequência (horas depois do cadastro)
+export const ETAPAS = [
+  { chave: 'd1', horas: 24, nome: '1 dia depois' },
+  { chave: 'd3', horas: 72, nome: '3 dias depois' },
+  { chave: 'd7', horas: 168, nome: '7 dias depois' },
+];
+
+function moldura({ base, preheader, corpo, sair }) {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
+<body style="margin:0;padding:0;background:#F4F1F7">
+<span style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</span>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F4F1F7;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:18px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
+  <tr><td style="background:#0F0C14;padding:20px 28px">
+    <img src="${base}/icone-branco.png" width="28" height="28" alt="" style="vertical-align:middle">
+    <span style="color:#ffffff;font-weight:bold;font-size:18px;vertical-align:middle;margin-left:8px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span></span>
+  </td></tr>
+  <tr><td style="padding:28px 28px 8px;font-size:16px;line-height:1.55">${corpo}</td></tr>
+  <tr><td style="padding:8px 28px 28px;font-size:12px;color:#7A7285;line-height:1.5">
+    Você recebeu este e-mail porque criou uma conta na Soft Consultas.<br>
+    <a href="${esc(sair)}" style="color:#7A7285">Não quero mais receber estes e-mails</a>
+  </td></tr>
+</table></td></tr></table></body></html>`;
+}
+const botao = (href, texto) => `<p style="margin:24px 0"><a href="${esc(href)}" style="display:inline-block;background:#9F31D3;color:#ffffff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold;font-size:16px">${esc(texto)}</a></p>`;
+const lista = (itens) => `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px">${itens.map((i) => `<tr><td style="padding:4px 10px 4px 0;color:#9F31D3;font-weight:bold;vertical-align:top">✓</td><td style="padding:4px 0">${esc(i)}</td></tr>`).join('')}</table>`;
+const caixaBonus = (b) => `<div style="background:#F6ECFC;border:1px solid #E3C6F4;border-radius:14px;padding:14px 16px;margin:18px 0">
+  <strong style="color:#7A1FA8">+${b.pct}% de bônus na primeira recarga</strong><br>
+  <span style="font-size:14px">Recarregando ${reais(b.min)} via Pix, você recebe ${reais(Math.round(b.min * (1 + b.pct / 100)))} em créditos${b.ate ? `. Válido até ${b.ate.split('-').reverse().join('/')}` : ''}.</span></div>`;
+
+// Monta { assunto, html } para uma etapa
+export function montarEmail({ etapa, nome, perfil, bonus, base, sair, podeResponder = false }) {
+  const p = P[perfil] || P.geral;
+  const primeiro = esc(String(nome || '').trim().split(/\s+/)[0] || 'tudo bem');
+  const utm = (c) => `?utm_source=email&utm_medium=automacao&utm_campaign=${c}`;
+  const b = bonus?.ativo ? bonus : null;
+  if (etapa === 'd1') {
+    return {
+      assunto: b ? `${primeiro}, seu bônus de +${b.pct}% está esperando` : `${primeiro}, sua primeira consulta leva 2 minutos`,
+      html: moldura({ base, sair, preheader: `Veja como ${p.gancho} em poucos minutos.`, corpo: `
+        <h1 style="font-size:22px;margin:0 0 12px">Oi, ${primeiro}! Falta só um passo.</h1>
+        <p>Sua conta na Soft Consultas está pronta para ${esc(p.gancho)}. Funciona assim:</p>
+        <p style="margin:6px 0"><strong>1.</strong> Recarregue via Pix (cai na hora).<br><strong>2.</strong> Escolha a consulta e digite o documento ou a placa.<br><strong>3.</strong> Receba o relatório oficial em PDF.</p>
+        ${b ? caixaBonus(b) : ''}
+        ${botao(`${base}/recarregar${utm('seq_d1')}`, b ? 'Recarregar com bônus' : 'Fazer minha primeira recarga')}
+        <p style="font-size:14px;color:#5B5366">Sem mensalidade e sem fidelidade: você paga só pelas consultas que fizer.</p>` }),
+    };
+  }
+  if (etapa === 'd3') {
+    return {
+      assunto: `O que você descobre com uma consulta na Soft`,
+      html: moldura({ base, sair, preheader: p.exemplo.slice(0, 90), corpo: `
+        <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, veja o que aparece no relatório</h1>
+        <p>${esc(p.exemplo)}</p>
+        <p style="margin-bottom:0"><strong>O que você consulta:</strong></p>
+        ${lista(p.bases)}
+        ${botao(`${base}${p.link}${utm('seq_d3')}`, p.cta)}
+        <p style="font-size:14px;color:#5B5366">Seus dados e os das suas consultas ficam protegidos e o histórico é apagado automaticamente depois de alguns dias (LGPD).</p>` }),
+    };
+  }
+  // d7: última chamada
+  return {
+    assunto: b ? `Última chamada: +${b.pct}% na sua primeira recarga` : `${primeiro}, ainda podemos ajudar?`,
+    html: moldura({ base, sair, preheader: b ? 'Seu bônus de primeira recarga ainda está disponível.' : 'Se tiver qualquer dúvida, estamos aqui para ajudar.', corpo: `
+      <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, sua conta continua pronta</h1>
+      <p>Faz uma semana que você criou sua conta e ainda não fez a primeira consulta. Se ficou alguma dúvida sobre preço, segurança ou qual consulta escolher, ${podeResponder ? 'é só responder este e-mail' : 'fale com a gente pelo site'}.</p>
+      ${b ? caixaBonus(b) : ''}
+      ${botao(`${base}/recarregar${utm('seq_d7')}`, b ? 'Usar meu bônus agora' : 'Fazer minha primeira consulta')}` }),
+  };
+}

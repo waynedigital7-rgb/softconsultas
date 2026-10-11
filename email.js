@@ -1,13 +1,14 @@
 // Envio de e-mails pelo Resend
-export async function enviarEmail({ para, assunto, html }) {
+export async function enviarEmail({ para, assunto, html, cabecalhos }) {
   if (!process.env.RESEND_API_KEY) {
     console.log(`[e-mail não enviado: RESEND_API_KEY ausente] Para: ${para} | ${assunto}\n${html}`);
     return;
   }
-  const r = await fetch('https://api.resend.com/emails', {
+  const r = await fetch(process.env.RESEND_URL || 'https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-    body: JSON.stringify({ from: process.env.EMAIL_REMETENTE, to: [para], subject: assunto, html }),
+    body: JSON.stringify({ from: process.env.EMAIL_REMETENTE, to: [para], subject: assunto, html,
+      ...(process.env.EMAIL_RESPOSTA ? { reply_to: process.env.EMAIL_RESPOSTA } : {}), ...(cabecalhos ? { headers: cabecalhos } : {}) }),
   });
   if (!r.ok) throw new Error(`Erro no e-mail: ${r.status} ${await r.text()}`);
 }

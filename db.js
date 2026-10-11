@@ -275,6 +275,19 @@ db.exec(`
   );
 `);
 if (!colunas('recargas').includes('repasse_id')) db.exec('ALTER TABLE recargas ADD COLUMN repasse_id INTEGER');
+// E-mails automáticos (sequência para quem ainda não recarregou)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS emails_enviados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    etapa TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'enviado',
+    erro TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_email_etapa ON emails_enviados(usuario_id, etapa);
+`);
+if (!colunas('usuarios').includes('aceita_emails')) db.exec('ALTER TABLE usuarios ADD COLUMN aceita_emails INTEGER NOT NULL DEFAULT 1');
 export const registrar = (usuario, acao, detalhe = '') =>
   db.prepare('INSERT INTO registro_admin (admin_email, acao, detalhe) VALUES (?, ?, ?)').run(usuario?.email || 'sistema', acao, String(detalhe).slice(0, 1000));
 
@@ -298,6 +311,9 @@ const padrao = {
   repasse_desde: '',
   aviso_geral: '',
   consultas_pausadas: '0',
+  emails_ativo: '0',
+  emails_desde: '',
+  emails_etapas: 'd1,d3,d7',
   bonus_faixas: JSON.stringify([{ a_partir_de: 10000, percentual: 5 }, { a_partir_de: 30000, percentual: 10 }]),
 };
 for (const [k, v] of Object.entries(padrao)) db.prepare('INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)').run(k, v);

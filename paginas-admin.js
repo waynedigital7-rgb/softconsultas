@@ -400,7 +400,7 @@ export function adminCampanhas({ ini, fim, linhas, rastreio, base }) {
 </div>`;
 }
 
-export function adminOperacao({ aviso: texto, pausadas, repasse, acumulado, repasses, saldoApiFull, saldoAsaas, ok, erro }) {
+export function adminOperacao({ aviso: texto, pausadas, repasse, acumulado, repasses, saldoApiFull, saldoAsaas, emails, ok, erro }) {
   const st = { pago: '<span style="color:var(--ok);font-weight:700">Pago</span>', erro: '<span style="color:var(--erro);font-weight:700">Falhou</span>', processando: 'Processando', enviado: '<span style="color:#9A6B00;font-weight:700">Enviado ao Asaas</span>', cancelado: '<span class="muted">Cancelado</span>' };
   return `<h1 style="font-size:1.7rem">Operação</h1>${menu('/admin/operacao')}${aviso(ok, erro)}
 <div class="grade" style="margin-bottom:18px">
@@ -428,6 +428,30 @@ ${repasses.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td><stron
   <td>${r.status === 'erro' ? `<form method="post" action="/admin/operacao/repasse-tentar" style="display:flex;gap:6px;margin:0"><input type="hidden" name="id" value="${r.id}"><button class="btn sec" name="acao" value="tentar" style="min-height:32px;padding:4px 10px;font-size:.8rem">Tentar de novo</button><button class="btn sec" name="acao" value="cancelar" style="min-height:32px;padding:4px 10px;font-size:.8rem">Cancelar</button></form>` : ''}</td></tr>`).join('')}</table></div>` : '<p class="muted">Nenhum repasse ainda.</p>'}
 </div>
 
+
+<form class="cartao" method="post" action="/admin/operacao/emails" style="max-width:720px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">E-mails automáticos</h2>
+  <p class="muted" style="margin-top:0">Para quem se cadastrou e <strong>ainda não fez a primeira recarga</strong>. O texto se adapta ao perfil (limpa nome, veículos, empresas, advogados) e cita o bônus de primeira recarga quando ele está ativo. Quem recarrega para de receber na hora. Todo e-mail tem link para descadastrar.</p>
+  ${emails.temChave ? '' : '<div class="aviso erro">Falta a <code>RESEND_API_KEY</code> no Render: sem ela nenhum e-mail sai.</div>'}
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:12px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${emails.ativo ? 'checked' : ''} style="width:22px;height:22px"> E-mails automáticos ligados</label>
+  ${emails.ativo ? `<p class="muted" style="margin-top:-4px">Ligado desde ${dt(emails.desde)} (só cadastros a partir dessa data).</p>` : `<label style="display:flex;gap:10px;align-items:center;margin-bottom:12px"><input type="checkbox" name="incluir_recentes" value="1" style="width:20px;height:20px"> Ao ligar, incluir quem se cadastrou nos últimos 7 dias</label>`}
+  <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px">${emails.etapasLista.map((e) => {
+    const env = emails.enviados.filter((x) => x.etapa === e.chave);
+    const n = (st) => env.find((x) => x.status === st)?.n || 0;
+    return `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="etapa_${e.chave}" value="1" ${emails.etapas.includes(e.chave) ? 'checked' : ''} style="width:20px;height:20px"> ${e.nome} <span class="muted" style="font-size:.85rem">(${n('enviado')} enviados${n('erro') ? `, ${n('erro')} com erro` : ''})</span></label>`;
+  }).join('')}</div>
+  <p class="muted">Recarregaram depois de receber um e-mail: <strong>${emails.recargasDepois}</strong> · Descadastrados: ${emails.descadastrados}</p>
+  <button class="btn" type="submit">Salvar e-mails automáticos</button>
+</form>
+<div class="cartao" style="max-width:720px;margin-bottom:18px">
+  <h2 style="font-size:1.1rem;margin-top:0">Ver e testar os e-mails</h2>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${emails.etapasLista.map((e) => emails.perfis.map((pf) => `<a class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.78rem" target="_blank" rel="noopener" href="/admin/emails/previa?etapa=${e.chave}&perfil=${pf}">${e.chave.toUpperCase()} · ${pf}</a>`).join('')).join('')}</div>
+  <form method="post" action="/admin/emails/teste" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0">
+    <select name="etapa" aria-label="Etapa" style="min-height:40px">${emails.etapasLista.map((e) => `<option value="${e.chave}">${e.nome}</option>`).join('')}</select>
+    <select name="perfil" aria-label="Perfil" style="min-height:40px">${emails.perfis.map((pf) => `<option value="${pf}">${pf}</option>`).join('')}</select>
+    <button class="btn sec">Enviar teste para o meu e-mail</button>
+  </form>
+</div>
 <form class="cartao" method="post" action="/admin/operacao/aviso" style="max-width:720px">
   <h2 style="font-size:1.2rem;margin-top:0">Aviso geral e manutenção</h2>
   <div class="campo"><label for="aviso">Aviso no topo para todos os clientes logados</label><input id="aviso" name="aviso" type="text" maxlength="300" value="${esc(texto)}" placeholder="Ex.: Instabilidade na base de veículos. Já estamos resolvendo.">
