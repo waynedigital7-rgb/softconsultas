@@ -455,6 +455,18 @@ ${repasses.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td><stron
     <button class="btn sec">Enviar teste para o meu e-mail</button>
   </form>
 </div>
+
+${(emails.campanhas || []).map((c) => `<form class="cartao" method="post" action="/admin/emails/campanha" style="max-width:720px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Campanha de e-mail: ${esc(c.nome)}</h2>
+  <p class="muted" style="margin-top:0">Disparo único: cada cliente recebe esta campanha uma vez só. Respeita quem se descadastrou. Enviados: <strong>${c.enviados}</strong>${c.erros ? ` · com erro: ${c.erros}` : ''} · fizeram a consulta depois do e-mail: <strong>${c.consultaram}</strong>${c.rodando ? ' · <strong style="color:var(--ok)">enviando agora…</strong>' : ''}</p>
+  <input type="hidden" name="c" value="${c.chave}">
+  <p style="margin:0 0 12px"><a class="btn sec" style="min-height:34px;padding:6px 14px;font-size:.85rem" target="_blank" rel="noopener" href="/admin/emails/campanha/previa?c=${c.chave}">Ver prévia do e-mail</a>
+    <button class="btn sec" name="acao" value="teste" style="min-height:34px;padding:6px 14px;font-size:.85rem">Enviar teste para o meu e-mail</button></p>
+  <div class="campo"><label for="publico-${c.chave}">Para quem enviar</label>
+    <select id="publico-${c.chave}" name="publico" style="min-height:44px">${Object.entries(emails.publicosCampanha).map(([k, n]) => `<option value="${k}">${esc(n)} (${c.pendentes[k]} a receber)</option>`).join('')}</select></div>
+  <div class="campo"><label for="confirmar-${c.chave}">Digite <strong>ENVIAR</strong> para confirmar o disparo</label><input id="confirmar-${c.chave}" name="confirmar" type="text" autocomplete="off" style="max-width:200px"></div>
+  <button class="btn" name="acao" value="enviar" ${c.rodando ? 'disabled' : ''}>Disparar campanha</button>
+</form>`).join('')}
 <form class="cartao" method="post" action="/admin/operacao/aviso" style="max-width:720px">
   <h2 style="font-size:1.2rem;margin-top:0">Aviso geral e manutenção</h2>
   <div class="campo"><label for="aviso">Aviso no topo para todos os clientes logados</label><input id="aviso" name="aviso" type="text" maxlength="300" value="${esc(texto)}" placeholder="Ex.: Instabilidade na base de veículos. Já estamos resolvendo.">

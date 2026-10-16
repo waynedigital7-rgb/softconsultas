@@ -13,7 +13,7 @@ import * as PD from './paginas-admin.js';
 import * as A from './auth.js';
 import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
-import { montarEmail, perfilDo, ETAPAS, PERFIS } from './emails-marketing.js';
+import { montarEmail, perfilDo, ETAPAS, PERFIS, CAMPANHAS, montarCampanha } from './emails-marketing.js';
 import { createHmac, randomBytes } from 'node:crypto';
 import { TERMOS, PRIVACIDADE } from './textos.js';
 import { PUBLICOS, paginaLanding } from './landings.js';
@@ -211,7 +211,13 @@ function acharRota(metodo, caminho) {
   }
   return null;
 }
-const exigeLogin = (fn) => async (ctx) => (ctx.usuario ? fn(ctx) : redirecionar(ctx.res, '/entrar'));
+// Sem login: guarda a página pedida (ex.: link de e-mail) para voltar a ela depois de entrar
+const exigeLogin = (fn) => async (ctx) => {
+  if (ctx.usuario) return fn(ctx);
+  const destino = ctx.req.method === 'GET' ? `${ctx.url.pathname}${ctx.url.search}` : '';
+  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
+  return redirecionar(ctx.res, '/entrar', ok ? { 'Set-Cookie': `sc_voltar=${encodeURIComponent(destino)}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax` } : {});
+};
 const exigeAdmin = (fn) => async (ctx) => (ctx.usuario?.admin ? fn(ctx) : redirecionar(ctx.res, ctx.usuario ? '/painel' : '/entrar'));
 
 function codigoUnico() {
@@ -288,7 +294,9 @@ rota('POST', '/entrar', async ({ req, res }) => {
   if (!u || !A.conferirSenha(String(f.senha || ''), u.senha_hash)) return erro('E-mail ou senha incorretos.', 401);
   if (!u.ativo) return erro('Esta conta está desativada. Fale com o suporte.', 403);
   A.limparLimite(`login:${email}`);
-  redirecionar(res, '/painel', { 'Set-Cookie': A.cookieSessao(A.criarSessao(u.id), ehHttps(req)) });
+  const voltar = String(cookies(req).sc_voltar || '');
+  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
+  redirecionar(res, destinoOk, { 'Set-Cookie': [A.cookieSessao(A.criarSessao(u.id), ehHttps(req)), 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
 rota('POST', '/sair', ({ req, res, token }) => {
@@ -905,6 +913,12 @@ rota('GET', '/admin/operacao', exigeAdmin(async ({ res, usuario, url }) => {
     emails: { ...emailsCfg(), etapasLista: ETAPAS, perfis: PERFIS, temChave: !!process.env.RESEND_API_KEY,
       enviados: db.prepare("SELECT etapa, status, COUNT(*) n FROM emails_enviados GROUP BY etapa, status").all(),
       descadastrados: db.prepare('SELECT COUNT(*) n FROM usuarios WHERE aceita_emails = 0').get().n,
+      campanhas: Object.entries(CAMPANHAS).map(([k, c]) => ({ chave: k, nome: c.nome, rodando: campanhaRodando.has(k),
+        enviados: db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE etapa = ? AND status = 'enviado'").get(`camp:${k}`).n,
+        erros: db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE etapa = ? AND status = 'erro'").get(`camp:${k}`).n,
+        pendentes: Object.fromEntries(Object.keys(PUBLICOS_CAMPANHA).map((p) => [p, listaCampanha(k, p).length])),
+        consultaram: db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN consultas c ON c.usuario_id = e.usuario_id AND c.status = 'concluida' AND c.criado_em > e.criado_em AND c.produto_id = (SELECT id FROM produtos WHERE slug = ?) WHERE e.etapa = ? AND e.status = 'enviado'`).get(c.produto, `camp:${k}`).n })),
+      publicosCampanha: Object.fromEntries(Object.entries(PUBLICOS_CAMPANHA).map(([k, v]) => [k, v.nome])),
       recargasDepois: db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN recargas r ON r.usuario_id = e.usuario_id AND r.status = 'paga' AND r.pago_em > e.criado_em WHERE e.status = 'enviado'`).get().n },
     ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '',
   }), usuario);
@@ -967,6 +981,74 @@ rota('POST', '/admin/operacao/repasse-tentar', exigeAdmin(async ({ req, res, usu
 }));
 
 
+
+// ---- Campanhas de e-mail avulsas (disparo manual pelo Admin) ----
+// Cada cliente recebe cada campanha uma única vez (registrado em emails_enviados com etapa "camp:<chave>")
+const PUBLICOS_CAMPANHA = {
+  todos: { nome: 'Todos os clientes', sql: '1=1' },
+  sem_recarga: { nome: 'Quem ainda não recarregou', sql: "NOT EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')" },
+  com_recarga: { nome: 'Quem já recarregou', sql: "EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')" },
+};
+const listaCampanha = (chave, publico, limite = 100000) => db.prepare(`SELECT u.* FROM usuarios u
+  WHERE u.ativo = 1 AND u.admin = 0 AND u.interno = 0 AND u.aceita_emails = 1 AND (${PUBLICOS_CAMPANHA[publico].sql})
+    AND NOT EXISTS (SELECT 1 FROM emails_enviados e WHERE e.usuario_id = u.id AND e.etapa = ?)
+  ORDER BY u.id LIMIT ?`).all(`camp:${chave}`, limite);
+const produtoCampanha = (chave) => db.prepare('SELECT * FROM produtos WHERE slug = ?').get(CAMPANHAS[chave].produto);
+const campanhaRodando = new Set();
+async function dispararCampanha(chave, publico, admin) {
+  if (campanhaRodando.has(chave)) return;
+  campanhaRodando.add(chave);
+  let ok = 0, falhas = 0;
+  try {
+    const produto = produtoCampanha(chave), bonus = bonusPrimeira();
+    for (const u of listaCampanha(chave, publico)) {
+      if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, `camp:${chave}`, 'enviando').changes !== 1) continue;
+      try {
+        const m = montarCampanha({ chave, nome: u.nome, produto, bonus: publico === 'com_recarga' ? null : bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
+        await enviarEmail({ para: u.email, assunto: m.assunto, html: m.html, cabecalhos: { 'List-Unsubscribe': `<${linkSair(u.id)}>` } });
+        db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, `camp:${chave}`);
+        ok++;
+      } catch (e) {
+        falhas++;
+        db.prepare("UPDATE emails_enviados SET status = 'erro', erro = ? WHERE usuario_id = ? AND etapa = ?").run(String(e.message).slice(0, 300), u.id, `camp:${chave}`);
+      }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  } finally {
+    campanhaRodando.delete(chave);
+    registrar(admin, 'Campanha de e-mail concluída', `${CAMPANHAS[chave].nome} · público: ${PUBLICOS_CAMPANHA[publico].nome} · ${ok} enviados${falhas ? `, ${falhas} com erro` : ''}`);
+  }
+}
+
+rota('GET', '/admin/emails/campanha/previa', exigeAdmin(({ res, url }) => {
+  const chave = CAMPANHAS[url.searchParams.get('c')] ? url.searchParams.get('c') : 'cpf-credplus';
+  const m = montarCampanha({ chave, nome: 'Maria Silva', produto: produtoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src * data:; style-src 'unsafe-inline'", 'X-Frame-Options': 'SAMEORIGIN' });
+  res.end(`<div style="font-family:Arial;padding:10px 16px;background:#0F0C14;color:#fff">Assunto: <strong>${P.esc(m.assunto)}</strong></div>${m.html}`);
+}));
+
+rota('POST', '/admin/emails/campanha', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const chave = CAMPANHAS[f.c] ? f.c : null;
+  const publico = PUBLICOS_CAMPANHA[f.publico] ? f.publico : 'todos';
+  const volta = (m, ok) => redirecionar(res, `/admin/operacao?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  if (!chave) return volta('Campanha inválida.');
+  if (!process.env.RESEND_API_KEY) return volta('Falta a RESEND_API_KEY no Render: sem ela nenhum e-mail sai.');
+  if (f.acao === 'teste') {
+    try {
+      const m = montarCampanha({ chave, nome: usuario.nome, produto: produtoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+      await enviarEmail({ para: usuario.email, assunto: `[TESTE] ${m.assunto}`, html: m.html });
+      return volta(`E-mail de teste enviado para ${usuario.email}.`, true);
+    } catch (e) { return volta(`Falha ao enviar o teste: ${e.message}`); }
+  }
+  if (f.confirmar !== 'ENVIAR') return volta('Para disparar, digite ENVIAR no campo de confirmação.');
+  if (campanhaRodando.has(chave)) return volta('Essa campanha já está sendo enviada. Aguarde terminar.');
+  const qtd = listaCampanha(chave, publico).length;
+  if (!qtd) return volta('Ninguém para enviar: todos desse público já receberam ou não aceitam e-mails.');
+  registrar(usuario, 'Disparou campanha de e-mail', `${CAMPANHAS[chave].nome} · público: ${PUBLICOS_CAMPANHA[publico].nome} · ${qtd} destinatário(s)`);
+  dispararCampanha(chave, publico, usuario).catch((e) => console.error('campanha:', e.message));
+  volta(`Disparo iniciado para ${qtd} cliente(s). Leva cerca de ${Math.ceil(qtd * 0.8 / 60)} minuto(s). Atualize a página para acompanhar.`, true);
+}));
 // ---- Admin: e-mails automáticos ----
 rota('POST', '/admin/operacao/emails', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);

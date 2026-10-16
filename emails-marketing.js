@@ -141,3 +141,33 @@ export function montarEmail({ etapa, nome, perfil, bonus, base, sair, podeRespon
       ${botao(`${base}/recarregar${utm('seq_d7')}`, b ? 'Usar meu bônus agora' : 'Fazer minha primeira consulta')}` }),
   };
 }
+
+// ======================= CAMPANHAS AVULSAS (disparo pelo Admin) =======================
+// Campanha: "Consulte o seu próprio CPF" com a Cred Completa Plus
+export const CAMPANHAS = {
+  'cpf-credplus': { nome: 'Consulte seu CPF · Cred Completa Plus', produto: 'cred-completa-plus' },
+};
+export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeResponder = false }) {
+  const primeiro = esc(String(nome || '').trim().split(/\s+/)[0] || 'tudo bem');
+  const utm = `?utm_source=email&utm_medium=campanha&utm_campaign=${chave}`;
+  const b = bonus?.ativo ? bonus : null;
+  const preco = produto?.preco_centavos ? reais(produto.preco_centavos) : '';
+  if (chave === 'cpf-credplus') {
+    const link = `${base}/consultas/${produto?.slug || 'cred-completa-plus'}${utm}`;
+    return {
+      assunto: `${primeiro}, você sabe o que as empresas veem quando consultam o seu CPF?`,
+      html: moldura({ base, sair, preheader: 'Score, negativações, protestos e quem consultou seu CPF, num relatório só.', corpo: `
+        <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, veja o seu CPF com os olhos de quem vai te dar crédito</h1>
+        <p>Antes de aprovar um cartão, um financiamento ou até um aluguel, as empresas consultam o seu CPF. Com a <strong>Cred Completa Plus</strong> você vê exatamente o mesmo tipo de informação, antes delas:</p>
+        ${lista(['Score e rating de crédito', 'Negativações, protestos e cheques sem fundo', 'Ações judiciais registradas', 'Cadastro positivo', 'Quais empresas consultaram o seu CPF recentemente'])}
+        <div style="background:#0F0C14;color:#ffffff;border-radius:14px;padding:18px 20px;margin:20px 0">
+          <div style="font-size:13px;color:#C98BEB;font-weight:bold;letter-spacing:.5px">CRED COMPLETA PLUS</div>
+          <div style="font-size:15px;margin-top:6px">Relatório completo em PDF, na hora${preco ? `<br><span style="font-size:26px;font-weight:bold">${preco}</span> <span style="color:#C9BFD4">por consulta, sem mensalidade</span>` : ''}</div>
+        </div>
+        ${b ? caixaBonus(b) : ''}
+        ${botao(link, 'Consultar meu CPF agora')}
+        <p style="font-size:14px;color:#5B5366">Consultar o próprio CPF é um direito seu. O resultado fica só na sua conta e é apagado automaticamente depois de alguns dias (LGPD).${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
+    };
+  }
+  throw new Error('Campanha desconhecida');
+}
