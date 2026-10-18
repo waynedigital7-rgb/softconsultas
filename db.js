@@ -205,6 +205,10 @@ db.exec(`
     criado_em TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+// Anúncios: versão para celular, plano vendido, exclusividade e contato do anunciante
+for (const [c, def] of [['imagem_mobile', 'TEXT'], ['plano', "TEXT NOT NULL DEFAULT ''"], ['exclusivo', 'INTEGER NOT NULL DEFAULT 0'], ['contato', "TEXT NOT NULL DEFAULT ''"]]) {
+  if (!colunas('anuncios').includes(c)) db.exec(`ALTER TABLE anuncios ADD COLUMN ${c} ${def}`);
+}
 // Origem do cliente (campanhas de tráfego pago)
 if (!colunas('usuarios').includes('origem')) db.exec("ALTER TABLE usuarios ADD COLUMN origem TEXT NOT NULL DEFAULT ''");
 if (!colunas('usuarios').includes('utm_source')) db.exec("ALTER TABLE usuarios ADD COLUMN utm_source TEXT NOT NULL DEFAULT ''");
@@ -336,6 +340,7 @@ export const saldoComissao = (usuarioId) =>
 // Configurações padrão (editáveis no admin)
 const padrao = {
   recarga_minima_centavos: '3000',
+  recarga_maxima_centavos: '100000',
   markup_percentual: '150',
   dias_historico: '10',
   bonus_primeira_percentual: '20',
@@ -355,6 +360,15 @@ const padrao = {
   emails_limite_diario: '80',
   emails_pausa_ate: '',
   campanhas_fila: '[]',
+  anuncio_planos: JSON.stringify([
+    { k: 'semanal', n: 'Semanal', dias: 7, v: 14900 },
+    { k: 'mensal', n: 'Mensal', dias: 30, v: 39700 },
+    { k: 'trimestral', n: 'Trimestral', dias: 90, v: 99700 },
+    { k: 'exclusivo', n: 'Destaque exclusivo (sem rotação)', dias: 30, v: 79700, exclusivo: true },
+  ]),
+  anuncio_arte_centavos: '9700',
+  anuncio_max_simultaneos: '4',
+  anuncio_mostrar_numeros: '0',
   lns_ativo: '0',
   lns_preco_centavos: '129900',
   lns_dia_lote: '5',

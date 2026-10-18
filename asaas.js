@@ -88,3 +88,6 @@ export const simularAntecipacao = ({ payment, installment }) =>
 export const solicitarAntecipacao = ({ payment, installment }) =>
   asaas('/anticipations', { method: 'POST', body: JSON.stringify(installment ? { installment } : { payment }) });
 export const buscarAntecipacao = (id) => asaas(`/anticipations/${id}`);
+
+// Cancela (remove) uma cobrança ainda não paga
+export const cancelarCobranca = (id) => asaas(`/payments/${id}`, { method: 'DELETE' });

@@ -77,7 +77,8 @@ footer{color:var(--cinza);font-size:.85rem;text-align:center;padding:24px 20px;b
 .banner{position:relative;border-radius:20px;overflow:hidden;aspect-ratio:4/1;background:var(--preto);min-height:120px}
 .banner .slide{position:absolute;inset:0;opacity:0;transition:opacity .6s ease;pointer-events:none}
 .banner .slide.ativo{opacity:1;pointer-events:auto}
-.banner img{width:100%;height:100%;object-fit:cover;display:block}
+.banner img{width:100%;height:100%;object-fit:cover;display:block}.banner picture{display:block;width:100%;height:100%}
+@media (max-width:640px){.banner.mobile21{aspect-ratio:2/1}}
 .banner .selo{position:absolute;top:10px;left:12px;background:rgba(15,12,20,.7);color:#fff;font-size:.72rem;font-weight:700;padding:3px 9px;border-radius:999px}
 .banner .pontos{position:absolute;bottom:10px;left:0;right:0;display:flex;gap:6px;justify-content:center}
 .banner .pontos button{width:9px;height:9px;border-radius:50%;border:0;background:rgba(255,255,255,.5);cursor:pointer;padding:0}
@@ -202,9 +203,11 @@ export function bannerAnuncios(anuncios = [], contato = '#') {
       <span>Fale com milhares de empresas e profissionais que usam a Soft Consultas todos os dias.</span>
       <span class="btn" style="margin-top:6px">Quero anunciar</span></a>`;
   }
-  return `<div class="banner" data-banner aria-roledescription="carrossel" aria-label="Anúncios">
+  // Se todos os banners têm versão para celular, no celular o espaço fica 2:1 (sem cortar as laterais)
+  const todosMobile = anuncios.every((a) => a.imagem_mobile);
+  return `<div class="banner${todosMobile ? ' mobile21' : ''}" data-banner aria-roledescription="carrossel" aria-label="Anúncios">
     ${anuncios.map((a, i) => `<a class="slide${i ? '' : ' ativo'}" href="${a.link ? `/anuncio/${a.id}` : '#'}" ${a.link ? 'target="_blank" rel="noopener sponsored"' : ''} aria-label="${esc(a.titulo || a.anunciante)}">
-      <img src="/anuncio-img/${a.id}" alt="${esc(a.titulo || a.anunciante)}" loading="lazy"></a>`).join('')}
+      <picture>${todosMobile ? `<source media="(max-width: 640px)" srcset="/anuncio-img/${a.id}?m=1">` : ''}<img src="/anuncio-img/${a.id}" alt="${esc(a.titulo || a.anunciante)}" loading="lazy"></picture></a>`).join('')}
     <span class="selo">Anúncio</span>
     ${anuncios.length > 1 ? `<div class="pontos">${anuncios.map((_, i) => `<button type="button" aria-label="Anúncio ${i + 1}" class="${i ? '' : 'ativo'}"></button>`).join('')}</div>` : ''}
   </div>

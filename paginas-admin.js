@@ -6,7 +6,7 @@ export const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;
   ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/operacao', 'Operação'], ['/admin/limpa-nome', 'Limpa Nome (serviço)'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
-const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
+const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat,sans-serif;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
 const aviso = (ok, erro) => (ok ? `<div class="aviso ok">${esc(ok)}</div>` : '') + (erro ? `<div class="aviso erro">${esc(erro)}</div>` : '');
 
 export function adminResumo({ m, ok }) {
@@ -16,7 +16,7 @@ ${m.saldoApiFull === null ? '<div class="aviso erro">Não foi possível ler o sa
 ${baixo ? `<div class="aviso erro" role="alert"><strong>Saldo da APIFull baixo: ${reais(m.saldoApiFull)}.</strong> Se acabar, as consultas dos clientes falham. <a href="https://app.apifull.com.br" target="_blank" rel="noopener">Recarregar na APIFull</a></div>` : ''}
 <div class="grade" style="margin-bottom:18px">
   <div class="cartao" style="${baixo ? 'border-color:var(--erro)' : ''}"><div class="muted">Saldo na APIFull</div>
-    <div style="font-family:Montserrat;font-size:1.8rem;font-weight:800;color:${baixo ? 'var(--erro)' : 'inherit'}">${m.saldoApiFull === null ? '—' : reais(m.saldoApiFull)}</div>
+    <div style="font-family:Montserrat,sans-serif;font-size:1.8rem;font-weight:800;color:${baixo ? 'var(--erro)' : 'inherit'}">${m.saldoApiFull === null ? '—' : reais(m.saldoApiFull)}</div>
     <div class="muted" style="font-size:.85rem">alerta abaixo de ${reais(m.alertaApiFull)} · <a href="https://app.apifull.com.br" target="_blank" rel="noopener">recarregar</a></div></div>
   ${num('Consultas internas (admin e contas internas)', m.internas, `custo ${reais(m.custoInternas)}, pago direto na APIFull`)}
 </div>
@@ -79,12 +79,13 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
 </form>`;
 }
 
-export function adminConfig({ minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, ok, erro }) {
+export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, ok, erro }) {
   return `<h1 style="font-size:1.7rem">Configurações</h1>${menu('/admin/config')}${aviso(ok, erro)}
 <form class="cartao" method="post" action="/admin/config" style="max-width:640px">
   <div class="campo"><label for="markup">Margem sobre o custo APIFull (%)</label><input id="markup" name="markup" type="text" inputmode="numeric" value="${markup}">
     <small class="muted">150 = preço de venda é o custo + 150% (custo x 2,5). Ao salvar, todos os preços são recalculados.</small></div>
   <div class="campo"><label for="minimo">Recarga mínima (R$)</label><input id="minimo" name="minimo" type="text" inputmode="decimal" value="${(minimo / 100).toFixed(2).replace('.', ',')}"></div>
+  <div class="campo"><label for="maximo">Recarga máxima por Pix (R$)</label><input id="maximo" name="maximo" type="text" inputmode="decimal" value="${(maximo / 100).toFixed(2).replace('.', ',')}"><small class="muted">Acima de R$ 300 o cliente confirma o valor antes de gerar o Pix.</small></div>
   <div class="campo"><label for="faixas">Bônus de recarga</label>
     <input id="faixas" name="faixas" type="text" value="${esc(faixas.map((f) => `${f.a_partir_de / 100}=${f.percentual}`).join('; '))}">
     <small class="muted">Formato: valor=percentual, separados por ponto e vírgula. Ex.: <code>100=5; 300=10</code> (a partir de R$ 100 ganha 5%, a partir de R$ 300 ganha 10%). Deixe vazio para não dar bônus.</small></div>
@@ -146,7 +147,7 @@ export function adminRecargas({ recargas, ok, erro }) {
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>#</th><th>Data</th><th>Cliente</th><th>Valor</th><th>Bônus</th><th>Status</th><th>Pago em</th></tr>
   ${recargas.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td>${esc(r.cliente)}</td><td>${reais(r.valor_centavos)}</td><td>${reais(r.bonus_centavos)}</td>
-    <td>${r.status === 'paga' ? '<span style="color:var(--ok);font-weight:700">Paga</span>' : `Pendente${r.asaas_id ? `<form method="post" action="/admin/recargas/verificar" style="margin:6px 0 0"><input type="hidden" name="id" value="${r.id}"><button class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.8rem">Conferir no Asaas</button></form>` : ''}`}</td><td>${dt(r.pago_em)}</td></tr>`).join('')}
+    <td>${r.status === 'paga' ? '<span style="color:var(--ok);font-weight:700">Paga</span>' : r.status === 'expirada' ? '<span class="muted">Expirada (não paga)</span>' : `Pendente${r.asaas_id ? `<form method="post" action="/admin/recargas/verificar" style="margin:6px 0 0"><input type="hidden" name="id" value="${r.id}"><button class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.8rem">Conferir no Asaas</button></form>` : ''}`}</td><td>${dt(r.pago_em)}</td></tr>`).join('')}
 </table></div></div>`;
 }
 
@@ -307,7 +308,7 @@ export function adminFinanceiro({ ini, fim, totais, recargas, novos, diario, por
   ${num('Recargas pagas', reais(recargas.total), `${recargas.n} recarga(s) · ${reais(recargas.bonus)} em bônus`)}
   ${num('Faturamento com consultas', reais(receita), `${totais.n} consultas · ticket médio ${reais(ticket)}`)}
   ${num('Custo APIFull', reais(totais.custo), saldoApiFull === null ? 'saldo APIFull indisponível' : `saldo atual na APIFull: ${reais(saldoApiFull)}`)}
-  <div class="cartao"><div class="muted">Lucro no período</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800;color:var(--ok)">${reais(lucro)}</div><div class="muted" style="font-size:.85rem">margem de ${margem}% sobre o faturamento</div></div>
+  <div class="cartao"><div class="muted">Lucro no período</div><div style="font-family:Montserrat,sans-serif;font-size:1.8rem;font-weight:800;color:var(--ok)">${reais(lucro)}</div><div class="muted" style="font-size:.85rem">margem de ${margem}% sobre o faturamento</div></div>
 </div>
 <div class="grade" style="margin-bottom:18px">
   ${num('Clientes', clientesTotal, `${novos} novo(s) no período · ${totais.clientes} consultaram`)}
@@ -332,29 +333,96 @@ export function adminFinanceiro({ ini, fim, totais, recargas, novos, diario, por
 }
 
 // ---------- Anúncios ----------
-export function adminAnuncios({ anuncios, ok, erro }) {
+// ---------- Página pública para anunciantes ----------
+export function paginaAnuncie({ planos, arte, vagas, max, mostrarNumeros, clientes, exib, whats }) {
+  const fmt = (n) => Number(n).toLocaleString('pt-BR');
+  const msg = (pl) => `${whats}${whats.includes('?') ? '%20' : '?text='}${encodeURIComponent(`- plano ${pl}`)}`;
+  return `<div style="max-width:980px;margin:0 auto">
+<span class="tag">Para empresas</span>
+<h1 style="font-size:2rem;margin:10px 0 6px">Anuncie para quem está cuidando do crédito</h1>
+<p class="muted" style="max-width:720px;margin:0 0 20px">Todo dia, pessoas e empresas entram na Soft Consultas para consultar CPF, CNPJ, veículos e limpar o nome. Seu banner aparece para esse público no momento em que ele está tomando decisões financeiras.</p>
+${mostrarNumeros ? `<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div class="muted">Clientes cadastrados</div><div style="font-family:Montserrat,sans-serif;font-size:1.8rem;font-weight:800">${fmt(clientes)}</div></div>
+  <div class="cartao"><div class="muted">Exibições de banners até hoje</div><div style="font-family:Montserrat,sans-serif;font-size:1.8rem;font-weight:800">${fmt(exib)}</div></div>
+</div>` : ''}
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.3rem;margin-top:0">Onde o seu banner aparece</h2>
+  <p style="margin:6px 0">✓ Na <strong>página inicial</strong> do site &nbsp; ✓ No <strong>painel</strong> de cada cliente logado &nbsp; ✓ No <strong>histórico de consultas</strong></p>
+  <p class="muted" style="margin:6px 0 0">Rodízio com no máximo <strong>${max} anunciantes</strong> ao mesmo tempo, trocando a cada 6 segundos. Cada clique leva direto ao seu site, WhatsApp ou Instagram. Você recebe o relatório de exibições e cliques.</p>
+  <p style="margin:12px 0 0"><strong>${vagas ? `${vagas} ${vagas === 1 ? 'vaga disponível' : 'vagas disponíveis'} agora.` : 'Espaços ocupados no momento: fale com a gente para entrar na fila.'}</strong></p>
+</div>
+<h2 style="font-size:1.3rem">Planos</h2>
+<div class="grade" style="margin-bottom:18px">
+  ${planos.map((p) => `<div class="cartao" style="${p.k === 'mensal' ? 'border:2px solid var(--roxo)' : ''}">
+    ${p.k === 'mensal' ? '<span class="tag">Mais escolhido</span>' : ''}
+    <h3 style="margin:8px 0 4px">${esc(p.n)}</h3>
+    <div style="font-family:Montserrat,sans-serif;font-size:1.7rem;font-weight:800">${reais(p.v)}</div>
+    <p class="muted" style="margin:4px 0 12px">${p.dias} dias no ar${p.exclusivo ? ' · <strong>só o seu banner</strong>, sem dividir espaço' : ` · ${reais(Math.round(p.v / p.dias))} por dia`}</p>
+    <a class="btn ${p.k === 'mensal' ? '' : 'sec'}" href="${esc(msg(p.n))}" target="_blank" rel="noopener">Quero este plano</a></div>`).join('')}
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.3rem;margin-top:0">Formatos e tamanhos</h2>
+  <div class="rolar"><table class="tabela">
+    <tr><th>Peça</th><th>Tamanho</th><th>Formato</th></tr>
+    <tr><td><strong>Banner computador</strong> (obrigatório)</td><td>1600 × 400 px (4:1)</td><td>PNG, JPG ou WEBP · até 3 MB</td></tr>
+    <tr><td><strong>Banner celular</strong> (recomendado)</td><td>1200 × 600 px (2:1)</td><td>PNG, JPG ou WEBP · até 3 MB</td></tr>
+  </table></div>
+  <p class="muted" style="margin:10px 0 0">Sem a versão para celular, o banner de computador é cortado nas laterais no celular: mantenha logo e texto dentro da <strong>área central de 1000 × 400 px</strong>. Evite letras pequenas (mínimo de 40 px de altura no arquivo). O selo "Anúncio" fica no canto superior esquerdo: deixe esse canto livre.</p>
+  ${arte ? `<p style="margin:12px 0 0"><strong>Não tem o banner?</strong> Criamos para você por ${reais(arte)}: basta enviar o logo (PNG, mínimo 500 px, de preferência com fundo transparente), as cores da marca, a frase principal e o link.</p>` : ''}
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.3rem;margin-top:0">O que precisamos de você</h2>
+  <p style="margin:4px 0">1. Nome da empresa, CNPJ (ou CPF) e um responsável com WhatsApp</p>
+  <p style="margin:4px 0">2. Banner nos tamanhos acima (ou logo e textos, se quiser que a gente crie)</p>
+  <p style="margin:4px 0">3. Link de destino: site, WhatsApp (wa.me) ou Instagram</p>
+  <p style="margin:4px 0">4. Plano e data de início</p>
+  <p style="margin:4px 0">5. Pagamento antecipado via Pix. O banner entra no ar em até 1 dia útil depois da aprovação.</p>
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.3rem;margin-top:0">Regras de publicação</h2>
+  <p class="muted" style="margin:4px 0">Todos os banners passam por aprovação. Não publicamos: promessa de crédito garantido ou "sem consulta", cobrança antecipada para liberar empréstimo, apostas, conteúdo adulto, pirâmides, produtos ilegais, uso de marcas de terceiros sem autorização ou qualquer conteúdo enganoso. O anunciante é responsável pelo conteúdo e pela oferta anunciada, conforme o Código de Defesa do Consumidor e a LGPD.</p>
+</div>
+<p style="text-align:center"><a class="btn" href="${esc(whats)}" target="_blank" rel="noopener">Falar com a gente no WhatsApp</a></p>
+</div>`;
+}
+
+export function adminAnuncios({ anuncios, planos = [], arte = 0, max = 4, noAr = 0, exclusivoNoAr = false, mostrarNumeros = false, ok, erro }) {
   const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
   const status = (a) => (!a.ativo ? '<span class="muted">Pausado</span>' : a.fim && a.fim < hoje ? '<span style="color:var(--erro)">Encerrado</span>'
     : a.inicio && a.inicio > hoje ? 'Agendado' : '<span style="color:var(--ok);font-weight:700">No ar</span>');
   return `<h1 style="font-size:1.7rem">Anúncios</h1>${menu('/admin/anuncios')}${aviso(ok, erro)}
 <div class="cartao" style="margin-bottom:18px">
   <h3>Novo anúncio</h3>
-  <p class="muted">O banner aparece na página inicial e no painel dos clientes, alternando a cada 6 segundos. Use uma imagem horizontal de <strong>1600 × 400 px</strong> (proporção 4:1), em PNG, JPG ou WEBP, com até 3 MB. No celular, o banner é cortado nas laterais: deixe o texto importante no centro.</p>
+  <p class="muted">Aparece na página inicial, no painel e no histórico, em rodízio de 6 s. <strong>No ar agora: ${noAr} de ${max} espaços</strong>${exclusivoNoAr ? ' · <strong>há um destaque exclusivo no ar</strong> (só ele aparece até acabar)' : ''}. Banner de computador: <strong>1600 × 400 px</strong> (4:1). Celular (opcional): <strong>1200 × 600 px</strong> (2:1). PNG, JPG ou WEBP, até 3 MB cada. Página para mandar ao anunciante: <a href="/anuncie" target="_blank" rel="noopener">/anuncie</a>.</p>
   <form method="post" action="/admin/anuncios/criar" enctype="multipart/form-data" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 16px;align-items:end">
     <div class="campo" style="margin:0"><label for="anunciante">Anunciante</label><input id="anunciante" name="anunciante" type="text" required></div>
     <div class="campo" style="margin:0"><label for="titulo">Texto alternativo (descrição do banner)</label><input id="titulo" name="titulo" type="text"></div>
     <div class="campo" style="margin:0"><label for="link">Link de destino</label><input id="link" name="link" type="text" placeholder="https://"></div>
-    <div class="campo" style="margin:0"><label for="valor">Valor cobrado (R$, opcional)</label><input id="valor" name="valor" type="text" inputmode="decimal"></div>
+    <div class="campo" style="margin:0"><label for="plano">Plano</label><select id="plano" name="plano" style="min-height:46px"><option value="">Sem plano (valor e datas manuais)</option>${planos.map((p) => `<option value="${esc(p.k)}">${esc(p.n)} · ${p.dias} dias · ${reais(p.v)}</option>`).join('')}</select></div>
+    <label style="display:flex;gap:8px;align-items:center;margin:0 0 12px"><input type="checkbox" name="arte" value="1" style="width:20px;height:20px"> Arte feita por nós (+${reais(arte)})</label>
+    <div class="campo" style="margin:0"><label for="valor">Valor cobrado (R$) · vazio = preço do plano</label><input id="valor" name="valor" type="text" inputmode="decimal"></div>
+    <div class="campo" style="margin:0"><label for="contato">Contato do anunciante (CNPJ / WhatsApp)</label><input id="contato" name="contato" type="text"></div>
     <div class="campo" style="margin:0"><label for="inicio">Início</label><input id="inicio" name="inicio" type="date" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
-    <div class="campo" style="margin:0"><label for="fim">Fim</label><input id="fim" name="fim" type="date" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
-    <div class="campo" style="margin:0"><label for="imagem">Imagem do banner</label><input id="imagem" name="imagem" type="file" accept="image/png,image/jpeg,image/webp" required></div>
+    <div class="campo" style="margin:0"><label for="fim">Fim · vazio = calculado pelo plano</label><input id="fim" name="fim" type="date" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+    <div class="campo" style="margin:0"><label for="imagem">Banner computador (1600 × 400)</label><input id="imagem" name="imagem" type="file" accept="image/png,image/jpeg,image/webp" required></div>
+    <div class="campo" style="margin:0"><label for="imagem_mobile">Banner celular (1200 × 600, opcional)</label><input id="imagem_mobile" name="imagem_mobile" type="file" accept="image/png,image/jpeg,image/webp"></div>
     <button class="btn" type="submit">Publicar anúncio</button>
   </form>
 </div>
+<form class="cartao" method="post" action="/admin/anuncios/planos" style="margin-bottom:18px">
+  <h3 style="margin-top:0">Tabela de preços</h3>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px 16px">
+    ${planos.map((p) => `<div class="campo" style="margin:0"><label for="v_${esc(p.k)}">${esc(p.n)} (${p.dias} dias)</label><input id="v_${esc(p.k)}" name="v_${esc(p.k)}" type="text" inputmode="decimal" value="${(p.v / 100).toFixed(2).replace('.', ',')}"></div>`).join('')}
+    <div class="campo" style="margin:0"><label for="arte">Criação da arte</label><input id="arte" name="arte" type="text" inputmode="decimal" value="${(arte / 100).toFixed(2).replace('.', ',')}"></div>
+    <div class="campo" style="margin:0"><label for="max">Máx. anunciantes ao mesmo tempo</label><input id="max" name="max" type="text" inputmode="numeric" value="${max}"></div>
+  </div>
+  <label style="display:flex;gap:8px;align-items:center;margin:12px 0"><input type="checkbox" name="numeros" value="1" ${mostrarNumeros ? 'checked' : ''} style="width:20px;height:20px"> Mostrar nº de clientes e exibições na página /anuncie</label>
+  <button class="btn sec">Salvar preços</button>
+</form>
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>Banner</th><th>Anunciante</th><th>Período</th><th>Exibições</th><th>Cliques</th><th>CTR</th><th>Valor</th><th>Status</th><th></th></tr>
   ${anuncios.map((a) => `<tr><td><img src="/anuncio-img/${a.id}" alt="" style="width:160px;aspect-ratio:4/1;object-fit:cover;border-radius:8px"></td>
-    <td><strong>${esc(a.anunciante)}</strong><br><small class="muted">${esc(a.link || 'sem link')}</small></td>
+    <td><strong>${esc(a.anunciante)}</strong>${a.exclusivo ? ' <span class="tag">exclusivo</span>' : ''}<br><small class="muted">${esc(a.link || 'sem link')}</small>${a.contato ? `<br><small class="muted">${esc(a.contato)}</small>` : ''}${a.imagem_mobile ? '<br><small class="muted">com versão celular</small>' : ''}</td>
     <td>${a.inicio ? a.inicio.split('-').reverse().join('/') : 'já'} → ${a.fim ? a.fim.split('-').reverse().join('/') : 'sem fim'}</td>
     <td>${a.impressoes}</td><td>${a.cliques}</td><td>${a.impressoes ? ((a.cliques / a.impressoes) * 100).toFixed(1) : '0.0'}%</td><td>${a.valor_centavos ? reais(a.valor_centavos) : '—'}</td><td>${status(a)}</td>
     <td><form method="post" action="/admin/anuncios/acao" style="display:flex;gap:6px;margin:0"><input type="hidden" name="id" value="${a.id}">

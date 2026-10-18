@@ -121,9 +121,14 @@ function json(res, obj, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
 }
+// Valor digitado em reais → centavos. Aceita "50", "50,00", "50.00", "1.000", "1.000,50".
+// Qualquer coisa ambígua (ex.: "1,000", "12.3456") é recusada em vez de virar um valor errado.
 const centavos = (v) => {
   const t = String(v ?? '').trim().replace(/[^\d,.-]/g, '');
-  const n = /,\d{1,2}$/.test(t) ? Number(t.replace(/\./g, '').replace(',', '.')) : Number(t);
+  let n = NaN;
+  if (/^-?\d{1,3}(\.\d{3})+(,\d{1,2})?$/.test(t)) n = Number(t.replace(/\./g, '').replace(',', '.'));
+  else if (/^-?\d+(,\d{1,2})?$/.test(t)) n = Number(t.replace(',', '.'));
+  else if (/^-?\d+\.\d{1,2}$/.test(t)) n = Number(t);
   return Number.isFinite(n) ? Math.round(n * 100) : NaN;
 };
 
@@ -379,7 +384,9 @@ const bonusPara = (v, uid) => {
   if (uid && bp.ativo && v >= bp.min && ehPrimeiraRecarga(uid)) p = Math.max(p, bp.pct);
   return Math.round((v * p) / 100);
 };
-const VALOR_MAXIMO = 500000; // R$ 5.000 por recarga
+const VALOR_MAXIMO_PADRAO = 100000; // R$ 1.000 por recarga (ajustável em Configurações)
+const valorMaximo = () => Math.max(1000, Number(lerConfig('recarga_maxima_centavos') || VALOR_MAXIMO_PADRAO));
+const VALOR_CONFIRMAR = 30000; // acima de R$ 300 o cliente confirma o valor antes de gerar o Pix
 
 // Credita uma recarga uma única vez (webhook e verificação manual podem chamar ao mesmo tempo)
 // Bônus recalculado no momento do pagamento: o de primeira recarga vale uma única vez por conta e por CPF/CNPJ
@@ -569,8 +576,23 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
     db.prepare('UPDATE usuarios SET documento = ? WHERE id = ?').run(doc, usuario.id);
     usuario.documento = doc;
   }
-  if (!Number.isFinite(valor) || valor < minimo) return erro(`O valor mínimo de recarga é ${P.reais(minimo)}.`);
-  if (valor > VALOR_MAXIMO) return erro(`O valor máximo por recarga é ${P.reais(VALOR_MAXIMO)}.`);
+  if (!Number.isFinite(valor)) return erro('Valor inválido. Digite só o valor em reais, por exemplo: 50 ou 50,00.');
+  if (valor < minimo) return erro(`O valor mínimo de recarga é ${P.reais(minimo)}.`);
+  if (valor > valorMaximo()) return erro(`O valor máximo por recarga é ${P.reais(valorMaximo())}. Confira se digitou o valor certo.`);
+  // Valor alto: o cliente confirma antes de gerar o Pix (evita erro de digitação)
+  if (valor > VALOR_CONFIRMAR && f.confirmado !== String(valor)) {
+    return pagina(res, 'Confirmar recarga', `<div class="cartao estreito" style="max-width:520px;text-align:center">
+      <h1 style="font-size:1.5rem">Confirma a recarga de ${P.reais(valor)}?</h1>
+      <p class="muted">Esse valor fica como saldo para consultas e não pode ser sacado.</p>
+      <form method="post" action="/recarregar" style="margin-top:18px"><input type="hidden" name="outro" value="${(valor / 100).toFixed(2).replace('.', ',')}"><input type="hidden" name="confirmado" value="${valor}">
+        <button class="btn" type="submit">Sim, gerar Pix de ${P.reais(valor)}</button></form>
+      <p style="margin-top:14px"><a href="/recarregar">Não, quero mudar o valor</a></p></div>`, usuario);
+  }
+  // Já existe um Pix em aberto com o mesmo valor (últimas 2 h): reaproveita em vez de criar outra cobrança
+  const aberta = db.prepare("SELECT id FROM recargas WHERE usuario_id = ? AND status = 'pendente' AND valor_centavos = ? AND asaas_id IS NOT NULL AND criado_em > datetime('now', '-2 hours') ORDER BY id DESC").get(usuario.id, valor);
+  if (aberta) return redirecionar(res, `/recarga/${aberta.id}`);
+  if (db.prepare("SELECT COUNT(*) n FROM recargas WHERE usuario_id = ? AND status = 'pendente' AND criado_em > datetime('now', '-24 hours')").get(usuario.id).n >= 3)
+    return erro('Você já tem 3 Pix em aberto. Pague um deles (veja no Painel) ou aguarde: Pix não pagos expiram em 48 horas.');
   if (!A.limitar(`rec:${usuario.id}`, 10, 60)) return erro('Muitas recargas geradas em pouco tempo. Aguarde alguns minutos.');
   try {
     let clienteId = db.prepare('SELECT asaas_cliente_id FROM usuarios WHERE id = ?').get(usuario.id).asaas_cliente_id;
@@ -596,6 +618,7 @@ rota('GET', '/recarga/:id', exigeLogin(({ res, usuario, params }) => {
   const r = db.prepare('SELECT * FROM recargas WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!r) return redirecionar(res, '/recarregar');
   if (r.status === 'paga') return redirecionar(res, '/painel');
+  if (r.status === 'expirada') return pagina(res, 'Recarregar', PA.paginaRecarregar({ ...dadosRecarga(usuario), erro: 'Esse Pix expirou sem pagamento e foi cancelado. Gere um novo abaixo.' }), usuario);
   pagina(res, 'Pagar recarga', PA.paginaPagarRecarga({ r }), usuario);
 }));
 
@@ -650,6 +673,33 @@ const saldoExibido = async (usuario) => (usuario.interno ? await saldoApiFull() 
 // ======================= RETENÇÃO DO HISTÓRICO =======================
 const diasHistorico = () => Math.max(1, Number(lerConfig('dias_historico') || 10));
 const expirou = (c) => c.status === 'concluida' && !c.resultado;
+// Pix não pagos: depois de 48 h (recarga) ou 3 dias (Limpa Nome) a cobrança é cancelada no Asaas, para não ficar fatura em aberto.
+// Antes de cancelar, confere se foi paga (aí credita normalmente).
+async function expirarCobrancasAbertas() {
+  const recs = db.prepare("SELECT * FROM recargas WHERE status = 'pendente' AND criado_em < datetime('now', '-48 hours') ORDER BY id LIMIT 50").all();
+  for (const r of recs) {
+    try {
+      if (r.asaas_id) {
+        const c = await AS.buscarCobranca(r.asaas_id).catch(() => null);
+        if (c && AS.STATUS_PAGO.includes(c.status)) { if (creditarRecarga(r.id)) processarRepasse().catch(() => {}); continue; }
+        if (c && !c.deleted && c.status === 'PENDING') await AS.cancelarCobranca(r.asaas_id);
+      }
+      db.prepare("UPDATE recargas SET status = 'expirada' WHERE id = ? AND status = 'pendente'").run(r.id);
+    } catch (e) { console.warn('expirar recarga', r.id, e.message); }
+  }
+  const peds = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status = 'aguardando_pagamento' AND criado_em < datetime('now', '-3 days') ORDER BY id LIMIT 50").all();
+  for (const p of peds) {
+    try {
+      if (p.asaas_id) {
+        const c = await AS.buscarCobranca(p.asaas_id).catch(() => null);
+        if (c && AS.STATUS_PAGO.includes(c.status)) { confirmarPedidoLN(p.id); continue; }
+        if (c && !c.deleted && c.status === 'PENDING') await AS.cancelarCobranca(p.asaas_id);
+      }
+      db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Pagamento não realizado no prazo', atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(p.id);
+    } catch (e) { console.warn('expirar pedido LN', p.id, e.message); }
+  }
+  if (recs.length || peds.length) registrar(null, 'Cobranças em aberto expiradas', `${recs.length} recarga(s) e ${peds.length} pedido(s) de Limpa Nome sem pagamento`);
+}
 async function limparExpiradas() {
   // Consultas que ficaram "processando" (queda ou reinício do servidor no meio): marca como falha e devolve o valor
   const travadas = db.prepare(`SELECT c.id, c.usuario_id, c.produto, c.preco_centavos, u.interno FROM consultas c JOIN usuarios u ON u.id = c.usuario_id
@@ -665,6 +715,7 @@ async function limparExpiradas() {
     } catch (e) { db.exec('ROLLBACK'); console.error('estorno travada:', e.message); }
   }
   if (travadas.length) console.log(`Consultas interrompidas estornadas: ${travadas.length}`);
+  await expirarCobrancasAbertas().catch((e) => console.error('expirar cobranças:', e.message));
   const dias = diasHistorico();
   const lista = db.prepare(`SELECT id FROM consultas WHERE status = 'concluida' AND resultado IS NOT NULL AND criado_em < datetime('now', ?)`).all(`-${dias} days`);
   for (const { id } of lista) {
@@ -1319,13 +1370,13 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
-  minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
+  maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
 
 rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = centavos(f.minimo), markup = Number(String(f.markup || '').replace(',', '.'));
-  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), erro: m }), usuario, 400);
   const dias = Number(f.dias);
   if (!Number.isInteger(dias) || dias < 1 || dias > 365) return erro('O prazo do histórico precisa ser entre 1 e 365 dias.');
   const comissaoMax = Number(f.comissao_maxima), saqueMin = centavos(f.saque_minimo);
@@ -1338,6 +1389,8 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const alerta = centavos(f.alerta_apifull);
   if (!Number.isFinite(alerta) || alerta < 0) return erro('Valor de alerta do saldo APIFull inválido.');
   if (!Number.isFinite(minimo) || minimo < 500) return erro('A recarga mínima precisa ser de pelo menos R$ 5,00.');
+  const maximo = centavos(f.maximo);
+  if (String(f.maximo ?? '').trim() && (!Number.isFinite(maximo) || maximo < minimo || maximo > 2000000)) return erro('Recarga máxima inválida (entre a mínima e R$ 20.000).');
   if (!Number.isFinite(markup) || markup < 0 || markup > 1000) return erro('Margem inválida.');
   const faixas = [];
   for (const parte of String(f.faixas || '').split(';').map((x) => x.trim()).filter(Boolean)) {
@@ -1347,6 +1400,7 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
     faixas.push({ a_partir_de: vc, percentual: pc });
   }
   gravarConfig('recarga_minima_centavos', minimo);
+  if (Number.isFinite(maximo) && String(f.maximo ?? '').trim()) gravarConfig('recarga_maxima_centavos', maximo);
   gravarConfig('markup_percentual', markup);
   gravarConfig('dias_historico', dias);
   gravarConfig('comissao_maxima', comissaoMax);
@@ -1358,7 +1412,7 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('bonus_primeira_ate', bpAte);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
-  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
+  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, máxima ${P.reais(valorMaximo())}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
   redirecionar(res, '/admin/config?ok=1');
 }));
 
@@ -1432,22 +1486,42 @@ rota('GET', '/admin/registro', exigeAdmin(({ res, usuario }) => pagina(res, 'Adm
 }), usuario)));
 
 // ======================= ANÚNCIOS (banner) =======================
-const anunciosAtivos = () => db.prepare(`SELECT * FROM anuncios WHERE ativo = 1
+// Planos de anúncio (preços fixos, editáveis no Admin → Anúncios)
+const planosAnuncio = () => { try { return JSON.parse(lerConfig('anuncio_planos') || '[]'); } catch { return []; } };
+const maxAnuncios = () => Math.min(8, Math.max(1, Number(lerConfig('anuncio_max_simultaneos') || 4)));
+const anunciosNoAr = () => db.prepare(`SELECT * FROM anuncios WHERE ativo = 1
   AND (inicio IS NULL OR inicio = '' OR inicio <= date('now', '-3 hours'))
-  AND (fim IS NULL OR fim = '' OR fim >= date('now', '-3 hours')) ORDER BY id DESC LIMIT 8`).all();
+  AND (fim IS NULL OR fim = '' OR fim >= date('now', '-3 hours')) ORDER BY exclusivo DESC, id ASC`).all();
+// Destaque exclusivo no ar: só ele aparece. Senão, rodízio com no máximo N anunciantes (os mais antigos primeiro).
+const anunciosAtivos = () => {
+  const lista = anunciosNoAr();
+  const exclusivo = lista.find((a) => a.exclusivo);
+  return exclusivo ? [exclusivo] : lista.slice(0, maxAnuncios());
+};
 function anunciosParaExibir() {
   const lista = anunciosAtivos();
   if (lista.length) db.prepare(`UPDATE anuncios SET impressoes = impressoes + 1 WHERE id IN (${lista.map(() => '?').join(',')})`).run(...lista.map((a) => a.id));
   return lista;
 }
-const contatoAnuncie = () => process.env.CONTATO_ANUNCIE || 'https://wa.me/5547997400955?text=Quero%20anunciar%20na%20Soft%20Consultas';
+const whatsAnuncie = () => process.env.CONTATO_ANUNCIE || 'https://wa.me/5547997400955?text=Quero%20anunciar%20na%20Soft%20Consultas';
+const contatoAnuncie = () => '/anuncie';
 
-rota('GET', '/anuncio-img/:id', async ({ res, params }) => {
-  const a = db.prepare('SELECT imagem FROM anuncios WHERE id = ?').get(Number(params.id));
+// Página pública para anunciantes: formatos, tamanhos, planos e regras
+rota('GET', '/anuncie', ({ res, usuario }) => {
+  const clientes = db.prepare('SELECT COUNT(*) n FROM usuarios WHERE admin = 0 AND interno = 0').get().n;
+  const exib = db.prepare('SELECT COALESCE(SUM(impressoes), 0) n FROM anuncios').get().n;
+  const noAr = anunciosNoAr().filter((a) => !a.exclusivo).length;
+  pagina(res, 'Anuncie na Soft Consultas', PD.paginaAnuncie({ planos: planosAnuncio(), arte: Number(lerConfig('anuncio_arte_centavos') || 0),
+    vagas: Math.max(0, maxAnuncios() - noAr), max: maxAnuncios(), mostrarNumeros: lerConfig('anuncio_mostrar_numeros') === '1', clientes, exib, whats: whatsAnuncie() }), usuario);
+});
+
+rota('GET', '/anuncio-img/:id', async ({ res, params, url }) => {
+  const a = db.prepare('SELECT imagem, imagem_mobile FROM anuncios WHERE id = ?').get(Number(params.id));
   if (!a) { res.writeHead(404); return res.end(); }
+  const arq = url.searchParams.get('m') === '1' && a.imagem_mobile ? a.imagem_mobile : a.imagem;
   try {
-    const dados = await readFile(path.join(pastaAnuncios, a.imagem));
-    const ext = a.imagem.split('.').pop();
+    const dados = await readFile(path.join(pastaAnuncios, path.basename(arq)));
+    const ext = arq.split('.').pop();
     res.writeHead(200, { 'Content-Type': ext === 'jpg' ? 'image/jpeg' : `image/${ext}`, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff' });
     res.end(dados);
   } catch { res.writeHead(404); res.end(); }
@@ -1462,30 +1536,58 @@ rota('GET', '/anuncio/:id', ({ res, params }) => {
 });
 
 rota('GET', '/admin/anuncios', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Anúncios', PD.adminAnuncios({
-  anuncios: db.prepare('SELECT * FROM anuncios ORDER BY id DESC').all(),
+  anuncios: db.prepare('SELECT * FROM anuncios ORDER BY id DESC').all(), planos: planosAnuncio(), arte: Number(lerConfig('anuncio_arte_centavos') || 0),
+  max: maxAnuncios(), noAr: anunciosNoAr().length, exclusivoNoAr: anunciosNoAr().some((a) => a.exclusivo), mostrarNumeros: lerConfig('anuncio_mostrar_numeros') === '1',
   ok: url.searchParams.get('ok') ? 'Anúncio salvo.' : '', erro: url.searchParams.get('erro') || '',
 }), usuario)));
 
 rota('POST', '/admin/anuncios/criar', exigeAdmin(async ({ req, res, usuario }) => {
   const erro = (m) => redirecionar(res, `/admin/anuncios?erro=${encodeURIComponent(m)}`);
   let form;
-  try { form = await corpoMultipart(req); } catch (e) { return erro(e.message === 'arquivo grande demais' ? 'Imagem grande demais (máximo 3 MB).' : 'Não foi possível ler o formulário.'); }
+  try { form = await corpoMultipart(req, 7 * 1024 * 1024); } catch (e) { return erro(e.message === 'arquivo grande demais' ? 'Imagens grandes demais (máximo 3 MB cada).' : 'Não foi possível ler o formulário.'); }
   const { campos, arquivos } = form;
+  if (Object.values(arquivos).some((a) => a.dados.length > 3 * 1024 * 1024)) return erro('Cada imagem pode ter no máximo 3 MB.');
   const anunciante = String(campos.anunciante || '').trim().slice(0, 120);
   const link = String(campos.link || '').trim().slice(0, 500);
-  const img = arquivos.imagem;
+  const img = arquivos.imagem, imgM = arquivos.imagem_mobile;
   if (!anunciante) return erro('Informe o nome do anunciante.');
   if (link && !/^https?:\/\/[^\s]+$/i.test(link)) return erro('O link precisa começar com http:// ou https://');
   if (!img) return erro('Envie a imagem do banner.');
   const ext = tipoImagem(img.dados);
   if (!ext) return erro('A imagem precisa ser PNG, JPG ou WEBP.');
+  const extM = imgM ? tipoImagem(imgM.dados) : null;
+  if (imgM && !extM) return erro('A imagem para celular precisa ser PNG, JPG ou WEBP.');
+  const dataOk = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d : null);
+  // Plano: preenche valor e data de fim quando ficarem em branco
+  const plano = planosAnuncio().find((p) => p.k === campos.plano) || null;
+  const inicio = dataOk(campos.inicio) || new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  let fim = dataOk(campos.fim);
+  if (!fim && plano) { const d = new Date(`${inicio}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + plano.dias - 1); fim = d.toISOString().slice(0, 10); }
+  let valor = String(campos.valor || '').trim() ? centavos(campos.valor) : (plano ? plano.v + (campos.arte === '1' ? Number(lerConfig('anuncio_arte_centavos') || 0) : 0) : 0);
+  if (!Number.isFinite(valor)) valor = 0;
   const arquivo = `anuncio-${Date.now()}.${ext}`;
   await writeFile(path.join(pastaAnuncios, arquivo), img.dados);
-  const dataOk = (d) => (/^\d{4}-\d{2}-\d{2}$/.test(d || '') ? d : null);
-  const valor = centavos(campos.valor || '0');
-  db.prepare('INSERT INTO anuncios (anunciante, titulo, link, imagem, inicio, fim, valor_centavos) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(anunciante, String(campos.titulo || '').trim().slice(0, 160), link, arquivo, dataOk(campos.inicio), dataOk(campos.fim), Number.isFinite(valor) ? valor : 0);
-  registrar(usuario, 'Criou anúncio', `${anunciante} · ${link || 'sem link'} · ${campos.inicio || 'já'} até ${campos.fim || 'sem fim'}`);
+  const arquivoM = imgM ? `anuncio-${Date.now()}-m.${extM}` : null;
+  if (arquivoM) await writeFile(path.join(pastaAnuncios, arquivoM), imgM.dados);
+  db.prepare('INSERT INTO anuncios (anunciante, titulo, link, imagem, imagem_mobile, inicio, fim, valor_centavos, plano, exclusivo, contato) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(anunciante, String(campos.titulo || '').trim().slice(0, 160), link, arquivo, arquivoM, inicio, fim, valor, plano?.k || '', plano?.exclusivo ? 1 : 0, String(campos.contato || '').trim().slice(0, 200));
+  registrar(usuario, 'Criou anúncio', `${anunciante} · ${plano ? plano.n : 'sem plano'} · ${P.reais(valor)} · ${inicio} até ${fim || 'sem fim'} · ${link || 'sem link'}`);
+  redirecionar(res, '/admin/anuncios?ok=1');
+}));
+
+rota('POST', '/admin/anuncios/planos', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const novos = planosAnuncio().map((p) => {
+    const v = centavos(f[`v_${p.k}`]);
+    return { ...p, v: Number.isFinite(v) && v >= 0 ? v : p.v };
+  });
+  const arte = centavos(f.arte);
+  gravarConfig('anuncio_planos', JSON.stringify(novos));
+  if (Number.isFinite(arte) && arte >= 0) gravarConfig('anuncio_arte_centavos', String(arte));
+  const max = Math.min(8, Math.max(1, Math.floor(Number(f.max) || 4)));
+  gravarConfig('anuncio_max_simultaneos', String(max));
+  gravarConfig('anuncio_mostrar_numeros', f.numeros === '1' ? '1' : '0');
+  registrar(usuario, 'Alterou planos de anúncio', `${novos.map((p) => `${p.n}: ${P.reais(p.v)}`).join(' · ')} · arte ${P.reais(lerConfig('anuncio_arte_centavos'))} · máx. ${max} simultâneos`);
   redirecionar(res, '/admin/anuncios?ok=1');
 }));
 
@@ -1499,6 +1601,7 @@ rota('POST', '/admin/anuncios/acao', exigeAdmin(async ({ req, res, usuario }) =>
   } else if (f.acao === 'excluir') {
     db.prepare('DELETE FROM anuncios WHERE id = ?').run(a.id);
     await unlink(path.join(pastaAnuncios, a.imagem)).catch(() => {});
+    if (a.imagem_mobile) await unlink(path.join(pastaAnuncios, a.imagem_mobile)).catch(() => {});
     registrar(usuario, 'Excluiu anúncio', `${a.anunciante} (${a.impressoes} exibições, ${a.cliques} cliques)`);
   }
   redirecionar(res, '/admin/anuncios?ok=1');
