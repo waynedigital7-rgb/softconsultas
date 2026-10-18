@@ -5,7 +5,7 @@ import { formatarDoc } from './pdf.js';
 export const STATUS_LN = {
   aguardando_pagamento: { t: 'Aguardando pagamento', c: '#9A6B00' },
   pago: { t: 'Pago · aguardando o lote', c: '#1E7B4D' },
-  em_lote: { t: 'Enviado no lote', c: '#5B2D8E' },
+  em_lote: { t: 'Incluído na ação', c: '#5B2D8E' },
   em_andamento: { t: 'Em andamento', c: '#5B2D8E' },
   concluido: { t: 'Concluído', c: '#1E7B4D' },
   cancelado: { t: 'Cancelado', c: '#7A7285' },
@@ -43,7 +43,7 @@ export function paginaServicoLN({ cfg, proximoLote, pedidos, usuario, erro, v = 
   return `
 <span class="tag">Serviço</span>
 <h1 style="font-size:1.9rem;margin:10px 0 4px">${cfg.prazo ? p(cfg.prazo) : 'Limpa Nome'}</h1>
-<p class="muted" style="margin:0 0 18px;max-width:760px">${p(cfg.resumo) || 'Pedido de retirada de negativações indevidas dos cadastros de inadimplentes, feito em lote toda semana.'}</p>
+<p class="muted" style="margin:0 0 18px;max-width:760px">${p(cfg.resumo) || 'Ação judicial coletiva, amparada pelo Código de Defesa do Consumidor, para retirar as negativações do seu CPF ou CNPJ e garantir o "nada consta".'}</p>
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 ${pedidos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Seus pedidos</h2><div class="rolar"><table class="tabela">
   <tr><th>#</th><th>Titular</th><th>Lote</th><th>Status</th><th></th></tr>
@@ -51,49 +51,64 @@ ${pedidos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="fo
 </table></div></div>` : ''}
 <div class="grade" style="margin-bottom:18px">
   <div class="saldo"><div style="color:#D9B8F0;font-weight:600">Valor do serviço</div><div class="valor">${reais(cfg.preco)}</div><div style="color:#D9B8F0;margin-top:6px">no Pix${cfg.parcelas > 1 ? ` ou em até ${cfg.parcelas}x de ${reais(cfg.tabela.at(-1).parcela)} no cartão` : ''}</div></div>
-  <div class="cartao"><h3 style="margin-top:0">Próximo lote</h3><p style="margin:0;font-size:1.3rem;font-weight:700">${dataBR(proximoLote)}</p><p class="muted" style="margin:6px 0 0">Os pedidos pagos são enviados toda ${DIAS[cfg.dia]}.</p></div>
+  <div class="cartao"><h3 style="margin-top:0">Próxima inclusão na ação</h3><p style="margin:0;font-size:1.3rem;font-weight:700">${dataBR(proximoLote)}</p><p class="muted" style="margin:6px 0 0">Os pedidos pagos entram na ação toda ${DIAS[cfg.dia]}.</p></div>
 </div>
 ${blocoVideo(cfg.video) ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Assista: como funciona o Limpa Nome</h2>${blocoVideo(cfg.video)}</div>` : ''}
 <div class="cartao" style="margin-bottom:18px">
-  <h2 style="font-size:1.2rem;margin-top:0">Como funciona, passo a passo</h2>
-  <p style="margin:8px 0"><strong>1. Você faz o pedido.</strong> Preenche os dados do titular do CPF e envia a foto do RG ou da CNH. Leva uns 3 minutos.</p>
+  <h2 style="font-size:1.2rem;margin-top:0">Como funciona a ação</h2>
+  <p style="margin:8px 0">Realizamos nossas ações por meio de <strong>processos judiciais amparados pelo CDC (Código de Defesa do Consumidor)</strong>, com ações protetivas em nome dos nossos clientes, através de um <strong>processo coletivo por associação</strong>. O objetivo é normalizar as suas pendências nos cadastros de crédito, com a devida <strong>remoção das negativações nos órgãos de proteção ao crédito</strong>.</p>
+  <h3 style="font-size:1.05rem;margin:18px 0 6px">Ordem judicial contra os órgãos de proteção ao crédito</h3>
+  <p style="margin:6px 0">O processo por ordem judicial tem como foco <strong>retirar todas as negativações do seu nome (CPF) e/ou da sua empresa (CNPJ)</strong> e garantir o <strong>"NADA CONSTA"</strong>, para que, com o nome reabilitado, você possa voltar ao mercado e buscar crédito.</p>
+  <h3 style="font-size:1.05rem;margin:18px 0 6px">Qual a vantagem dessa ação?</h3>
+  <p style="margin:6px 0">Você, pessoa física ou empresário, passa a ter <strong>"NADA CONSTA"</strong> nos órgãos de proteção ao crédito: as restrições desaparecem do relatório, e as outras empresas deixam de ver os seus débitos anteriores quando consultam o seu CPF ou CNPJ.</p>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
+    <div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Prazo</strong><br>${cfg.prazo ? p(cfg.prazo) : 'até 30 dias'}</div>
+    <div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Abrangência</strong><br>Serasa, SPC e Boa Vista</div>
+    <div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Para quem</strong><br>CPF e CNPJ</div>
+  </div>
+  ${cfg.garantia ? `<p style="margin:16px 0 0"><strong>Garantia:</strong> ${p(cfg.garantia)}</p>` : ''}
+  ${cfg.executor ? `<p class="muted" style="margin:8px 0 0">Ação conduzida por: <strong>${p(cfg.executor)}</strong></p>` : ''}
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Passo a passo</h2>
+  <p style="margin:8px 0"><strong>1. Você faz o pedido.</strong> Preenche os dados do titular (CPF ou CNPJ) e envia a foto do RG ou da CNH. Leva uns 3 minutos.</p>
   <p style="margin:8px 0"><strong>2. Você paga.</strong> No Pix (confirmado na hora)${cfg.parcelas > 1 ? ` ou parcelado em até ${cfg.parcelas}x no cartão, na página segura do Asaas` : ''}. O pagamento é separado do saldo de consultas.</p>
-  <p style="margin:8px 0"><strong>3. Seu nome entra no lote da semana.</strong> Toda ${DIAS[cfg.dia]} reunimos os pedidos pagos e enviamos juntos, numa ação coletiva. Pedidos pagos até a véspera entram no lote seguinte mais próximo.</p>
-  <p style="margin:8px 0"><strong>4. Acompanhe por aqui.</strong> Cada mudança de etapa aparece nesta página e chega no seu e-mail.</p>
-  <p style="margin:8px 0"><strong>5. Confira o resultado.</strong> Quando o pedido for concluído, faça uma consulta do seu CPF aqui na plataforma para ver a situação atualizada.</p>
-  ${cfg.executor ? `<p class="muted" style="margin:12px 0 0">Serviço executado por: <strong>${p(cfg.executor)}</strong></p>` : ''}
-  ${cfg.garantia ? `<p class="muted" style="margin:6px 0 0"><strong>Garantia:</strong> ${p(cfg.garantia)}</p>` : ''}
+  <p style="margin:8px 0"><strong>3. Você entra na ação coletiva da semana.</strong> Toda ${DIAS[cfg.dia]} os pedidos pagos são incluídos no processo coletivo. Próxima inclusão: <strong>${dataBR(proximoLote)}</strong>.</p>
+  <p style="margin:8px 0"><strong>4. Acompanhe por aqui.</strong> Cada etapa aparece nesta página e chega no seu e-mail.</p>
+  <p style="margin:8px 0"><strong>5. Confira o "nada consta".</strong> Quando o pedido for concluído, consulte o seu CPF ou CNPJ aqui na plataforma e veja o nome limpo.</p>
 </div>
 <div class="cartao" style="margin-bottom:18px">
   <h2 style="font-size:1.2rem;margin-top:0">Perguntas frequentes</h2>
-  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">A minha dívida deixa de existir?</summary><p style="margin:8px 0 0">Não. O serviço pede a retirada do <strong>registro de negativação</strong> (o "nome sujo" nos cadastros de inadimplentes). A dívida continua existindo e o credor ainda pode cobrá-la pelos meios legais. Se puder, negocie com o credor também.</p></details>
-  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">O que é o lote semanal?</summary><p style="margin:8px 0 0">Em vez de enviar cada pedido sozinho, juntamos todos os pedidos pagos da semana e enviamos de uma vez, toda ${DIAS[cfg.dia]}. Isso reduz o custo e por isso o preço é menor. O próximo lote sai em <strong>${dataBR(proximoLote)}</strong>.</p></details>
-  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Quanto tempo demora?</summary><p style="margin:8px 0 0">${cfg.prazo ? p(cfg.prazo) : 'O prazo varia conforme cada caso e cada órgão. Você acompanha tudo por esta página.'}</p></details>
-  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">É garantido?</summary><p style="margin:8px 0 0">${cfg.garantia ? p(cfg.garantia) : 'O resultado depende da análise de cada caso, por isso não prometemos resultado. Você é avisado de cada etapa.'}</p></details>
-  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Por que precisam do meu RG ou CNH?</summary><p style="margin:8px 0 0">Para comprovar que o pedido é feito pelo próprio titular (ou com autorização dele). Os documentos ficam guardados com acesso restrito, são usados só neste serviço e são apagados automaticamente 90 dias depois de o pedido terminar.</p></details>
-  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Posso pedir para outra pessoa?</summary><p style="margin:8px 0 0">Pode, desde que você tenha autorização por escrito do titular. Envie os dados e o documento <strong>dele</strong> e desmarque a opção "meu próprio CPF".</p></details>
-  <details style="padding:10px 0"><summary style="cursor:pointer;font-weight:700">Como sei se meu nome está negativado?</summary><p style="margin:8px 0 0">Faça uma consulta do seu CPF aqui na plataforma antes do pedido. <a href="/limpa-nome">Ver consultas recomendadas</a>.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">É garantido?</summary><p style="margin:8px 0 0">${cfg.garantia ? p(cfg.garantia) : 'Garantimos a retirada das negativações nos órgãos de proteção ao crédito.'} <strong>Não prometemos crédito:</strong> a aprovação de cartão, empréstimo ou financiamento depende da análise de cada empresa.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Quanto tempo demora?</summary><p style="margin:8px 0 0">${cfg.prazo ? p(cfg.prazo) : 'Até 30 dias'}. O prazo é contado a partir da inclusão do seu pedido na ação coletiva, que acontece toda ${DIAS[cfg.dia]}.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">A minha dívida deixa de existir?</summary><p style="margin:8px 0 0">Não. A ação retira as <strong>negativações</strong> dos órgãos de proteção ao crédito (o "nome sujo") e você fica com "nada consta". A dívida em si continua com o credor, que ainda pode cobrá-la pelos meios legais. Se puder, negocie com ele também.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">O que é o processo coletivo por associação?</summary><p style="margin:8px 0 0">É uma ação judicial movida por uma associação em nome de vários consumidores ao mesmo tempo, com base no Código de Defesa do Consumidor. Você não precisa contratar advogado nem ir ao fórum: basta fazer o pedido aqui e enviar o documento.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Meu nome pode voltar a ficar sujo?</summary><p style="margin:8px 0 0">Dívidas novas, que você fizer e não pagar depois do pedido, podem gerar novas negativações. E, como toda decisão judicial, ela segue o andamento do processo. Por isso recomendamos manter as contas em dia e, quando possível, negociar os débitos antigos.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Serve para empresa (CNPJ)?</summary><p style="margin:8px 0 0">Sim. Informe o CNPJ e envie o RG ou a CNH do sócio responsável.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Por que precisam do meu RG ou CNH?</summary><p style="margin:8px 0 0">Para incluir você na ação com segurança e confirmar que o pedido é do próprio titular (ou feito com autorização dele). Os documentos ficam com acesso restrito, são usados só neste serviço e são apagados automaticamente 90 dias depois de o pedido terminar.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Posso pedir para outra pessoa?</summary><p style="margin:8px 0 0">Pode, desde que você tenha autorização por escrito do titular. Envie os dados e o documento <strong>dele</strong> e desmarque a opção "meu próprio CPF/CNPJ".</p></details>
+  <details style="padding:10px 0"><summary style="cursor:pointer;font-weight:700">Como sei se meu nome está negativado?</summary><p style="margin:8px 0 0">Faça uma consulta do seu CPF ou CNPJ aqui na plataforma antes do pedido. <a href="/limpa-nome">Ver consultas recomendadas</a>.</p></details>
 </div>
 <form class="cartao" method="post" action="/limpa-nome/servico" enctype="multipart/form-data" style="max-width:720px">
   <h2 style="font-size:1.2rem;margin-top:0">Fazer o pedido</h2>
-  <div class="campo"><label for="ln-nome">Nome completo do titular</label><input id="ln-nome" type="text" name="nome" required maxlength="120" value="${p(v.nome ?? usuario.nome)}"></div>
+  <div class="campo"><label for="ln-nome">Nome completo do titular (ou razão social da empresa)</label><input id="ln-nome" type="text" name="nome" required maxlength="120" value="${p(v.nome ?? usuario.nome)}"></div>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
-    <div class="campo" style="flex:1 1 200px"><label for="ln-cpf">CPF do titular</label><input id="ln-cpf" type="text" name="cpf" required inputmode="numeric" maxlength="14" value="${p(v.cpf ?? (usuario.documento?.length === 11 ? usuario.documento : ''))}"></div>
-    <div class="campo" style="flex:1 1 180px"><label for="ln-nasc">Data de nascimento</label><input id="ln-nasc" name="nascimento" type="date" required value="${p(v.nascimento)}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+    <div class="campo" style="flex:1 1 200px"><label for="ln-cpf">CPF ou CNPJ</label><input id="ln-cpf" type="text" name="cpf" required inputmode="numeric" maxlength="18" value="${p(v.cpf ?? (usuario.documento?.length === 11 ? usuario.documento : ''))}"></div>
+    <div class="campo" style="flex:1 1 180px"><label for="ln-nasc">Data de nascimento (do titular ou do sócio)</label><input id="ln-nasc" name="nascimento" type="date" required value="${p(v.nascimento)}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
   </div>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 200px"><label for="ln-tel">WhatsApp do titular</label><input id="ln-tel" type="tel" name="telefone" required inputmode="tel" maxlength="20" value="${p(v.telefone ?? usuario.telefone)}"></div>
     <div class="campo" style="flex:1 1 240px"><label for="ln-email">E-mail do titular</label><input id="ln-email" name="email" type="email" required maxlength="120" value="${p(v.email ?? usuario.email)}"></div>
   </div>
-  <div class="campo"><label for="ln-tipo">Documento com foto</label>
+  <div class="campo"><label for="ln-tipo">Documento com foto (do titular ou, se for CNPJ, do sócio responsável)</label>
     <select id="ln-tipo" name="doc_tipo" required style="min-height:46px"><option value="RG" ${v.doc_tipo === 'RG' ? 'selected' : ''}>RG</option><option value="CNH" ${v.doc_tipo === 'CNH' ? 'selected' : ''}>CNH</option></select></div>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 220px"><label for="ln-frente">Foto da frente</label><input id="ln-frente" name="doc_frente" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required></div>
     <div class="campo" style="flex:1 1 220px"><label for="ln-verso">Foto do verso</label><input id="ln-verso" name="doc_verso" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></div>
   </div>
   <small class="muted" style="display:block;margin:-6px 0 14px">JPG, PNG ou PDF, até 5 MB cada. Na CNH digital (PDF), a frente basta.</small>
-  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><input type="checkbox" name="proprio" value="1" ${v.proprio === '0' ? '' : 'checked'} style="width:20px;height:20px;margin-top:3px"> <span>O pedido é para o <strong>meu próprio CPF</strong>. (Se desmarcar, você declara ter autorização por escrito do titular.)</span></label>
-  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Autorizo a Soft Consultas${cfg.executor ? ` e ${p(cfg.executor)}` : ''} a usar estes dados e documentos exclusivamente para este serviço, e li que a dívida continua existindo e que o resultado depende da análise do caso.</span></label>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><input type="checkbox" name="proprio" value="1" ${v.proprio === '0' ? '' : 'checked'} style="width:20px;height:20px;margin-top:3px"> <span>O pedido é para o <strong>meu próprio CPF/CNPJ</strong> (ou empresa da qual sou sócio). Se desmarcar, você declara ter autorização por escrito do titular.</span></label>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Autorizo a minha inclusão, como associado(a), na ação judicial coletiva${cfg.executor ? ` conduzida por ${p(cfg.executor)}` : ''}, e o uso destes dados e documentos exclusivamente para este serviço. Entendo que a ação retira as negativações, que a dívida continua com o credor e que o serviço não garante aprovação de crédito.</span></label>
   <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 16px"><legend style="font-weight:700;padding:0 6px">Forma de pagamento</legend>
     <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" ${v.forma === 'cartao' ? '' : 'checked'} style="width:20px;height:20px"> <span><strong>Pix</strong> · ${reais(cfg.preco)} à vista</span></label>
     ${cfg.parcelas >= 1 ? `<label style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap"><input type="radio" name="forma" value="cartao" ${v.forma === 'cartao' ? 'checked' : ''} style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong> em</span>
@@ -108,9 +123,9 @@ export function paginaPedidoLN({ p, cfg }) {
   const passos = [
     ['aguardando_pagamento', 'Pedido criado'],
     ['pago', `Pagamento confirmado${p.pago_em ? ` em ${dt(p.pago_em)}` : ''}`],
-    ['em_lote', `Enviado no lote de ${dataBR(p.lote) || '—'}`],
+    ['em_lote', `Incluído na ação coletiva de ${dataBR(p.lote) || '—'}`],
     ['em_andamento', 'Em andamento'],
-    ['concluido', 'Concluído'],
+    ['concluido', 'Concluído · nome limpo'],
   ];
   const ordem = passos.map((x) => x[0]);
   const atual = ordem.indexOf(p.status);
@@ -164,7 +179,7 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
   </div>
   <div class="campo"><label for="c-resumo">Resumo do serviço (aparece no topo da página do cliente)</label><input id="c-resumo" type="text" name="resumo" maxlength="300" value="${esc(cfg.resumo)}"></div>
   <div class="campo"><label for="c-prazo">Prazo / promessa (vira o título da página do cliente)</label><input id="c-prazo" type="text" name="prazo" maxlength="150" value="${esc(cfg.prazo)}" placeholder="Ex.: de 30 a 90 dias após o envio do lote"></div>
-  <div class="campo"><label for="c-exec">Quem executa</label><input id="c-exec" type="text" name="executor" maxlength="150" value="${esc(cfg.executor)}" placeholder="Ex.: Soft Crédito / escritório parceiro"></div>
+  <div class="campo"><label for="c-exec">Quem conduz a ação (associação / escritório)</label><input id="c-exec" type="text" name="executor" maxlength="150" value="${esc(cfg.executor)}" placeholder="Ex.: Soft Crédito / escritório parceiro"></div>
   <div class="campo"><label for="c-gar">Garantia / reembolso</label><input id="c-gar" type="text" name="garantia" maxlength="300" value="${esc(cfg.garantia)}" placeholder="Ex.: se o nome não sair em 90 dias, devolvemos o valor"></div>
   <div class="campo"><label for="c-video">Vídeo explicativo (link do YouTube/Vimeo ou /criativos/limpa-nome.mp4)</label><input id="c-video" type="text" name="video" maxlength="300" value="${esc(cfg.video)}" placeholder="https://youtu.be/..."><small class="muted">Recomendado: suba no YouTube como "Não listado" e cole o link aqui.</small></div>
   <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:14px"><input type="checkbox" name="antecipar" value="1" ${cfg.antecipar ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Antecipar automaticamente os pagamentos no cartão</strong><br><span class="muted">Assim que o Asaas confirma o cartão, pedimos a antecipação do parcelamento inteiro: o valor (menos a taxa do Asaas) cai na conta em geral no próximo dia útil, em vez de mês a mês.</span></span></label>
@@ -183,7 +198,7 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
   </div>
   <form method="post" action="/admin/limpa-nome/fechar-lote" style="margin:0 0 14px">
     <input type="hidden" name="lote" value="${proximoLote}">
-    <button class="btn" ${lotes.proximo ? '' : 'disabled'} data-confirmar="Marcar os ${lotes.proximo} pedido(s) do lote ${dataBR(proximoLote)} como ENVIADOS? Os clientes recebem um e-mail.">Marcar lote ${dataBR(proximoLote)} como enviado</button>
+    <button class="btn" ${lotes.proximo ? '' : 'disabled'} data-confirmar="Marcar os ${lotes.proximo} pedido(s) do lote ${dataBR(proximoLote)} como INCLUÍDOS NA AÇÃO? Os clientes recebem um e-mail.">Marcar lote ${dataBR(proximoLote)} como incluído na ação</button>
   </form>
   <div class="rolar"><table class="tabela">
     <tr><th>#</th><th>Data</th><th>Titular</th><th>Contato</th><th>Documentos</th><th>Lote</th><th>Status</th><th>Atualizar</th></tr>

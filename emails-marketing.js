@@ -177,21 +177,21 @@ export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeRe
     const lote = sv.lote ? sv.lote.split('-').reverse().join('/') : '';
     const ult = sv.tabela?.at(-1);
     const parc = sv.parcelas > 1 && ult ? ` ou em até ${sv.parcelas}x de ${reais(ult.parcela)} no cartão` : '';
+    const prazo = sv.prazo || 'Nome limpo em até 30 dias';
     return {
-      assunto: `${primeiro}, ${sv.prazo ? sv.prazo.charAt(0).toLowerCase() + sv.prazo.slice(1) : 'limpe seu nome'}: o lote desta semana fecha${lote ? ` em ${lote}` : ' em breve'}`,
-      html: moldura({ base, sair, preheader: `Pedido online, sem sair de casa. ${reais(sv.preco || 0)} no Pix${parc}.`, corpo: `
-        <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, ${esc(sv.prazo ? sv.prazo.charAt(0).toLowerCase() + sv.prazo.slice(1) : 'chegou a hora de limpar o seu nome')}</h1>
-        <p>Nome negativado fecha portas: cartão negado, financiamento recusado, aluguel que não sai. Agora a Soft Consultas tem o <strong>serviço de Limpa Nome</strong>, com pedido 100% online.</p>
+      assunto: `${primeiro}, ${prazo.charAt(0).toLowerCase() + prazo.slice(1)}, com "nada consta" no seu CPF`,
+      html: moldura({ base, sair, preheader: `Ação judicial coletiva amparada pelo CDC. ${reais(sv.preco || 0)} no Pix${parc}.`, corpo: `
+        <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, ${esc(prazo.charAt(0).toLowerCase() + prazo.slice(1))}</h1>
+        <p>Nome negativado fecha portas: cartão negado, financiamento recusado, aluguel que não sai. Agora a Soft Consultas tem o <strong>Limpa Nome por ação judicial coletiva</strong>, amparada pelo Código de Defesa do Consumidor.</p>
+        ${lista(['Retirada das negativações do seu CPF ou CNPJ nos órgãos de proteção ao crédito', '"Nada consta" no relatório: as empresas deixam de ver os débitos antigos', 'Sem advogado e sem ir ao fórum: pedido 100% online', `${prazo}`])}
         <div style="background:#0F0C14;color:#ffffff;border-radius:14px;padding:18px 20px;margin:20px 0">
-          <div style="font-size:13px;color:#C98BEB;font-weight:bold;letter-spacing:.5px">LIMPA NOME · LOTE SEMANAL</div>
+          <div style="font-size:13px;color:#C98BEB;font-weight:bold;letter-spacing:.5px">LIMPA NOME · AÇÃO COLETIVA</div>
           <div style="font-size:15px;margin-top:6px"><span style="font-size:26px;font-weight:bold">${reais(sv.preco || 0)}</span> <span style="color:#C9BFD4">no Pix${esc(parc)}</span></div>
-          ${lote ? `<div style="font-size:14px;color:#E3C6F4;margin-top:8px">Próximo lote: <strong>${lote}</strong></div>` : ''}
+          ${lote ? `<div style="font-size:14px;color:#E3C6F4;margin-top:8px">Próxima inclusão na ação: <strong>${lote}</strong></div>` : ''}
         </div>
-        <p style="margin:4px 0"><strong>Como funciona:</strong></p>
-        ${lista(['Você preenche os dados e envia a foto do RG ou da CNH (uns 3 minutos)', 'Paga no Pix ou parcela no cartão', 'Seu pedido entra no lote da semana', 'Você acompanha cada etapa pelo site e por e-mail'])}
         ${sv.video ? `<p><a href="${link}" style="color:#9F31D3;font-weight:bold">▶ Assista ao vídeo explicativo</a></p>` : ''}
         ${botao(link, 'Quero limpar meu nome')}
-        <p style="font-size:13px;color:#5B5366">O serviço pede a retirada do registro de negativação; a dívida em si continua existindo junto ao credor.${sv.garantia ? ` Garantia: ${esc(sv.garantia)}.` : ''}${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
+        <p style="font-size:13px;color:#5B5366">Garantimos a retirada das negativações; não garantimos aprovação de crédito, que depende de cada empresa. A dívida em si continua com o credor.${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
     };
   }
   throw new Error('Campanha desconhecida');

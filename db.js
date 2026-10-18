@@ -358,12 +358,12 @@ const padrao = {
   lns_ativo: '0',
   lns_preco_centavos: '129900',
   lns_dia_lote: '5',
-  lns_prazo: 'Nome limpo em até 15 dias',
+  lns_prazo: 'Nome limpo em até 30 dias',
   lns_parcelas: '10',
   lns_juros_mensal: '2.99',
   lns_antecipar: '1',
   lns_executor: '',
-  lns_garantia: '',
+  lns_garantia: 'Garantimos a retirada das negativações do seu nome nos órgãos de proteção ao crédito (nome limpo). Não garantimos a aprovação de crédito, que depende da análise de cada empresa.',
   lns_resumo: '',
   lns_video: '',
   emails_desde: '',
@@ -371,6 +371,12 @@ const padrao = {
   bonus_faixas: JSON.stringify([{ a_partir_de: 10000, percentual: 5 }, { a_partir_de: 30000, percentual: 10 }]),
 };
 for (const [k, v] of Object.entries(padrao)) db.prepare('INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)').run(k, v);
+// Limpa Nome: textos da ação judicial coletiva (só troca o que ainda está no padrão antigo ou vazio; o que o admin editou fica)
+{
+  const troca = (k, antigo, novo) => db.prepare('UPDATE config SET valor = ? WHERE chave = ? AND valor = ?').run(novo, k, antigo);
+  troca('lns_prazo', 'Nome limpo em até 15 dias', 'Nome limpo em até 30 dias');
+  troca('lns_garantia', '', 'Garantimos a retirada das negativações do seu nome nos órgãos de proteção ao crédito (nome limpo). Não garantimos a aprovação de crédito, que depende da análise de cada empresa.');
+}
 export const lerConfig = (k) => db.prepare('SELECT valor FROM config WHERE chave = ?').get(k)?.valor;
 export const gravarConfig = (k, v) => db.prepare('INSERT INTO config (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor').run(k, String(v));
 

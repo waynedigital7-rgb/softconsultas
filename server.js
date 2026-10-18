@@ -1581,10 +1581,10 @@ function emailPedidoLN(p, titulo, texto) {
   enviarEmail({ para: p.email, assunto: `${titulo} · Pedido #${p.id}`, html }).catch((e) => console.error('e-mail limpa nome:', e.message));
 }
 const TEXTO_STATUS_LN = {
-  pago: (p) => [`Pagamento confirmado`, `Recebemos o seu pagamento. O seu pedido entra no lote de <strong>${P.esc(p.lote?.split('-').reverse().join('/') || '')}</strong>.`],
-  em_lote: (p) => [`Seu pedido foi enviado no lote`, `O seu pedido seguiu no lote de ${P.esc(p.lote?.split('-').reverse().join('/') || '')}. Agora é aguardar o andamento; avisamos a cada etapa.`],
-  em_andamento: () => [`Seu pedido está em andamento`, 'O seu pedido está sendo processado.'],
-  concluido: () => [`Seu pedido foi concluído`, 'O seu pedido de Limpa Nome foi concluído. Recomendamos fazer uma consulta do seu CPF na plataforma para conferir a situação atualizada.'],
+  pago: (p) => [`Pagamento confirmado`, `Recebemos o seu pagamento. O seu nome será incluído na ação coletiva de <strong>${P.esc(p.lote?.split('-').reverse().join('/') || '')}</strong>.`],
+  em_lote: (p) => [`Você foi incluído na ação coletiva`, `O seu pedido foi incluído na ação judicial coletiva de ${P.esc(p.lote?.split('-').reverse().join('/') || '')}. Agora é aguardar o andamento; avisamos a cada etapa.`],
+  em_andamento: () => [`Sua ação está em andamento`, 'A ação com o seu pedido está em andamento.'],
+  concluido: () => [`Seu nome está limpo`, 'O seu pedido de Limpa Nome foi concluído. Faça uma consulta do seu CPF ou CNPJ na plataforma para conferir o "nada consta".'],
   cancelado: () => [`Seu pedido foi cancelado`, 'O seu pedido foi cancelado.'],
   reembolsado: () => [`Seu pagamento foi reembolsado`, 'O valor do seu pedido foi devolvido.'],
 };
@@ -1684,13 +1684,13 @@ rota('POST', '/limpa-nome/servico', exigeLogin(async ({ req, res, usuario }) => 
   const parcelas = forma === 'cartao' ? Math.min(cfg.parcelas, Math.max(1, Math.floor(Number(v.parcelas) || 1))) : 1;
   const totalCobrado = forma === 'cartao' ? cfg.tabela[parcelas - 1].total : cfg.preco;
   if (nome.split(' ').length < 2) return erro('Informe o nome completo do titular.');
-  if (cpf.length !== 11 || !A.cpfValido(cpf)) return erro('CPF inválido.');
+  if (!((cpf.length === 11 || cpf.length === 14) && A.documentoValido(cpf))) return erro('CPF ou CNPJ inválido.');
   const anos = (Date.now() - Date.parse(nasc)) / (365.25 * 86400000);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(nasc) || !(anos >= 18 && anos < 120)) return erro('Informe uma data de nascimento válida (o titular precisa ser maior de idade).');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nasc) || !(anos >= 18 && anos < 120)) return erro('Informe uma data de nascimento válida (o titular ou sócio precisa ser maior de idade).');
   if (tel.length < 10 || tel.length > 13) return erro('Informe um WhatsApp válido com DDD.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return erro('Informe um e-mail válido.');
   if (v.aceite !== '1') return erro('É preciso aceitar a autorização para continuar.');
-  if (db.prepare(`SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND status IN ('pago','em_lote','em_andamento')`).get(cpf)) return erro('Já existe um pedido em andamento para este CPF.');
+  if (db.prepare(`SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND status IN ('pago','em_lote','em_andamento')`).get(cpf)) return erro('Já existe um pedido em andamento para este CPF/CNPJ.');
   const docs = {};
   for (const lado of ['doc_frente', 'doc_verso']) {
     const a = form.arquivos[lado];
