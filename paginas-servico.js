@@ -35,6 +35,11 @@ export function tabelaParcelas(preco, max, jurosPct) {
     return { n, parcela, total: parcela * n };
   });
 }
+// Atendimento humano (WhatsApp): discreto, para quem não conseguir sozinho
+const ajudaFlutuante = (cfg, q = '') => (cfg.whatsapp ? `<div style="height:64px" aria-hidden="true"></div><a href="/limpa-nome/ajuda${q}" target="_blank" rel="noopener" aria-label="Falar com o atendimento no WhatsApp" style="position:fixed;right:16px;bottom:16px;z-index:50;display:flex;align-items:center;gap:8px;background:#1FA855;color:#fff;text-decoration:none;font-weight:700;padding:12px 16px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.25)"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4a.5.5 0 0 0 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.7a2.7 2.7 0 0 0 1.8-1.3 2.2 2.2 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg><span>Ajuda</span></a>` : '');
+const ajudaCartao = (cfg, q = '') => (cfg.whatsapp ? `<div class="cartao" style="margin-bottom:18px;display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+  <div><h2 style="font-size:1.1rem;margin:0 0 4px">Não conseguiu fazer sozinho?</h2><p class="muted" style="margin:0">Nossa equipe te ajuda pelo WhatsApp${cfg.atendimento ? ` · ${esc(cfg.atendimento)}` : ''}.</p></div>
+  <a class="btn sec" href="/limpa-nome/ajuda${q}" target="_blank" rel="noopener">Falar com o atendimento</a></div>` : '');
 const DIAS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 
 // ---------- Cliente ----------
@@ -89,6 +94,8 @@ ${blocoVideo(cfg.video) ? `<div class="cartao" style="margin-bottom:18px"><h2 st
   <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Posso pedir para outra pessoa?</summary><p style="margin:8px 0 0">Pode, desde que você tenha autorização por escrito do titular. Envie os dados e o documento <strong>dele</strong> e desmarque a opção "meu próprio CPF/CNPJ".</p></details>
   <details style="padding:10px 0"><summary style="cursor:pointer;font-weight:700">Como sei se meu nome está negativado?</summary><p style="margin:8px 0 0">Faça uma consulta do seu CPF ou CNPJ aqui na plataforma antes do pedido. <a href="/limpa-nome">Ver consultas recomendadas</a>.</p></details>
 </div>
+${ajudaCartao(cfg, '?e=duvida')}
+${ajudaFlutuante(cfg, erro ? '?e=erro-formulario' : '?e=pagina')}
 <form class="cartao" method="post" action="/limpa-nome/servico" enctype="multipart/form-data" style="max-width:720px">
   <h2 style="font-size:1.2rem;margin-top:0">Fazer o pedido</h2>
   <div class="campo"><label for="ln-nome">Nome completo do titular (ou razão social da empresa)</label><input id="ln-nome" type="text" name="nome" required maxlength="120" value="${p(v.nome ?? usuario.nome)}"></div>
@@ -155,7 +162,9 @@ ${p.status === 'aguardando_pagamento' && p.forma_pagamento !== 'cartao' ? `
     <span style="width:26px;height:26px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;background:${i <= atual ? 'var(--roxo)' : '#C9BFD4'}">${i < atual || (i === atual && k === 'concluido') ? '✓' : i + 1}</span><span>${esc(t)}</span></div>`).join('')}
   ${p.obs_admin ? `<div class="aviso" style="margin-top:12px"><strong>Atualização:</strong> ${esc(p.obs_admin)}</div>` : ''}
   ${cfg.prazo ? `<p class="muted" style="margin:12px 0 0">${esc(cfg.prazo)}</p>` : ''}
-</div>`;
+</div>
+<div style="max-width:620px;margin-top:18px">${ajudaCartao(cfg, `?p=${p.id}&e=${p.status}`)}</div>
+${ajudaFlutuante(cfg, `?p=${p.id}&e=${p.status}`)}`;
 }
 
 // ---------- Admin ----------
@@ -166,7 +175,7 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
 <div class="grade" style="margin-bottom:18px">
   <div class="cartao"><div class="muted">Próximo lote</div><div style="font-family:Montserrat;font-size:1.6rem;font-weight:800">${dataBR(proximoLote)}</div><div class="muted">${lotes.proximo} pedido(s) pago(s) para ele</div></div>
   <div class="cartao"><div class="muted">Pedidos pagos (total)</div><div style="font-family:Montserrat;font-size:1.6rem;font-weight:800">${lotes.pagos}</div><div class="muted">${reais(lotes.receita)} recebidos</div></div>
-  <div class="cartao"><div class="muted">Aguardando pagamento</div><div style="font-family:Montserrat;font-size:1.6rem;font-weight:800">${lotes.aguardando}</div></div>
+  <div class="cartao"><div class="muted">Aguardando pagamento</div><div style="font-family:Montserrat;font-size:1.6rem;font-weight:800">${lotes.aguardando}</div><div class="muted">${lotes.ajuda} pedido(s) de ajuda no WhatsApp em 30 dias (veja no Registro)</div></div>
 </div>
 <form class="cartao" method="post" action="/admin/limpa-nome/config" style="max-width:760px;margin-bottom:18px">
   <h2 style="font-size:1.2rem;margin-top:0">Configuração do serviço</h2>
@@ -181,6 +190,10 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
   <div class="campo"><label for="c-prazo">Prazo / promessa (vira o título da página do cliente)</label><input id="c-prazo" type="text" name="prazo" maxlength="150" value="${esc(cfg.prazo)}" placeholder="Ex.: de 30 a 90 dias após o envio do lote"></div>
   <div class="campo"><label for="c-exec">Quem conduz a ação (associação / escritório)</label><input id="c-exec" type="text" name="executor" maxlength="150" value="${esc(cfg.executor)}" placeholder="Ex.: Soft Crédito / escritório parceiro"></div>
   <div class="campo"><label for="c-gar">Garantia / reembolso</label><input id="c-gar" type="text" name="garantia" maxlength="300" value="${esc(cfg.garantia)}" placeholder="Ex.: se o nome não sair em 90 dias, devolvemos o valor"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="c-wpp">WhatsApp do atendimento (com DDI e DDD)</label><input id="c-wpp" type="text" name="whatsapp" inputmode="numeric" value="${esc(cfg.whatsapp)}" placeholder="5547999999999"><small class="muted">Vazio = esconde o botão de ajuda.</small></div>
+    <div class="campo" style="flex:1 1 240px"><label for="c-hor">Horário do atendimento</label><input id="c-hor" type="text" name="atendimento" maxlength="100" value="${esc(cfg.atendimento)}"></div>
+  </div>
   <div class="campo"><label for="c-video">Vídeo explicativo (link do YouTube/Vimeo ou /criativos/limpa-nome.mp4)</label><input id="c-video" type="text" name="video" maxlength="300" value="${esc(cfg.video)}" placeholder="https://youtu.be/..."><small class="muted">Recomendado: suba no YouTube como "Não listado" e cole o link aqui.</small></div>
   <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:14px"><input type="checkbox" name="antecipar" value="1" ${cfg.antecipar ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Antecipar automaticamente os pagamentos no cartão</strong><br><span class="muted">Assim que o Asaas confirma o cartão, pedimos a antecipação do parcelamento inteiro: o valor (menos a taxa do Asaas) cai na conta em geral no próximo dia útil, em vez de mês a mês.</span></span></label>
   <p class="muted" style="margin-top:-4px">Tabela atual: ${cfg.tabela.filter((t) => t.n === 1 || t.n === 3 || t.n === 6 || t.n === cfg.parcelas).map((t) => `${t.n}x ${reais(t.parcela)} (total ${reais(t.total)})`).join(' · ')}</p>

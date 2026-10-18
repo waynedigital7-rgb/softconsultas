@@ -366,6 +366,8 @@ const padrao = {
   lns_garantia: 'Garantimos a retirada das negativações do seu nome nos órgãos de proteção ao crédito (nome limpo). Não garantimos a aprovação de crédito, que depende da análise de cada empresa.',
   lns_resumo: '',
   lns_video: '',
+  lns_whatsapp: '5547997400955',
+  lns_atendimento: 'Segunda a sexta, das 9h às 18h',
   emails_desde: '',
   emails_etapas: 'd1,d3,d7',
   bonus_faixas: JSON.stringify([{ a_partir_de: 10000, percentual: 5 }, { a_partir_de: 30000, percentual: 10 }]),

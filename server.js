@@ -1547,6 +1547,7 @@ const lnCfg = () => ({
   dia: Math.min(6, Math.max(0, Number(lerConfig('lns_dia_lote') ?? 5))),
   prazo: lerConfig('lns_prazo') || '', executor: lerConfig('lns_executor') || '', garantia: lerConfig('lns_garantia') || '',
   resumo: lerConfig('lns_resumo') || '', video: lerConfig('lns_video') || '',
+  whatsapp: (lerConfig('lns_whatsapp') || '').replace(/\D/g, ''), atendimento: lerConfig('lns_atendimento') || '',
   parcelas: Math.min(12, Math.max(1, Number(lerConfig('lns_parcelas') || 10))),
   juros: Math.min(15, Math.max(0, Number(lerConfig('lns_juros_mensal') ?? 2.99))),
   antecipar: lerConfig('lns_antecipar') !== '0',
@@ -1577,7 +1578,8 @@ function emailPedidoLN(p, titulo, texto) {
 <tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">${P.esc(titulo)}</h1>
 <p>Olá, ${P.esc(String(p.nome).split(/\s+/)[0])}! ${texto}</p>
 <p style="margin:24px 0"><a href="${base}/limpa-nome/servico/${p.id}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">Acompanhar meu pedido</a></p>
-<p style="font-size:13px;color:#7A7285">Pedido #${p.id} · CPF final ${P.esc(String(p.cpf).slice(-4))}</p></td></tr></table></td></tr></table></body></html>`;
+<p style="font-size:14px">Dúvidas? <a href="${base}/limpa-nome/ajuda?p=${p.id}&e=email" style="color:#1FA855;font-weight:bold">Fale com a gente no WhatsApp</a></p>
+<p style="font-size:13px;color:#7A7285">Pedido #${p.id} · documento final ${P.esc(String(p.cpf).slice(-4))}</p></td></tr></table></td></tr></table></body></html>`;
   enviarEmail({ para: p.email, assunto: `${titulo} · Pedido #${p.id}`, html }).catch((e) => console.error('e-mail limpa nome:', e.message));
 }
 const TEXTO_STATUS_LN = {
@@ -1739,6 +1741,17 @@ rota('POST', '/limpa-nome/servico', exigeLogin(async ({ req, res, usuario }) => 
   }
 }));
 
+// Atendimento: registra o pedido de ajuda (para medir quantos não conseguem sozinhos) e abre o WhatsApp
+rota('GET', '/limpa-nome/ajuda', exigeLogin(({ res, usuario, url }) => {
+  const cfg = lnCfg();
+  if (!cfg.whatsapp) return redirecionar(res, '/limpa-nome/servico');
+  const p = db.prepare('SELECT id, status FROM limpa_nome_pedidos WHERE id = ? AND usuario_id = ?').get(Number(url.searchParams.get('p')) || 0, usuario.id);
+  const etapa = String(url.searchParams.get('e') || '').replace(/[^\w-]/g, '').slice(0, 30);
+  registrar(null, 'Limpa Nome: cliente chamou o atendimento', `${usuario.email}${p ? ` · pedido #${p.id} (${p.status})` : ''}${etapa ? ` · na etapa: ${etapa}` : ''}`);
+  const msg = `Olá! Preciso de ajuda com o Limpa Nome da Soft Consultas.${p ? ` Meu pedido é o #${p.id}.` : ''} (conta: ${usuario.email})`;
+  redirecionar(res, `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(msg)}`);
+}));
+
 rota('GET', '/limpa-nome/servico/:id', exigeLogin(({ res, usuario, params }) => {
   const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!p) return redirecionar(res, '/limpa-nome/servico');
@@ -1770,6 +1783,7 @@ rota('GET', '/admin/limpa-nome', exigeAdmin(({ res, usuario, url }) => {
     pagos: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE pago_em IS NOT NULL AND status <> 'reembolsado'").get().n,
     receita: db.prepare("SELECT COALESCE(SUM(valor_centavos),0) s FROM limpa_nome_pedidos WHERE pago_em IS NOT NULL AND status <> 'reembolsado'").get().s,
     aguardando: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE status = 'aguardando_pagamento'").get().n,
+    ajuda: db.prepare("SELECT COUNT(*) n FROM registro_admin WHERE acao = 'Limpa Nome: cliente chamou o atendimento' AND criado_em > datetime('now', '-30 days')").get().n,
   };
   pagina(res, 'Admin · Limpa Nome', SV.adminServicoLN({ menu: PD.menu('/admin/limpa-nome'), cfg: lnCfgComTabela(), pedidos, lotes, filtro: f, proximoLote: lote,
     ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
@@ -1786,7 +1800,8 @@ rota('POST', '/admin/limpa-nome/config', exigeAdmin(async ({ req, res, usuario }
   if (video && !SV.blocoVideo(video)) return volta('Link de vídeo não reconhecido. Use um link do YouTube, do Vimeo ou /criativos/nome.mp4.');
   const novos = { lns_ativo: ativo ? '1' : '0', lns_preco_centavos: String(preco), lns_dia_lote: String(Math.min(6, Math.max(0, Number(f.dia) || 0))),
     lns_prazo: String(f.prazo || '').trim().slice(0, 150), lns_executor: String(f.executor || '').trim().slice(0, 150),
-    lns_garantia: String(f.garantia || '').trim().slice(0, 300), lns_parcelas: String(Math.min(12, Math.max(1, Math.floor(Number(f.parcelas) || 1)))),
+    lns_garantia: String(f.garantia || '').trim().slice(0, 300),
+    lns_whatsapp: A.soNumeros(f.whatsapp).slice(0, 15), lns_atendimento: String(f.atendimento || '').trim().slice(0, 100), lns_parcelas: String(Math.min(12, Math.max(1, Math.floor(Number(f.parcelas) || 1)))),
     lns_juros_mensal: String(Math.min(15, Math.max(0, Number(String(f.juros ?? '').replace(',', '.')) || 0))), lns_antecipar: f.antecipar === '1' ? '1' : '0', lns_resumo: String(f.resumo || '').trim().slice(0, 300), lns_video: video };
   const mudou = Object.entries(novos).filter(([k, val]) => (lerConfig(k) || '') !== val).map(([k, val]) => `${k.slice(4)}: ${val || '(vazio)'}`);
   for (const [k, val] of Object.entries(novos)) gravarConfig(k, val);
