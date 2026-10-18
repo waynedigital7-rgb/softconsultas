@@ -120,6 +120,22 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(ver, 4000);
   }
 
+  // Campo "outro valor" da recarga: máscara de dinheiro estilo app de banco (digitar 5000 mostra R$ 50,00).
+  // O cliente sempre vê o valor exato que vai pagar.
+  const outro = document.getElementById('outro');
+  if (outro && outro.closest('form[action="/recarregar"]')) {
+    outro.placeholder = 'R$ 0,00';
+    const fmt = () => {
+      const d = outro.value.replace(/\D/g, '').replace(/^0+/, '').slice(0, 9);
+      if (!d) { outro.value = ''; return; }
+      const c = d.padStart(3, '0');
+      const inteiro = c.slice(0, -2).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+      outro.value = `R$ ${inteiro},${c.slice(-2)}`;
+    };
+    outro.addEventListener('input', () => { fmt(); outro.setSelectionRange(outro.value.length, outro.value.length); });
+    if (outro.value) fmt();
+  }
+
   // Evitar clique duplo ao consultar
   const f = document.querySelector('form[data-consulta]');
   if (f) f.addEventListener('submit', () => {
