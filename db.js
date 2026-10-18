@@ -322,7 +322,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_lnp_usuario ON limpa_nome_pedidos(usuario_id);
   CREATE INDEX IF NOT EXISTS idx_lnp_lote ON limpa_nome_pedidos(lote);
 `);
-for (const [c, def] of [['forma_pagamento', "TEXT NOT NULL DEFAULT 'pix'"], ['parcelas', 'INTEGER NOT NULL DEFAULT 1'], ['asaas_parcelamento', 'TEXT'], ['juros_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['antecipacao_id', 'TEXT'], ['antecipacao_status', 'TEXT'], ['antecipacao_erro', 'TEXT'], ['antecipacao_liquido_centavos', 'INTEGER'], ['antecipacao_tentativas', 'INTEGER NOT NULL DEFAULT 0']]) {
+for (const [c, def] of [['forma_pagamento', "TEXT NOT NULL DEFAULT 'pix'"], ['parcelas', 'INTEGER NOT NULL DEFAULT 1'], ['asaas_parcelamento', 'TEXT'], ['juros_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['antecipacao_id', 'TEXT'], ['antecipacao_status', 'TEXT'], ['antecipacao_erro', 'TEXT'], ['antecipacao_liquido_centavos', 'INTEGER'], ['antecipacao_tentativas', 'INTEGER NOT NULL DEFAULT 0'], ['baixas', "TEXT NOT NULL DEFAULT '{}'"], ['blindagem_ate', 'TEXT'], ['concluido_em', 'TEXT']]) {
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
 }
 export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
@@ -363,7 +363,8 @@ const padrao = {
   lns_juros_mensal: '2.99',
   lns_antecipar: '1',
   lns_executor: '',
-  lns_garantia: 'Garantimos a retirada das negativações do seu nome nos órgãos de proteção ao crédito (nome limpo). Não garantimos a aprovação de crédito, que depende da análise de cada empresa.',
+  lns_garantia: 'Garantimos a retirada das negativações abrangidas pela ação nos órgãos de proteção ao crédito (nome limpo), com blindagem de 6 meses: se alguma dessas negativações voltar nesse período, reprotocolamos sem custo. Não garantimos a aprovação de crédito, que depende da análise de cada empresa.',
+  lns_blindagem_meses: '6',
   lns_resumo: '',
   lns_video: '',
   lns_whatsapp: '5547997400955',
@@ -377,7 +378,8 @@ for (const [k, v] of Object.entries(padrao)) db.prepare('INSERT OR IGNORE INTO c
 {
   const troca = (k, antigo, novo) => db.prepare('UPDATE config SET valor = ? WHERE chave = ? AND valor = ?').run(novo, k, antigo);
   troca('lns_prazo', 'Nome limpo em até 15 dias', 'Nome limpo em até 30 dias');
-  troca('lns_garantia', '', 'Garantimos a retirada das negativações do seu nome nos órgãos de proteção ao crédito (nome limpo). Não garantimos a aprovação de crédito, que depende da análise de cada empresa.');
+  troca('lns_garantia', 'Garantimos a retirada das negativações do seu nome nos órgãos de proteção ao crédito (nome limpo). Não garantimos a aprovação de crédito, que depende da análise de cada empresa.', 'Garantimos a retirada das negativações abrangidas pela ação nos órgãos de proteção ao crédito (nome limpo), com blindagem de 6 meses: se alguma dessas negativações voltar nesse período, reprotocolamos sem custo. Não garantimos a aprovação de crédito, que depende da análise de cada empresa.');
+  troca('lns_garantia', '', 'Garantimos a retirada das negativações abrangidas pela ação nos órgãos de proteção ao crédito (nome limpo), com blindagem de 6 meses: se alguma dessas negativações voltar nesse período, reprotocolamos sem custo. Não garantimos a aprovação de crédito, que depende da análise de cada empresa.');
 }
 export const lerConfig = (k) => db.prepare('SELECT valor FROM config WHERE chave = ?').get(k)?.valor;
 export const gravarConfig = (k, v) => db.prepare('INSERT INTO config (chave, valor) VALUES (?, ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor').run(k, String(v));

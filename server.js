@@ -1037,7 +1037,7 @@ const PUBLICOS_CAMPANHA = {
 // Campanha semanal: a "etapa" leva a data do próximo lote, então pode ser reenviada uma vez por semana
 const etapaCampanha = (chave) => (CAMPANHAS[chave].semanal ? `camp:${chave}:${proximoLoteLN()}` : `camp:${chave}`);
 const filtroCampanha = (chave) => (chave === 'limpa-nome-servico'
-  ? ` AND NOT EXISTS (SELECT 1 FROM limpa_nome_pedidos lp WHERE lp.usuario_id = u.id AND lp.status IN ('pago','em_lote','em_andamento','concluido'))` : '');
+  ? ` AND NOT EXISTS (SELECT 1 FROM limpa_nome_pedidos lp WHERE lp.usuario_id = u.id AND lp.status IN ('pago','em_analise','em_lote','em_andamento','decisao','concluido'))` : '');
 const listaCampanha = (chave, publico, limite = 100000) => db.prepare(`SELECT u.* FROM usuarios u
   WHERE u.ativo = 1 AND u.admin = 0 AND u.interno = 0 AND u.aceita_emails = 1 AND (${PUBLICOS_CAMPANHA[publico].sql})${filtroCampanha(chave)}
     AND NOT EXISTS (SELECT 1 FROM emails_enviados e WHERE e.usuario_id = u.id AND e.etapa = ?)
@@ -1548,6 +1548,7 @@ const lnCfg = () => ({
   dia: Math.min(6, Math.max(0, Number(lerConfig('lns_dia_lote') ?? 5))),
   prazo: lerConfig('lns_prazo') || '', executor: lerConfig('lns_executor') || '', garantia: lerConfig('lns_garantia') || '',
   resumo: lerConfig('lns_resumo') || '', video: lerConfig('lns_video') || '',
+  blindagem: Math.min(24, Math.max(0, Math.floor(Number(lerConfig('lns_blindagem_meses') ?? 6)))),
   whatsapp: (lerConfig('lns_whatsapp') || '').replace(/\D/g, ''), atendimento: lerConfig('lns_atendimento') || '',
   parcelas: Math.min(12, Math.max(1, Number(lerConfig('lns_parcelas') || 10))),
   juros: Math.min(15, Math.max(0, Number(lerConfig('lns_juros_mensal') ?? 2.99))),
@@ -1561,7 +1562,7 @@ function proximoLoteLN(dia = lnCfg().dia) {
   while (d.getUTCDay() !== dia) d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 }
-const ATIVOS_LN = "('aguardando_pagamento','pago','em_lote','em_andamento')";
+const ATIVOS_LN = "('aguardando_pagamento','pago','em_analise','em_lote','em_andamento','decisao')";
 const FINAIS_LN = ['concluido', 'cancelado', 'reembolsado'];
 function tipoDoc(b) {
   if (b.subarray(0, 5).toString() === '%PDF-') return 'pdf';
@@ -1586,8 +1587,10 @@ function emailPedidoLN(p, titulo, texto) {
 const TEXTO_STATUS_LN = {
   pago: (p) => [`Pagamento confirmado`, `Recebemos o seu pagamento. O seu nome será incluído na ação coletiva de <strong>${P.esc(p.lote?.split('-').reverse().join('/') || '')}</strong>.`],
   em_lote: (p) => [`Você foi incluído na ação coletiva`, `O seu pedido foi incluído na ação judicial coletiva de ${P.esc(p.lote?.split('-').reverse().join('/') || '')}. Agora é aguardar o andamento; avisamos a cada etapa.`],
-  em_andamento: () => [`Sua ação está em andamento`, 'A ação com o seu pedido está em andamento.'],
-  concluido: () => [`Seu nome está limpo`, 'O seu pedido de Limpa Nome foi concluído. Faça uma consulta do seu CPF ou CNPJ na plataforma para conferir o "nada consta".'],
+  em_analise: () => [`Estamos analisando seus documentos`, 'Recebemos o seu pedido e estamos conferindo os dados e documentos para incluir você na ação coletiva.'],
+  em_andamento: () => [`Aguardando a decisão judicial`, 'A ação com o seu pedido foi protocolada e agora aguarda a decisão judicial. Avisamos assim que sair.'],
+  decisao: () => [`Saiu a decisão: os órgãos estão dando baixa`, 'A decisão judicial foi obtida e os órgãos de proteção ao crédito estão cumprindo a determinação. Você acompanha a baixa em cada órgão (Serasa, SPC, Boa Vista e protestos) na página do pedido.'],
+  concluido: (p) => [`Seu nome está limpo`, `O seu pedido de Limpa Nome foi concluído. Faça uma consulta do seu CPF ou CNPJ na plataforma para conferir o "nada consta".${p.blindagem_ate ? ` A sua <strong>blindagem</strong> vale até ${P.esc(p.blindagem_ate.split('-').reverse().join('/'))}: se alguma negativação abrangida voltar, é só chamar o atendimento.` : ''}`],
   cancelado: () => [`Seu pedido foi cancelado`, 'O seu pedido foi cancelado.'],
   reembolsado: () => [`Seu pagamento foi reembolsado`, 'O valor do seu pedido foi devolvido.'],
 };
@@ -1693,7 +1696,7 @@ rota('POST', '/limpa-nome/servico', exigeLogin(async ({ req, res, usuario }) => 
   if (tel.length < 10 || tel.length > 13) return erro('Informe um WhatsApp válido com DDD.');
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return erro('Informe um e-mail válido.');
   if (v.aceite !== '1') return erro('É preciso aceitar a autorização para continuar.');
-  if (db.prepare(`SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND status IN ('pago','em_lote','em_andamento')`).get(cpf)) return erro('Já existe um pedido em andamento para este CPF/CNPJ.');
+  if (db.prepare(`SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND status IN ('pago','em_analise','em_lote','em_andamento','decisao')`).get(cpf)) return erro('Já existe um pedido em andamento para este CPF/CNPJ.');
   const docs = {};
   for (const lado of ['doc_frente', 'doc_verso']) {
     const a = form.arquivos[lado];
@@ -1777,10 +1780,10 @@ rota('GET', '/api/limpa-nome/:id/status', async ({ res, usuario, params }) => {
 rota('GET', '/admin/limpa-nome', exigeAdmin(({ res, usuario, url }) => {
   const cfg = lnCfg(), lote = proximoLoteLN(cfg.dia);
   const f = ['lote', 'ativos', 'aguardando', 'todos'].includes(url.searchParams.get('f')) ? url.searchParams.get('f') : 'lote';
-  const onde = { lote: "p.status = 'pago'", ativos: "p.status IN ('pago','em_lote','em_andamento')", aguardando: "p.status = 'aguardando_pagamento'", todos: '1=1' }[f];
+  const onde = { lote: "p.status IN ('pago','em_analise')", ativos: "p.status IN ('pago','em_analise','em_lote','em_andamento','decisao')", aguardando: "p.status = 'aguardando_pagamento'", todos: '1=1' }[f];
   const pedidos = db.prepare(`SELECT p.*, u.email AS cliente FROM limpa_nome_pedidos p JOIN usuarios u ON u.id = p.usuario_id WHERE ${onde} ORDER BY p.id DESC LIMIT 500`).all();
   const lotes = {
-    proximo: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE status = 'pago'").get().n,
+    proximo: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE status IN ('pago','em_analise')").get().n,
     pagos: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE pago_em IS NOT NULL AND status <> 'reembolsado'").get().n,
     receita: db.prepare("SELECT COALESCE(SUM(valor_centavos),0) s FROM limpa_nome_pedidos WHERE pago_em IS NOT NULL AND status <> 'reembolsado'").get().s,
     aguardando: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE status = 'aguardando_pagamento'").get().n,
@@ -1802,6 +1805,7 @@ rota('POST', '/admin/limpa-nome/config', exigeAdmin(async ({ req, res, usuario }
   const novos = { lns_ativo: ativo ? '1' : '0', lns_preco_centavos: String(preco), lns_dia_lote: String(Math.min(6, Math.max(0, Number(f.dia) || 0))),
     lns_prazo: String(f.prazo || '').trim().slice(0, 150), lns_executor: String(f.executor || '').trim().slice(0, 150),
     lns_garantia: String(f.garantia || '').trim().slice(0, 300),
+    lns_blindagem_meses: String(Math.min(24, Math.max(0, Math.floor(Number(f.blindagem) || 0)))),
     lns_whatsapp: A.soNumeros(f.whatsapp).slice(0, 15), lns_atendimento: String(f.atendimento || '').trim().slice(0, 100), lns_parcelas: String(Math.min(12, Math.max(1, Math.floor(Number(f.parcelas) || 1)))),
     lns_juros_mensal: String(Math.min(15, Math.max(0, Number(String(f.juros ?? '').replace(',', '.')) || 0))), lns_antecipar: f.antecipar === '1' ? '1' : '0', lns_resumo: String(f.resumo || '').trim().slice(0, 300), lns_video: video };
   const mudou = Object.entries(novos).filter(([k, val]) => (lerConfig(k) || '') !== val).map(([k, val]) => `${k.slice(4)}: ${val || '(vazio)'}`);
@@ -1820,16 +1824,40 @@ rota('POST', '/admin/limpa-nome/status', exigeAdmin(async ({ req, res, usuario }
   const obs = String(f.obs || '').trim().slice(0, 300);
   const lote = p.lote || (f.status === 'pago' ? proximoLoteLN() : null);
   db.prepare("UPDATE limpa_nome_pedidos SET status = ?, obs_admin = ?, lote = ?, atualizado_em = datetime('now') WHERE id = ?").run(f.status, obs || null, lote, p.id);
+  // Concluído: começa a blindagem (N meses a partir de hoje)
+  let blindagemAte = p.blindagem_ate;
+  if (f.status === 'concluido' && p.status !== 'concluido') {
+    const meses = lnCfg().blindagem;
+    blindagemAte = meses ? db.prepare("SELECT date('now', '-3 hours', ?) d").get(`+${meses} months`).d : null;
+    db.prepare("UPDATE limpa_nome_pedidos SET concluido_em = datetime('now'), blindagem_ate = ? WHERE id = ?").run(blindagemAte, p.id);
+  }
   registrar(usuario, 'Limpa Nome: status', `#${p.id} · ${p.nome} · ${p.status} → ${f.status}${obs ? ` · "${obs}"` : ''}`);
-  if (f.status !== p.status || (obs && obs !== (p.obs_admin || ''))) avisarStatusLN({ ...p, status: f.status, obs_admin: obs, lote });
+  if (f.status !== p.status || (obs && obs !== (p.obs_admin || ''))) avisarStatusLN({ ...p, status: f.status, obs_admin: obs, lote, blindagem_ate: blindagemAte });
   volta(`Pedido #${p.id} atualizado.`, true);
+}));
+
+// Baixa por órgão: marca/desmarca e avisa o cliente das novas
+rota('POST', '/admin/limpa-nome/baixas', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(f.id));
+  if (!p) return redirecionar(res, '/admin/limpa-nome?f=todos&erro=' + encodeURIComponent('Pedido não encontrado.'));
+  const antes = SV.lerBaixas(p), hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  const novas = {}, adicionadas = [];
+  for (const [k, n] of SV.ORGAOS_LN) {
+    if (f[`b_${k}`] === '1') { novas[k] = antes[k] || hoje; if (!antes[k]) adicionadas.push(n); }
+  }
+  db.prepare("UPDATE limpa_nome_pedidos SET baixas = ?, atualizado_em = datetime('now') WHERE id = ?").run(JSON.stringify(novas), p.id);
+  registrar(usuario, 'Limpa Nome: baixas', `#${p.id} · ${p.nome} · ${Object.keys(novas).join(', ') || 'nenhuma'}`);
+  if (adicionadas.length) emailPedidoLN(p, `Baixa confirmada: ${adicionadas.join(', ')}`, `Boa notícia: ${adicionadas.length > 1 ? 'os órgãos' : 'o órgão'} <strong>${P.esc(adicionadas.join(', '))}</strong> já ${adicionadas.length > 1 ? 'deram' : 'deu'} baixa nas negativações do seu ${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'}. Acompanhe os demais na página do pedido.`);
+  const todas = SV.ORGAOS_LN.every(([k]) => novas[k]);
+  redirecionar(res, `/admin/limpa-nome?f=ativos&ok=${encodeURIComponent(`Baixas do pedido #${p.id} salvas.${todas && p.status !== 'concluido' ? ' Todos os órgãos deram baixa: mude o status para "Concluído" para iniciar a blindagem.' : ''}`)}`);
 }));
 
 rota('POST', '/admin/limpa-nome/fechar-lote', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
-  const lista = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status = 'pago'").all();
+  const lista = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status IN ('pago','em_analise')").all();
   for (const p of lista) {
-    if (db.prepare("UPDATE limpa_nome_pedidos SET status = 'em_lote', lote = COALESCE(?, lote), atualizado_em = datetime('now') WHERE id = ? AND status = 'pago'").run(/^\d{4}-\d{2}-\d{2}$/.test(f.lote || '') ? f.lote : null, p.id).changes === 1)
+    if (db.prepare("UPDATE limpa_nome_pedidos SET status = 'em_lote', lote = COALESCE(?, lote), atualizado_em = datetime('now') WHERE id = ? AND status IN ('pago','em_analise')").run(/^\d{4}-\d{2}-\d{2}$/.test(f.lote || '') ? f.lote : null, p.id).changes === 1)
       avisarStatusLN({ ...p, status: 'em_lote', lote: f.lote || p.lote, obs_admin: null });
   }
   registrar(usuario, 'Limpa Nome: lote enviado', `lote ${f.lote} · ${lista.length} pedido(s): ${lista.map((p) => `#${p.id}`).join(', ')}`);
@@ -1837,7 +1865,7 @@ rota('POST', '/admin/limpa-nome/fechar-lote', exigeAdmin(async ({ req, res, usua
 }));
 
 rota('GET', '/admin/limpa-nome/lote.csv', exigeAdmin(({ res, usuario }) => {
-  const lista = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status IN ('pago','em_lote','em_andamento') ORDER BY lote, id").all();
+  const lista = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status IN ('pago','em_analise','em_lote','em_andamento','decisao') ORDER BY lote, id").all();
   const c = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
   const linhas = [['pedido', 'lote', 'status', 'nome', 'cpf', 'nascimento', 'telefone', 'email', 'documento', 'titular_proprio', 'pagamento', 'pago_em'].join(';'),
     ...lista.map((p) => [p.id, p.lote, p.status, p.nome, p.cpf, p.nascimento, p.telefone, p.email, p.doc_tipo, p.titular_proprio ? 'sim' : 'não (autorizado)', p.forma_pagamento === 'cartao' ? `cartão ${p.parcelas}x` : 'pix', p.pago_em].map(c).join(';'))];

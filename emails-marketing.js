@@ -183,7 +183,7 @@ export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeRe
       html: moldura({ base, sair, preheader: `Ação judicial coletiva amparada pelo CDC. ${reais(sv.preco || 0)} no Pix${parc}.`, corpo: `
         <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, ${esc(prazo.charAt(0).toLowerCase() + prazo.slice(1))}</h1>
         <p>Nome negativado fecha portas: cartão negado, financiamento recusado, aluguel que não sai. Agora a Soft Consultas tem o <strong>Limpa Nome por ação judicial coletiva</strong>, amparada pelo Código de Defesa do Consumidor.</p>
-        ${lista(['Retirada das negativações do seu CPF ou CNPJ nos órgãos de proteção ao crédito', '"Nada consta" no relatório: as empresas deixam de ver os débitos antigos', 'Sem advogado e sem ir ao fórum: pedido 100% online', `${prazo}`])}
+        ${lista(['Retirada das negativações do seu CPF ou CNPJ: Serasa, SPC, Boa Vista e protestos', '"Nada consta" no relatório: as empresas deixam de ver os débitos antigos', ...(sv.blindagem ? [`Blindagem de ${sv.blindagem} meses: se alguma negativação abrangida voltar, reprotocolamos sem custo`] : []), 'Sem advogado e sem ir ao fórum: pedido 100% online, com acompanhamento órgão por órgão', `${prazo}`])}
         <div style="background:#0F0C14;color:#ffffff;border-radius:14px;padding:18px 20px;margin:20px 0">
           <div style="font-size:13px;color:#C98BEB;font-weight:bold;letter-spacing:.5px">LIMPA NOME · AÇÃO COLETIVA</div>
           <div style="font-size:15px;margin-top:6px"><span style="font-size:26px;font-weight:bold">${reais(sv.preco || 0)}</span> <span style="color:#C9BFD4">no Pix${esc(parc)}</span></div>

@@ -5,12 +5,17 @@ import { formatarDoc } from './pdf.js';
 export const STATUS_LN = {
   aguardando_pagamento: { t: 'Aguardando pagamento', c: '#9A6B00' },
   pago: { t: 'Pago · aguardando o lote', c: '#1E7B4D' },
+  em_analise: { t: 'Em análise documental', c: '#5B2D8E' },
   em_lote: { t: 'Incluído na ação', c: '#5B2D8E' },
-  em_andamento: { t: 'Em andamento', c: '#5B2D8E' },
-  concluido: { t: 'Concluído', c: '#1E7B4D' },
+  em_andamento: { t: 'Aguardando decisão judicial', c: '#5B2D8E' },
+  decisao: { t: 'Decisão obtida · baixas em andamento', c: '#5B2D8E' },
+  concluido: { t: 'Concluído · nome limpo', c: '#1E7B4D' },
   cancelado: { t: 'Cancelado', c: '#7A7285' },
   reembolsado: { t: 'Reembolsado', c: '#7A7285' },
 };
+// Órgãos acompanhados um a um (o cliente vê cada baixa)
+export const ORGAOS_LN = [['serasa', 'Serasa Experian'], ['spc', 'SPC Brasil'], ['boavista', 'Boa Vista (SCPC)'], ['cenprot', 'Protestos em cartório (CENPROT)']];
+export const lerBaixas = (p) => { try { return JSON.parse(p.baixas || '{}') || {}; } catch { return {}; } };
 const etiqueta = (s) => `<span style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:.82rem;font-weight:700;background:${STATUS_LN[s]?.c || '#555'}1A;color:${STATUS_LN[s]?.c || '#555'}">${esc(STATUS_LN[s]?.t || s)}</span>`;
 const dataBR = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
 // Vídeo explicativo: link do YouTube/Vimeo ou arquivo .mp4 (ex.: /criativos/limpa-nome.mp4)
@@ -68,7 +73,8 @@ ${blocoVideo(cfg.video) ? `<div class="cartao" style="margin-bottom:18px"><h2 st
   <p style="margin:6px 0">Você, pessoa física ou empresário, passa a ter <strong>"NADA CONSTA"</strong> nos órgãos de proteção ao crédito: as restrições desaparecem do relatório, e as outras empresas deixam de ver os seus débitos anteriores quando consultam o seu CPF ou CNPJ.</p>
   <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:16px">
     <div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Prazo</strong><br>${cfg.prazo ? p(cfg.prazo) : 'até 30 dias'}</div>
-    <div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Abrangência</strong><br>Serasa, SPC e Boa Vista</div>
+    <div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Abrangência</strong><br>Serasa, SPC, Boa Vista e protestos (CENPROT)</div>
+    ${cfg.blindagem ? `<div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Blindagem</strong><br>${cfg.blindagem} meses de acompanhamento</div>` : ''}
     <div style="flex:1 1 180px;background:#F6ECFC;border-radius:12px;padding:12px 14px"><strong style="color:#5B2D8E">Para quem</strong><br>CPF e CNPJ</div>
   </div>
   ${cfg.garantia ? `<p style="margin:16px 0 0"><strong>Garantia:</strong> ${p(cfg.garantia)}</p>` : ''}
@@ -85,6 +91,8 @@ ${blocoVideo(cfg.video) ? `<div class="cartao" style="margin-bottom:18px"><h2 st
 <div class="cartao" style="margin-bottom:18px">
   <h2 style="font-size:1.2rem;margin-top:0">Perguntas frequentes</h2>
   <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">É garantido?</summary><p style="margin:8px 0 0">${cfg.garantia ? p(cfg.garantia) : 'Garantimos a retirada das negativações nos órgãos de proteção ao crédito.'} <strong>Não prometemos crédito:</strong> a aprovação de cartão, empréstimo ou financiamento depende da análise de cada empresa.</p></details>
+  ${cfg.blindagem ? `<details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">O que é a blindagem de ${cfg.blindagem} meses?</summary><p style="margin:8px 0 0">Depois que o seu nome fica limpo, acompanhamos o seu CPF/CNPJ por ${cfg.blindagem} meses. Se alguma das negativações abrangidas pela ação voltar a aparecer nesse período, fazemos o reprotocolo <strong>sem custo adicional</strong>: é só chamar o atendimento. A blindagem não impede negativações de dívidas novas, feitas depois do pedido.</p></details>` : ''}
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Como acompanho o andamento?</summary><p style="margin:8px 0 0">Pela página do seu pedido. Você vê cada etapa (análise, inclusão na ação, decisão judicial) e a baixa em <strong>cada órgão separadamente</strong>: Serasa, SPC, Boa Vista e protestos. A cada atualização você também recebe um e-mail.</p></details>
   <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Quanto tempo demora?</summary><p style="margin:8px 0 0">${cfg.prazo ? p(cfg.prazo) : 'Até 30 dias'}. O prazo é contado a partir da inclusão do seu pedido na ação coletiva, que acontece toda ${DIAS[cfg.dia]}.</p></details>
   <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">A minha dívida deixa de existir?</summary><p style="margin:8px 0 0">Não. A ação retira as <strong>negativações</strong> dos órgãos de proteção ao crédito (o "nome sujo") e você fica com "nada consta". A dívida em si continua com o credor, que ainda pode cobrá-la pelos meios legais. Se puder, negocie com ele também.</p></details>
   <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">O que é o processo coletivo por associação?</summary><p style="margin:8px 0 0">É uma ação judicial movida por uma associação em nome de vários consumidores ao mesmo tempo, com base no Código de Defesa do Consumidor. Você não precisa contratar advogado nem ir ao fórum: basta fazer o pedido aqui e enviar o documento.</p></details>
@@ -130,10 +138,14 @@ export function paginaPedidoLN({ p, cfg }) {
   const passos = [
     ['aguardando_pagamento', 'Pedido criado'],
     ['pago', `Pagamento confirmado${p.pago_em ? ` em ${dt(p.pago_em)}` : ''}`],
+    ['em_analise', 'Análise dos documentos'],
     ['em_lote', `Incluído na ação coletiva de ${dataBR(p.lote) || '—'}`],
-    ['em_andamento', 'Em andamento'],
+    ['em_andamento', 'Aguardando decisão judicial'],
+    ['decisao', 'Decisão obtida · órgãos dando baixa'],
     ['concluido', 'Concluído · nome limpo'],
   ];
+  const baixas = lerBaixas(p);
+  const mostraBaixas = ['em_andamento', 'decisao', 'concluido'].includes(p.status) || Object.keys(baixas).length;
   const ordem = passos.map((x) => x[0]);
   const atual = ordem.indexOf(p.status);
   const final = ['cancelado', 'reembolsado'].includes(p.status);
@@ -163,6 +175,16 @@ ${p.status === 'aguardando_pagamento' && p.forma_pagamento !== 'cartao' ? `
   ${p.obs_admin ? `<div class="aviso" style="margin-top:12px"><strong>Atualização:</strong> ${esc(p.obs_admin)}</div>` : ''}
   ${cfg.prazo ? `<p class="muted" style="margin:12px 0 0">${esc(cfg.prazo)}</p>` : ''}
 </div>
+${mostraBaixas && !final ? `<div class="cartao" style="max-width:620px;margin-top:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Baixa em cada órgão</h2>
+  ${ORGAOS_LN.map(([k, n]) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #EEE7F4"><span>${esc(n)}</span>${baixas[k] ? `<strong style="color:#1E7B4D">✓ Baixa em ${dataBR(baixas[k])}</strong>` : '<span class="muted">aguardando</span>'}</div>`).join('')}
+  <p class="muted" style="margin:10px 0 0;font-size:.88rem">Cada órgão cumpre a decisão no seu próprio prazo. Depois da última baixa, consulte o seu CPF/CNPJ aqui na plataforma para conferir.</p>
+</div>` : ''}
+${p.status === 'concluido' && p.blindagem_ate ? `<div class="cartao" style="max-width:620px;margin-top:18px;border:2px solid #1E7B4D">
+  <h2 style="font-size:1.2rem;margin-top:0">🛡️ Blindagem ativa até ${dataBR(p.blindagem_ate)}</h2>
+  <p style="margin:0">Se alguma das negativações abrangidas pela ação voltar a aparecer até essa data, chame o atendimento: fazemos o reprotocolo sem custo.</p>
+  ${cfg.whatsapp ? `<p style="margin:12px 0 0"><a class="btn sec" href="/limpa-nome/ajuda?p=${p.id}&e=blindagem" target="_blank" rel="noopener">Uma negativação voltou</a></p>` : ''}
+</div>` : ''}
 <div style="max-width:620px;margin-top:18px">${ajudaCartao(cfg, `?p=${p.id}&e=${p.status}`)}</div>
 ${ajudaFlutuante(cfg, `?p=${p.id}&e=${p.status}`)}`;
 }
@@ -183,6 +205,7 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
   <div style="display:flex;gap:12px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 160px"><label for="c-preco">Preço (R$)</label><input id="c-preco" type="text" name="preco" inputmode="decimal" value="${(cfg.preco / 100).toFixed(2).replace('.', ',')}"></div>
     <div class="campo" style="flex:1 1 140px"><label for="c-parc">Parcelas no cartão (máx.)</label><input id="c-parc" type="text" name="parcelas" inputmode="numeric" value="${cfg.parcelas}"></div>
+    <div class="campo" style="flex:1 1 140px"><label for="c-blind">Blindagem (meses, 0 = sem)</label><input id="c-blind" type="text" name="blindagem" inputmode="numeric" value="${cfg.blindagem}"></div>
     <div class="campo" style="flex:1 1 140px"><label for="c-juros">Juros ao mês no cartão (%)</label><input id="c-juros" type="text" name="juros" inputmode="decimal" value="${String(cfg.juros).replace('.', ',')}"></div>
     <div class="campo" style="flex:1 1 200px"><label for="c-dia">Dia do lote</label><select id="c-dia" name="dia" style="min-height:46px">${DIAS.map((d, i) => `<option value="${i}" ${cfg.dia === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
   </div>
@@ -214,7 +237,7 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
     <button class="btn" ${lotes.proximo ? '' : 'disabled'} data-confirmar="Marcar os ${lotes.proximo} pedido(s) do lote ${dataBR(proximoLote)} como INCLUÍDOS NA AÇÃO? Os clientes recebem um e-mail.">Marcar lote ${dataBR(proximoLote)} como incluído na ação</button>
   </form>
   <div class="rolar"><table class="tabela">
-    <tr><th>#</th><th>Data</th><th>Titular</th><th>Contato</th><th>Documentos</th><th>Lote</th><th>Status</th><th>Atualizar</th></tr>
+    <tr><th>#</th><th>Data</th><th>Titular</th><th>Contato</th><th>Documentos</th><th>Lote</th><th>Status</th><th>Baixas e status</th></tr>
     ${pedidos.map((x) => `<tr><td>${x.id}</td><td>${dt(x.criado_em)}</td>
       <td><strong>${esc(x.nome)}</strong><br>${esc(formatarDoc(x.cpf))}<br><span class="muted">nasc. ${dataBR(x.nascimento)}${x.titular_proprio ? '' : ' · <strong>terceiro</strong>'}</span><br><span class="muted">cliente: ${esc(x.cliente)}</span></td>
       <td>${esc(x.telefone)}<br><span class="muted">${esc(x.email)}</span></td>
@@ -222,7 +245,10 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
       <td>${x.lote ? dataBR(x.lote) : '—'}</td><td>${etiqueta(x.status)}<br><span class="muted">${reais(x.valor_centavos)} · ${x.forma_pagamento === 'cartao' ? `cartão ${x.parcelas}x` : 'Pix'}</span>
       ${x.forma_pagamento === 'cartao' && x.pago_em ? `<br><span class="muted">Antecipação: <strong>${esc({ PENDING: 'em análise', CREDITED: 'creditada', DENIED: 'negada', CANCELLED: 'cancelada', OVERDUE: 'vencida', DEBITED: 'debitada', SCHEDULED: 'agendada' }[x.antecipacao_status] || x.antecipacao_status || (x.antecipacao_erro ? 'falhou' : 'aguardando'))}</strong>${x.antecipacao_liquido_centavos ? ` · líquido ${reais(x.antecipacao_liquido_centavos)}` : ''}${x.antecipacao_erro && !x.antecipacao_id ? `<br>${esc(x.antecipacao_erro)}` : ''}</span>
       ${!x.antecipacao_id ? `<form method="post" action="/admin/limpa-nome/antecipar" style="margin:4px 0 0"><input type="hidden" name="id" value="${x.id}"><button class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem" data-confirmar="Pedir ao Asaas a antecipação deste parcelamento agora?">Antecipar agora</button></form>` : ''}` : ''}</td>
-      <td><form method="post" action="/admin/limpa-nome/status" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">
+      <td>${['em_lote', 'em_andamento', 'decisao', 'concluido'].includes(x.status) ? `<form method="post" action="/admin/limpa-nome/baixas" style="margin:0 0 8px;font-size:.82rem"><input type="hidden" name="id" value="${x.id}">
+        ${ORGAOS_LN.map(([k, n]) => `<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="b_${k}" value="1" ${lerBaixas(x)[k] ? 'checked' : ''}> ${esc(n.split(' (')[0])}${lerBaixas(x)[k] ? ` <span class="muted">${dataBR(lerBaixas(x)[k])}</span>` : ''}</label>`).join('')}
+        <button class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem;margin-top:4px">Salvar baixas</button></form>` : ''}
+      <form method="post" action="/admin/limpa-nome/status" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">
         <input type="hidden" name="id" value="${x.id}">
         <select name="status" aria-label="Novo status" style="min-height:36px">${Object.entries(STATUS_LN).map(([k, s]) => `<option value="${k}" ${k === x.status ? 'selected' : ''}>${s.t}</option>`).join('')}</select>
         <input name="obs" maxlength="300" placeholder="Mensagem ao cliente (opcional)" aria-label="Mensagem ao cliente" value="${esc(x.obs_admin || '')}" style="width:200px;min-height:36px;padding:6px 8px">
