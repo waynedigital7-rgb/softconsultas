@@ -106,6 +106,20 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(verificar, 4000);
   }
 
+  // Acompanhar pagamento do serviço Limpa Nome
+  const ln = document.querySelector('[data-pedido-ln]');
+  if (ln) {
+    const id = ln.getAttribute('data-pedido-ln');
+    const ver = async () => {
+      try {
+        const j = await (await fetch(`/api/limpa-nome/${id}/status`, { headers: { Accept: 'application/json' } })).json();
+        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.reload(); }
+      } catch {}
+      setTimeout(ver, 5000);
+    };
+    setTimeout(ver, 4000);
+  }
+
   // Evitar clique duplo ao consultar
   const f = document.querySelector('form[data-consulta]');
   if (f) f.addEventListener('submit', () => {

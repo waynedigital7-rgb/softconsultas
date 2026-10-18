@@ -69,3 +69,22 @@ export function transferirPix({ valorCentavos, chave, descricao }) {
 export const pagarPixCopiaECola = ({ payload, valorCentavos, descricao }) =>
   asaas('/pix/qrCodes/pay', { method: 'POST', body: JSON.stringify({ qrCode: { payload }, value: valorCentavos / 100, description: descricao }) });
 export const saldoConta = () => asaas('/finance/balance');
+
+// Cobrança Pix do serviço de Limpa Nome (referência própria, separada das recargas)
+export const PREFIXO_LIMPA_NOME = 'sclnp_';
+export function criarCobrancaServico({ clienteId, valorCentavos, pedidoId, descricao, forma = 'pix', parcelas = 1 }) {
+  const venc = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+  const base = { customer: clienteId, dueDate: venc, description: descricao || `Serviço Limpa Nome - Soft Consultas #${pedidoId}`, externalReference: `${PREFIXO_LIMPA_NOME}${pedidoId}` };
+  // Cartão: o cliente digita os dados na página segura do Asaas (invoiceUrl); nada de cartão passa pelo nosso site
+  const corpo = forma === 'cartao'
+    ? (parcelas > 1 ? { ...base, billingType: 'CREDIT_CARD', installmentCount: parcelas, totalValue: valorCentavos / 100 } : { ...base, billingType: 'CREDIT_CARD', value: valorCentavos / 100 })
+    : { ...base, billingType: 'PIX', value: valorCentavos / 100 };
+  return asaas('/payments', { method: 'POST', body: JSON.stringify(corpo) });
+}
+
+// Antecipação de recebíveis do cartão (o dinheiro cai antes, em vez de mês a mês)
+export const simularAntecipacao = ({ payment, installment }) =>
+  asaas('/anticipations/simulate', { method: 'POST', body: JSON.stringify(installment ? { installment } : { payment }) });
+export const solicitarAntecipacao = ({ payment, installment }) =>
+  asaas('/anticipations', { method: 'POST', body: JSON.stringify(installment ? { installment } : { payment }) });
+export const buscarAntecipacao = (id) => asaas(`/anticipations/${id}`);

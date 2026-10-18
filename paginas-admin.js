@@ -2,8 +2,8 @@
 import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
-const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
-  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/operacao', 'Operação'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
+export const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
+  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/operacao', 'Operação'], ['/admin/limpa-nome', 'Limpa Nome (serviço)'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
 const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
@@ -443,6 +443,14 @@ ${repasses.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td><stron
     return `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="etapa_${e.chave}" value="1" ${emails.etapas.includes(e.chave) ? 'checked' : ''} style="width:20px;height:20px"> ${e.nome} <span class="muted" style="font-size:.85rem">(${n('enviado')} enviados${n('erro') ? `, ${n('erro')} com erro` : ''})</span></label>`;
   }).join('')}</div>
   <p class="muted">Recarregaram depois de receber um e-mail: <strong>${emails.recargasDepois}</strong> · Descadastrados: ${emails.descadastrados}</p>
+  <div style="background:#F6ECFC;border-radius:12px;padding:12px 14px;margin:0 0 14px">
+    <strong>Limite diário de marketing:</strong> ${emails.hoje} de ${emails.limite} usados hoje (automáticos + campanhas).
+    ${emails.pausaAte ? `<br><strong style="color:var(--erro)">Pausado pelo provedor (cota diária atingida) até ${dt(emails.pausaAte)}.</strong>` : ''}
+    ${emails.fila.length ? `<br>Campanhas na fila: ${emails.fila.map((x) => `${esc(x.nome)} (faltam ${x.faltam})`).join(' · ')}` : ''}
+    <div class="campo" style="margin:10px 0 0"><label for="limite">E-mails de marketing por dia</label><input id="limite" name="limite" type="text" inputmode="numeric" value="${emails.limite}" style="max-width:140px">
+      <small class="muted">No plano grátis do Resend o total é 100/dia (contando senha, boas-vindas e avisos). Deixe 80. No plano pago, pode subir para 1.500 ou mais.</small></div>
+    ${emails.pausaAte ? '<label style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" name="despausar" value="1" style="width:20px;height:20px"> Já aumentei o plano: retomar agora</label>' : ''}
+  </div>
   <button class="btn" type="submit">Salvar e-mails automáticos</button>
 </form>
 <div class="cartao" style="max-width:720px;margin-bottom:18px">
@@ -458,7 +466,7 @@ ${repasses.map((r) => `<tr><td>${r.id}</td><td>${dt(r.criado_em)}</td><td><stron
 
 ${(emails.campanhas || []).map((c) => `<form class="cartao" method="post" action="/admin/emails/campanha" style="max-width:720px;margin-bottom:18px">
   <h2 style="font-size:1.2rem;margin-top:0">Campanha de e-mail: ${esc(c.nome)}</h2>
-  <p class="muted" style="margin-top:0">Disparo único: cada cliente recebe esta campanha uma vez só. Respeita quem se descadastrou. Enviados: <strong>${c.enviados}</strong>${c.erros ? ` · com erro: ${c.erros}` : ''} · fizeram a consulta depois do e-mail: <strong>${c.consultaram}</strong>${c.rodando ? ' · <strong style="color:var(--ok)">enviando agora…</strong>' : ''}</p>
+  <p class="muted" style="margin-top:0">${c.semanal ? `Campanha semanal: pode ser disparada uma vez por lote (próximo: <strong>${c.lote.split('-').reverse().join('/')}</strong>, já enviados para este lote: <strong>${c.enviadosSemana}</strong>). Quem já tem pedido pago não recebe.` : 'Disparo único: cada cliente recebe esta campanha uma vez só.'} Respeita quem se descadastrou. Enviados no total: <strong>${c.enviados}</strong>${c.erros ? ` · com erro: ${c.erros}` : ''} · ${c.semanal ? 'pagaram o serviço depois do e-mail' : 'fizeram a consulta depois do e-mail'}: <strong>${c.consultaram}</strong>${c.rodando ? ' · <strong style="color:var(--ok)">enviando agora…</strong>' : ''}</p>
   <input type="hidden" name="c" value="${c.chave}">
   <p style="margin:0 0 12px"><a class="btn sec" style="min-height:34px;padding:6px 14px;font-size:.85rem" target="_blank" rel="noopener" href="/admin/emails/campanha/previa?c=${c.chave}">Ver prévia do e-mail</a>
     <button class="btn sec" name="acao" value="teste" style="min-height:34px;padding:6px 14px;font-size:.85rem">Enviar teste para o meu e-mail</button></p>

@@ -1,0 +1,205 @@
+// Serviço de Limpa Nome: páginas do cliente e do Admin
+import { esc, reais, dt } from './paginas.js';
+import { formatarDoc } from './pdf.js';
+
+export const STATUS_LN = {
+  aguardando_pagamento: { t: 'Aguardando pagamento', c: '#9A6B00' },
+  pago: { t: 'Pago · aguardando o lote', c: '#1E7B4D' },
+  em_lote: { t: 'Enviado no lote', c: '#5B2D8E' },
+  em_andamento: { t: 'Em andamento', c: '#5B2D8E' },
+  concluido: { t: 'Concluído', c: '#1E7B4D' },
+  cancelado: { t: 'Cancelado', c: '#7A7285' },
+  reembolsado: { t: 'Reembolsado', c: '#7A7285' },
+};
+const etiqueta = (s) => `<span style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:.82rem;font-weight:700;background:${STATUS_LN[s]?.c || '#555'}1A;color:${STATUS_LN[s]?.c || '#555'}">${esc(STATUS_LN[s]?.t || s)}</span>`;
+const dataBR = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
+// Vídeo explicativo: link do YouTube/Vimeo ou arquivo .mp4 (ex.: /criativos/limpa-nome.mp4)
+export function blocoVideo(link) {
+  const l = String(link || '').trim();
+  if (!l) return '';
+  const yt = /(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/.exec(l);
+  const vm = /vimeo\.com\/(?:video\/)?(\d+)/.exec(l);
+  const vertical = /shorts\//.test(l);
+  const caixa = (inner) => `<div style="position:relative;width:100%;${vertical ? 'max-width:360px;aspect-ratio:9/16' : 'aspect-ratio:16/9'};border-radius:14px;overflow:hidden;background:#000;margin:0 auto">${inner}</div>`;
+  if (yt) return caixa(`<iframe src="https://www.youtube-nocookie.com/embed/${yt[1]}?rel=0" title="Vídeo explicativo do Limpa Nome" style="position:absolute;inset:0;width:100%;height:100%;border:0" allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; fullscreen" allowfullscreen loading="lazy"></iframe>`);
+  if (vm) return caixa(`<iframe src="https://player.vimeo.com/video/${vm[1]}" title="Vídeo explicativo do Limpa Nome" style="position:absolute;inset:0;width:100%;height:100%;border:0" allow="fullscreen; picture-in-picture" allowfullscreen loading="lazy"></iframe>`);
+  if (/^\/criativos\/[a-z0-9-]{1,80}\.mp4$/.test(l)) return `<video controls playsinline preload="metadata" style="width:100%;max-height:640px;border-radius:14px;background:#000" src="${esc(l)}"></video>`;
+  return '';
+}
+// Parcelamento com juros repassados ao cliente (Tabela Price). 1x no cartão sai pelo preço à vista.
+export function tabelaParcelas(preco, max, jurosPct) {
+  const i = Math.max(0, Number(jurosPct) || 0) / 100;
+  return Array.from({ length: Math.max(1, max) }, (_, k) => {
+    const n = k + 1;
+    const parcela = n === 1 || !i ? Math.ceil(preco / n) : Math.ceil((preco * i) / (1 - (1 + i) ** -n));
+    return { n, parcela, total: parcela * n };
+  });
+}
+const DIAS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+
+// ---------- Cliente ----------
+export function paginaServicoLN({ cfg, proximoLote, pedidos, usuario, erro, v = {} }) {
+  const p = (t) => esc(t || '');
+  return `
+<span class="tag">Serviço</span>
+<h1 style="font-size:1.9rem;margin:10px 0 4px">${cfg.prazo ? p(cfg.prazo) : 'Limpa Nome'}</h1>
+<p class="muted" style="margin:0 0 18px;max-width:760px">${p(cfg.resumo) || 'Pedido de retirada de negativações indevidas dos cadastros de inadimplentes, feito em lote toda semana.'}</p>
+${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+${pedidos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Seus pedidos</h2><div class="rolar"><table class="tabela">
+  <tr><th>#</th><th>Titular</th><th>Lote</th><th>Status</th><th></th></tr>
+  ${pedidos.map((x) => `<tr><td>${x.id}</td><td>${esc(x.nome)}<br><span class="muted">${esc(formatarDoc(x.cpf))}</span></td><td>${x.lote ? dataBR(x.lote) : '—'}</td><td>${etiqueta(x.status)}</td><td><a href="/limpa-nome/servico/${x.id}">Ver</a></td></tr>`).join('')}
+</table></div></div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="saldo"><div style="color:#D9B8F0;font-weight:600">Valor do serviço</div><div class="valor">${reais(cfg.preco)}</div><div style="color:#D9B8F0;margin-top:6px">no Pix${cfg.parcelas > 1 ? ` ou em até ${cfg.parcelas}x de ${reais(cfg.tabela.at(-1).parcela)} no cartão` : ''}</div></div>
+  <div class="cartao"><h3 style="margin-top:0">Próximo lote</h3><p style="margin:0;font-size:1.3rem;font-weight:700">${dataBR(proximoLote)}</p><p class="muted" style="margin:6px 0 0">Os pedidos pagos são enviados toda ${DIAS[cfg.dia]}.</p></div>
+</div>
+${blocoVideo(cfg.video) ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Assista: como funciona o Limpa Nome</h2>${blocoVideo(cfg.video)}</div>` : ''}
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Como funciona, passo a passo</h2>
+  <p style="margin:8px 0"><strong>1. Você faz o pedido.</strong> Preenche os dados do titular do CPF e envia a foto do RG ou da CNH. Leva uns 3 minutos.</p>
+  <p style="margin:8px 0"><strong>2. Você paga.</strong> No Pix (confirmado na hora)${cfg.parcelas > 1 ? ` ou parcelado em até ${cfg.parcelas}x no cartão, na página segura do Asaas` : ''}. O pagamento é separado do saldo de consultas.</p>
+  <p style="margin:8px 0"><strong>3. Seu nome entra no lote da semana.</strong> Toda ${DIAS[cfg.dia]} reunimos os pedidos pagos e enviamos juntos, numa ação coletiva. Pedidos pagos até a véspera entram no lote seguinte mais próximo.</p>
+  <p style="margin:8px 0"><strong>4. Acompanhe por aqui.</strong> Cada mudança de etapa aparece nesta página e chega no seu e-mail.</p>
+  <p style="margin:8px 0"><strong>5. Confira o resultado.</strong> Quando o pedido for concluído, faça uma consulta do seu CPF aqui na plataforma para ver a situação atualizada.</p>
+  ${cfg.executor ? `<p class="muted" style="margin:12px 0 0">Serviço executado por: <strong>${p(cfg.executor)}</strong></p>` : ''}
+  ${cfg.garantia ? `<p class="muted" style="margin:6px 0 0"><strong>Garantia:</strong> ${p(cfg.garantia)}</p>` : ''}
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Perguntas frequentes</h2>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">A minha dívida deixa de existir?</summary><p style="margin:8px 0 0">Não. O serviço pede a retirada do <strong>registro de negativação</strong> (o "nome sujo" nos cadastros de inadimplentes). A dívida continua existindo e o credor ainda pode cobrá-la pelos meios legais. Se puder, negocie com o credor também.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">O que é o lote semanal?</summary><p style="margin:8px 0 0">Em vez de enviar cada pedido sozinho, juntamos todos os pedidos pagos da semana e enviamos de uma vez, toda ${DIAS[cfg.dia]}. Isso reduz o custo e por isso o preço é menor. O próximo lote sai em <strong>${dataBR(proximoLote)}</strong>.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Quanto tempo demora?</summary><p style="margin:8px 0 0">${cfg.prazo ? p(cfg.prazo) : 'O prazo varia conforme cada caso e cada órgão. Você acompanha tudo por esta página.'}</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">É garantido?</summary><p style="margin:8px 0 0">${cfg.garantia ? p(cfg.garantia) : 'O resultado depende da análise de cada caso, por isso não prometemos resultado. Você é avisado de cada etapa.'}</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Por que precisam do meu RG ou CNH?</summary><p style="margin:8px 0 0">Para comprovar que o pedido é feito pelo próprio titular (ou com autorização dele). Os documentos ficam guardados com acesso restrito, são usados só neste serviço e são apagados automaticamente 90 dias depois de o pedido terminar.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Posso pedir para outra pessoa?</summary><p style="margin:8px 0 0">Pode, desde que você tenha autorização por escrito do titular. Envie os dados e o documento <strong>dele</strong> e desmarque a opção "meu próprio CPF".</p></details>
+  <details style="padding:10px 0"><summary style="cursor:pointer;font-weight:700">Como sei se meu nome está negativado?</summary><p style="margin:8px 0 0">Faça uma consulta do seu CPF aqui na plataforma antes do pedido. <a href="/limpa-nome">Ver consultas recomendadas</a>.</p></details>
+</div>
+<form class="cartao" method="post" action="/limpa-nome/servico" enctype="multipart/form-data" style="max-width:720px">
+  <h2 style="font-size:1.2rem;margin-top:0">Fazer o pedido</h2>
+  <div class="campo"><label for="ln-nome">Nome completo do titular</label><input id="ln-nome" type="text" name="nome" required maxlength="120" value="${p(v.nome ?? usuario.nome)}"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="ln-cpf">CPF do titular</label><input id="ln-cpf" type="text" name="cpf" required inputmode="numeric" maxlength="14" value="${p(v.cpf ?? (usuario.documento?.length === 11 ? usuario.documento : ''))}"></div>
+    <div class="campo" style="flex:1 1 180px"><label for="ln-nasc">Data de nascimento</label><input id="ln-nasc" name="nascimento" type="date" required value="${p(v.nascimento)}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="ln-tel">WhatsApp do titular</label><input id="ln-tel" type="tel" name="telefone" required inputmode="tel" maxlength="20" value="${p(v.telefone ?? usuario.telefone)}"></div>
+    <div class="campo" style="flex:1 1 240px"><label for="ln-email">E-mail do titular</label><input id="ln-email" name="email" type="email" required maxlength="120" value="${p(v.email ?? usuario.email)}"></div>
+  </div>
+  <div class="campo"><label for="ln-tipo">Documento com foto</label>
+    <select id="ln-tipo" name="doc_tipo" required style="min-height:46px"><option value="RG" ${v.doc_tipo === 'RG' ? 'selected' : ''}>RG</option><option value="CNH" ${v.doc_tipo === 'CNH' ? 'selected' : ''}>CNH</option></select></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 220px"><label for="ln-frente">Foto da frente</label><input id="ln-frente" name="doc_frente" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required></div>
+    <div class="campo" style="flex:1 1 220px"><label for="ln-verso">Foto do verso</label><input id="ln-verso" name="doc_verso" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></div>
+  </div>
+  <small class="muted" style="display:block;margin:-6px 0 14px">JPG, PNG ou PDF, até 5 MB cada. Na CNH digital (PDF), a frente basta.</small>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><input type="checkbox" name="proprio" value="1" ${v.proprio === '0' ? '' : 'checked'} style="width:20px;height:20px;margin-top:3px"> <span>O pedido é para o <strong>meu próprio CPF</strong>. (Se desmarcar, você declara ter autorização por escrito do titular.)</span></label>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Autorizo a Soft Consultas${cfg.executor ? ` e ${p(cfg.executor)}` : ''} a usar estes dados e documentos exclusivamente para este serviço, e li que a dívida continua existindo e que o resultado depende da análise do caso.</span></label>
+  <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 16px"><legend style="font-weight:700;padding:0 6px">Forma de pagamento</legend>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" ${v.forma === 'cartao' ? '' : 'checked'} style="width:20px;height:20px"> <span><strong>Pix</strong> · ${reais(cfg.preco)} à vista</span></label>
+    ${cfg.parcelas >= 1 ? `<label style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap"><input type="radio" name="forma" value="cartao" ${v.forma === 'cartao' ? 'checked' : ''} style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong> em</span>
+      <select name="parcelas" aria-label="Número de parcelas" style="min-height:40px">${Array.from({ length: cfg.parcelas }, (_, i) => i + 1).map((n) => `<option value="${n}" ${Number(v.parcelas || cfg.parcelas) === n ? 'selected' : ''}>${n}x de ${reais(cfg.tabela[n - 1].parcela)}${n > 1 && cfg.juros > 0 ? ` (total ${reais(cfg.tabela[n - 1].total)})` : ' sem juros'}</option>`).join('')}</select></label>
+      ${cfg.juros > 0 && cfg.parcelas > 1 ? `<small class="muted" style="display:block;margin:2px 0 0 30px">Parcelado a partir de 2x com juros de ${String(cfg.juros).replace('.', ',')}% ao mês, já incluídos no valor das parcelas.</small>` : ''}` : ''}
+  </fieldset>
+  <button class="btn" type="submit">Continuar para o pagamento</button>
+</form>`;
+}
+
+export function paginaPedidoLN({ p, cfg }) {
+  const passos = [
+    ['aguardando_pagamento', 'Pedido criado'],
+    ['pago', `Pagamento confirmado${p.pago_em ? ` em ${dt(p.pago_em)}` : ''}`],
+    ['em_lote', `Enviado no lote de ${dataBR(p.lote) || '—'}`],
+    ['em_andamento', 'Em andamento'],
+    ['concluido', 'Concluído'],
+  ];
+  const ordem = passos.map((x) => x[0]);
+  const atual = ordem.indexOf(p.status);
+  const final = ['cancelado', 'reembolsado'].includes(p.status);
+  return `
+<p><a href="/limpa-nome/servico">← Limpa Nome</a></p>
+<h1 style="font-size:1.6rem;margin:6px 0">Pedido #${p.id} · ${esc(p.nome)}</h1>
+<p style="margin:0 0 18px">${etiqueta(p.status)} <span class="muted">CPF ${esc(formatarDoc(p.cpf))}</span></p>
+${p.status === 'aguardando_pagamento' && p.forma_pagamento === 'cartao' ? `
+<div class="cartao estreito" style="max-width:520px;text-align:center;margin-bottom:18px" data-pedido-ln="${p.id}">
+  <h2 style="font-size:1.3rem;margin-top:0">Pague ${reais(p.valor_centavos)} no cartão${p.parcelas > 1 ? ` em ${p.parcelas}x` : ''}</h2>
+  ${p.link_pagamento ? `<p><a class="btn" href="${esc(p.link_pagamento)}">Abrir pagamento seguro</a></p>` : ''}
+  <p class="muted pulsando" aria-live="polite">Aguardando a confirmação do cartão… esta página atualiza sozinha.</p>
+</div>` : ''}
+${p.status === 'aguardando_pagamento' && p.forma_pagamento !== 'cartao' ? `
+<div class="cartao estreito" style="max-width:520px;text-align:center;margin-bottom:18px" data-pedido-ln="${p.id}">
+  <h2 style="font-size:1.3rem;margin-top:0">Pague ${reais(p.valor_centavos)} com Pix</h2>
+  ${p.pix_imagem ? `<img src="data:image/png;base64,${esc(p.pix_imagem)}" alt="QR Code Pix" style="width:230px;height:230px;max-width:100%">
+  <textarea id="pix-codigo" readonly rows="3" aria-label="Código Pix copia e cola" style="width:100%;font:inherit;font-size:.8rem;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px;resize:none">${esc(p.pix_codigo)}</textarea>
+  <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
+  ${p.link_pagamento ? `<p><a href="${esc(p.link_pagamento)}" target="_blank" rel="noopener">${p.pix_imagem ? 'Prefiro pagar pela página do Asaas' : 'Abrir página de pagamento'}</a></p>` : ''}
+  <p class="muted pulsando" aria-live="polite">Aguardando pagamento… esta página atualiza sozinha.</p>
+</div>` : ''}
+<div class="cartao" style="max-width:620px">
+  <h2 style="font-size:1.2rem;margin-top:0">Andamento</h2>
+  ${final ? `<p>${etiqueta(p.status)}</p>` : passos.map(([k, t], i) => `<div style="display:flex;gap:12px;align-items:center;padding:8px 0;opacity:${i <= atual ? 1 : .45}">
+    <span style="width:26px;height:26px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;background:${i <= atual ? 'var(--roxo)' : '#C9BFD4'}">${i < atual || (i === atual && k === 'concluido') ? '✓' : i + 1}</span><span>${esc(t)}</span></div>`).join('')}
+  ${p.obs_admin ? `<div class="aviso" style="margin-top:12px"><strong>Atualização:</strong> ${esc(p.obs_admin)}</div>` : ''}
+  ${cfg.prazo ? `<p class="muted" style="margin:12px 0 0">${esc(cfg.prazo)}</p>` : ''}
+</div>`;
+}
+
+// ---------- Admin ----------
+export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote, ok, erro }) {
+  const aviso = (ok ? `<div class="aviso ok">${esc(ok)}</div>` : '') + (erro ? `<div class="aviso erro">${esc(erro)}</div>` : '');
+  const sel = (k) => (filtro === k ? '' : 'sec');
+  return `<h1 style="font-size:1.7rem">Serviço Limpa Nome</h1>${menu}${aviso}
+<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div class="muted">Próximo lote</div><div style="font-family:Montserrat;font-size:1.6rem;font-weight:800">${dataBR(proximoLote)}</div><div class="muted">${lotes.proximo} pedido(s) pago(s) para ele</div></div>
+  <div class="cartao"><div class="muted">Pedidos pagos (total)</div><div style="font-family:Montserrat;font-size:1.6rem;font-weight:800">${lotes.pagos}</div><div class="muted">${reais(lotes.receita)} recebidos</div></div>
+  <div class="cartao"><div class="muted">Aguardando pagamento</div><div style="font-family:Montserrat;font-size:1.6rem;font-weight:800">${lotes.aguardando}</div></div>
+</div>
+<form class="cartao" method="post" action="/admin/limpa-nome/config" style="max-width:760px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Configuração do serviço</h2>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${cfg.ativo ? 'checked' : ''} style="width:22px;height:22px"> Serviço disponível para os clientes</label>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 160px"><label for="c-preco">Preço (R$)</label><input id="c-preco" type="text" name="preco" inputmode="decimal" value="${(cfg.preco / 100).toFixed(2).replace('.', ',')}"></div>
+    <div class="campo" style="flex:1 1 140px"><label for="c-parc">Parcelas no cartão (máx.)</label><input id="c-parc" type="text" name="parcelas" inputmode="numeric" value="${cfg.parcelas}"></div>
+    <div class="campo" style="flex:1 1 140px"><label for="c-juros">Juros ao mês no cartão (%)</label><input id="c-juros" type="text" name="juros" inputmode="decimal" value="${String(cfg.juros).replace('.', ',')}"></div>
+    <div class="campo" style="flex:1 1 200px"><label for="c-dia">Dia do lote</label><select id="c-dia" name="dia" style="min-height:46px">${DIAS.map((d, i) => `<option value="${i}" ${cfg.dia === i ? 'selected' : ''}>${d}</option>`).join('')}</select></div>
+  </div>
+  <div class="campo"><label for="c-resumo">Resumo do serviço (aparece no topo da página do cliente)</label><input id="c-resumo" type="text" name="resumo" maxlength="300" value="${esc(cfg.resumo)}"></div>
+  <div class="campo"><label for="c-prazo">Prazo / promessa (vira o título da página do cliente)</label><input id="c-prazo" type="text" name="prazo" maxlength="150" value="${esc(cfg.prazo)}" placeholder="Ex.: de 30 a 90 dias após o envio do lote"></div>
+  <div class="campo"><label for="c-exec">Quem executa</label><input id="c-exec" type="text" name="executor" maxlength="150" value="${esc(cfg.executor)}" placeholder="Ex.: Soft Crédito / escritório parceiro"></div>
+  <div class="campo"><label for="c-gar">Garantia / reembolso</label><input id="c-gar" type="text" name="garantia" maxlength="300" value="${esc(cfg.garantia)}" placeholder="Ex.: se o nome não sair em 90 dias, devolvemos o valor"></div>
+  <div class="campo"><label for="c-video">Vídeo explicativo (link do YouTube/Vimeo ou /criativos/limpa-nome.mp4)</label><input id="c-video" type="text" name="video" maxlength="300" value="${esc(cfg.video)}" placeholder="https://youtu.be/..."><small class="muted">Recomendado: suba no YouTube como "Não listado" e cole o link aqui.</small></div>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:14px"><input type="checkbox" name="antecipar" value="1" ${cfg.antecipar ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Antecipar automaticamente os pagamentos no cartão</strong><br><span class="muted">Assim que o Asaas confirma o cartão, pedimos a antecipação do parcelamento inteiro: o valor (menos a taxa do Asaas) cai na conta em geral no próximo dia útil, em vez de mês a mês.</span></span></label>
+  <p class="muted" style="margin-top:-4px">Tabela atual: ${cfg.tabela.filter((t) => t.n === 1 || t.n === 3 || t.n === 6 || t.n === cfg.parcelas).map((t) => `${t.n}x ${reais(t.parcela)} (total ${reais(t.total)})`).join(' · ')}</p>
+  <button class="btn">Salvar configuração</button>
+  <p class="muted" style="margin:10px 0 0">Página do cliente: <a href="/limpa-nome/servico" target="_blank" rel="noopener">/limpa-nome/servico</a></p>
+</form>
+<div class="cartao" style="margin-bottom:18px">
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+    <a class="btn ${sel('lote')}" style="min-height:36px;padding:6px 14px;font-size:.85rem" href="/admin/limpa-nome?f=lote">Próximo lote (${lotes.proximo})</a>
+    <a class="btn ${sel('ativos')}" style="min-height:36px;padding:6px 14px;font-size:.85rem" href="/admin/limpa-nome?f=ativos">Em andamento</a>
+    <a class="btn ${sel('aguardando')}" style="min-height:36px;padding:6px 14px;font-size:.85rem" href="/admin/limpa-nome?f=aguardando">Aguardando pagamento</a>
+    <a class="btn ${sel('todos')}" style="min-height:36px;padding:6px 14px;font-size:.85rem" href="/admin/limpa-nome?f=todos">Todos</a>
+    <span style="flex:1"></span>
+    <a class="btn sec" style="min-height:36px;padding:6px 14px;font-size:.85rem" href="/admin/limpa-nome/lote.csv?lote=${proximoLote}">Baixar planilha do próximo lote (CSV)</a>
+  </div>
+  <form method="post" action="/admin/limpa-nome/fechar-lote" style="margin:0 0 14px">
+    <input type="hidden" name="lote" value="${proximoLote}">
+    <button class="btn" ${lotes.proximo ? '' : 'disabled'} data-confirmar="Marcar os ${lotes.proximo} pedido(s) do lote ${dataBR(proximoLote)} como ENVIADOS? Os clientes recebem um e-mail.">Marcar lote ${dataBR(proximoLote)} como enviado</button>
+  </form>
+  <div class="rolar"><table class="tabela">
+    <tr><th>#</th><th>Data</th><th>Titular</th><th>Contato</th><th>Documentos</th><th>Lote</th><th>Status</th><th>Atualizar</th></tr>
+    ${pedidos.map((x) => `<tr><td>${x.id}</td><td>${dt(x.criado_em)}</td>
+      <td><strong>${esc(x.nome)}</strong><br>${esc(formatarDoc(x.cpf))}<br><span class="muted">nasc. ${dataBR(x.nascimento)}${x.titular_proprio ? '' : ' · <strong>terceiro</strong>'}</span><br><span class="muted">cliente: ${esc(x.cliente)}</span></td>
+      <td>${esc(x.telefone)}<br><span class="muted">${esc(x.email)}</span></td>
+      <td>${x.docs_apagados ? '<span class="muted">apagados</span>' : `${esc(x.doc_tipo)}: ${x.doc_frente ? `<a href="/admin/limpa-nome/doc/${x.id}/frente" target="_blank" rel="noopener">frente</a>` : ''}${x.doc_verso ? ` · <a href="/admin/limpa-nome/doc/${x.id}/verso" target="_blank" rel="noopener">verso</a>` : ''}`}</td>
+      <td>${x.lote ? dataBR(x.lote) : '—'}</td><td>${etiqueta(x.status)}<br><span class="muted">${reais(x.valor_centavos)} · ${x.forma_pagamento === 'cartao' ? `cartão ${x.parcelas}x` : 'Pix'}</span>
+      ${x.forma_pagamento === 'cartao' && x.pago_em ? `<br><span class="muted">Antecipação: <strong>${esc({ PENDING: 'em análise', CREDITED: 'creditada', DENIED: 'negada', CANCELLED: 'cancelada', OVERDUE: 'vencida', DEBITED: 'debitada', SCHEDULED: 'agendada' }[x.antecipacao_status] || x.antecipacao_status || (x.antecipacao_erro ? 'falhou' : 'aguardando'))}</strong>${x.antecipacao_liquido_centavos ? ` · líquido ${reais(x.antecipacao_liquido_centavos)}` : ''}${x.antecipacao_erro && !x.antecipacao_id ? `<br>${esc(x.antecipacao_erro)}` : ''}</span>
+      ${!x.antecipacao_id ? `<form method="post" action="/admin/limpa-nome/antecipar" style="margin:4px 0 0"><input type="hidden" name="id" value="${x.id}"><button class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem" data-confirmar="Pedir ao Asaas a antecipação deste parcelamento agora?">Antecipar agora</button></form>` : ''}` : ''}</td>
+      <td><form method="post" action="/admin/limpa-nome/status" style="display:flex;gap:6px;flex-wrap:wrap;margin:0">
+        <input type="hidden" name="id" value="${x.id}">
+        <select name="status" aria-label="Novo status" style="min-height:36px">${Object.entries(STATUS_LN).map(([k, s]) => `<option value="${k}" ${k === x.status ? 'selected' : ''}>${s.t}</option>`).join('')}</select>
+        <input name="obs" maxlength="300" placeholder="Mensagem ao cliente (opcional)" aria-label="Mensagem ao cliente" value="${esc(x.obs_admin || '')}" style="width:200px;min-height:36px;padding:6px 8px">
+        <button class="btn sec" style="min-height:36px;padding:4px 12px;font-size:.82rem">Salvar</button></form></td></tr>`).join('') || '<tr><td colspan="8" class="vazio">Nenhum pedido.</td></tr>'}
+  </table></div>
+  <p class="muted" style="margin:12px 0 0">Pagamentos no cartão aparecem como pagos quando o Asaas confirma a transação. Reembolso: faça o estorno no painel do Asaas e depois mude o status para "Reembolsado". Os documentos são apagados automaticamente 90 dias depois de o pedido ser concluído, cancelado ou reembolsado (LGPD).</p>
+</div>`;
+}

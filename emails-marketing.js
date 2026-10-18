@@ -146,8 +146,10 @@ export function montarEmail({ etapa, nome, perfil, bonus, base, sair, podeRespon
 // Campanha: "Consulte o seu próprio CPF" com a Cred Completa Plus
 export const CAMPANHAS = {
   'cpf-credplus': { nome: 'Consulte seu CPF · Cred Completa Plus', produto: 'cred-completa-plus' },
+  // Semanal: pode ser reenviada a cada lote; quem já tem pedido em andamento não recebe
+  'limpa-nome-servico': { nome: 'Limpa Nome · lote da semana', produto: null, semanal: true },
 };
-export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeResponder = false }) {
+export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeResponder = false, servico = null }) {
   const primeiro = esc(String(nome || '').trim().split(/\s+/)[0] || 'tudo bem');
   const utm = `?utm_source=email&utm_medium=campanha&utm_campaign=${chave}`;
   const b = bonus?.ativo ? bonus : null;
@@ -167,6 +169,29 @@ export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeRe
         ${b ? caixaBonus(b) : ''}
         ${botao(link, 'Consultar meu CPF agora')}
         <p style="font-size:14px;color:#5B5366">Consultar o próprio CPF é um direito seu. O resultado fica só na sua conta e é apagado automaticamente depois de alguns dias (LGPD).${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
+    };
+  }
+  if (chave === 'limpa-nome-servico') {
+    const sv = servico || {};
+    const link = `${base}/limpa-nome/servico${utm}`;
+    const lote = sv.lote ? sv.lote.split('-').reverse().join('/') : '';
+    const ult = sv.tabela?.at(-1);
+    const parc = sv.parcelas > 1 && ult ? ` ou em até ${sv.parcelas}x de ${reais(ult.parcela)} no cartão` : '';
+    return {
+      assunto: `${primeiro}, ${sv.prazo ? sv.prazo.charAt(0).toLowerCase() + sv.prazo.slice(1) : 'limpe seu nome'}: o lote desta semana fecha${lote ? ` em ${lote}` : ' em breve'}`,
+      html: moldura({ base, sair, preheader: `Pedido online, sem sair de casa. ${reais(sv.preco || 0)} no Pix${parc}.`, corpo: `
+        <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, ${esc(sv.prazo ? sv.prazo.charAt(0).toLowerCase() + sv.prazo.slice(1) : 'chegou a hora de limpar o seu nome')}</h1>
+        <p>Nome negativado fecha portas: cartão negado, financiamento recusado, aluguel que não sai. Agora a Soft Consultas tem o <strong>serviço de Limpa Nome</strong>, com pedido 100% online.</p>
+        <div style="background:#0F0C14;color:#ffffff;border-radius:14px;padding:18px 20px;margin:20px 0">
+          <div style="font-size:13px;color:#C98BEB;font-weight:bold;letter-spacing:.5px">LIMPA NOME · LOTE SEMANAL</div>
+          <div style="font-size:15px;margin-top:6px"><span style="font-size:26px;font-weight:bold">${reais(sv.preco || 0)}</span> <span style="color:#C9BFD4">no Pix${esc(parc)}</span></div>
+          ${lote ? `<div style="font-size:14px;color:#E3C6F4;margin-top:8px">Próximo lote: <strong>${lote}</strong></div>` : ''}
+        </div>
+        <p style="margin:4px 0"><strong>Como funciona:</strong></p>
+        ${lista(['Você preenche os dados e envia a foto do RG ou da CNH (uns 3 minutos)', 'Paga no Pix ou parcela no cartão', 'Seu pedido entra no lote da semana', 'Você acompanha cada etapa pelo site e por e-mail'])}
+        ${sv.video ? `<p><a href="${link}" style="color:#9F31D3;font-weight:bold">▶ Assista ao vídeo explicativo</a></p>` : ''}
+        ${botao(link, 'Quero limpar meu nome')}
+        <p style="font-size:13px;color:#5B5366">O serviço pede a retirada do registro de negativação; a dívida em si continua existindo junto ao credor.${sv.garantia ? ` Garantia: ${esc(sv.garantia)}.` : ''}${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
     };
   }
   throw new Error('Campanha desconhecida');

@@ -290,6 +290,43 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_email_etapa ON emails_enviados(usuario_id, etapa);
 `);
 if (!colunas('usuarios').includes('aceita_emails')) db.exec('ALTER TABLE usuarios ADD COLUMN aceita_emails INTEGER NOT NULL DEFAULT 1');
+// Serviço de Limpa Nome (pedido pago por Pix, enviado em lote semanal)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS limpa_nome_pedidos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    nome TEXT NOT NULL,
+    cpf TEXT NOT NULL,
+    nascimento TEXT NOT NULL DEFAULT '',
+    telefone TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    doc_tipo TEXT NOT NULL DEFAULT '',
+    doc_frente TEXT,
+    doc_verso TEXT,
+    titular_proprio INTEGER NOT NULL DEFAULT 1,
+    aceite_em TEXT,
+    aceite_ip TEXT,
+    valor_centavos INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'aguardando_pagamento',
+    lote TEXT,
+    asaas_id TEXT,
+    pix_codigo TEXT,
+    pix_imagem TEXT,
+    link_pagamento TEXT,
+    obs_admin TEXT,
+    docs_apagados INTEGER NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    pago_em TEXT,
+    atualizado_em TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_lnp_usuario ON limpa_nome_pedidos(usuario_id);
+  CREATE INDEX IF NOT EXISTS idx_lnp_lote ON limpa_nome_pedidos(lote);
+`);
+for (const [c, def] of [['forma_pagamento', "TEXT NOT NULL DEFAULT 'pix'"], ['parcelas', 'INTEGER NOT NULL DEFAULT 1'], ['asaas_parcelamento', 'TEXT'], ['juros_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['antecipacao_id', 'TEXT'], ['antecipacao_status', 'TEXT'], ['antecipacao_erro', 'TEXT'], ['antecipacao_liquido_centavos', 'INTEGER'], ['antecipacao_tentativas', 'INTEGER NOT NULL DEFAULT 0']]) {
+  if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
+}
+export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
+try { mkdirSync(pastaDocsLimpaNome, { recursive: true }); } catch {}
 export const registrar = (usuario, acao, detalhe = '') =>
   db.prepare('INSERT INTO registro_admin (admin_email, acao, detalhe) VALUES (?, ?, ?)').run(usuario?.email || 'sistema', acao, String(detalhe).slice(0, 1000));
 
@@ -315,6 +352,20 @@ const padrao = {
   aviso_geral: '',
   consultas_pausadas: '0',
   emails_ativo: '0',
+  emails_limite_diario: '80',
+  emails_pausa_ate: '',
+  campanhas_fila: '[]',
+  lns_ativo: '0',
+  lns_preco_centavos: '129900',
+  lns_dia_lote: '5',
+  lns_prazo: 'Nome limpo em até 15 dias',
+  lns_parcelas: '10',
+  lns_juros_mensal: '2.99',
+  lns_antecipar: '1',
+  lns_executor: '',
+  lns_garantia: '',
+  lns_resumo: '',
+  lns_video: '',
   emails_desde: '',
   emails_etapas: 'd1,d3,d7',
   bonus_faixas: JSON.stringify([{ a_partir_de: 10000, percentual: 5 }, { a_partir_de: 30000, percentual: 10 }]),

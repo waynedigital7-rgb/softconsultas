@@ -3,13 +3,14 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar, pastaAnuncios } from './db.js';
+import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar, pastaAnuncios, pastaDocsLimpaNome } from './db.js';
 import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
 import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo, gerarRecargaApiFull } from './apifull.js';
 import { pdfGenerico } from './pdf.js';
 import * as PA from './paginas-app.js';
 import * as PD from './paginas-admin.js';
+import * as SV from './paginas-servico.js';
 import * as A from './auth.js';
 import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
@@ -159,7 +160,7 @@ const DOM_META = RASTREIO.meta ? ' https://connect.facebook.net https://www.face
 const DOM_GOOGLE = RASTREIO.google ? ' https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.google.com https://www.google.com.br https://googleads.g.doubleclick.net https://*.doubleclick.net https://www.googleadservices.com' : '';
 P.configurarRastreio(RASTREIO.ativo);
 const CABECALHOS = {
-  'Content-Security-Policy': `default-src 'self'; script-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; frame-src${CF || DOM_GOOGLE ? `${CF}${DOM_GOOGLE}` : " 'none'"}; connect-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:${DOM_META}${DOM_GOOGLE}; form-action 'self'; frame-ancestors 'none'; base-uri 'self'`,
+  'Content-Security-Policy': `default-src 'self'; script-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; frame-src https://www.youtube-nocookie.com https://player.vimeo.com${CF}${DOM_GOOGLE}; media-src 'self'; connect-src 'self'${CF}${DOM_META}${DOM_GOOGLE}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:${DOM_META}${DOM_GOOGLE}; form-action 'self'; frame-ancestors 'none'; base-uri 'self'`,
   'X-Frame-Options': 'DENY',
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
@@ -484,10 +485,30 @@ const emailsCfg = () => ({
   desde: lerConfig('emails_desde') || '',
   etapas: String(lerConfig('emails_etapas') || '').split(',').filter(Boolean),
 });
+// ---- Cota diária do provedor de e-mail (Resend grátis: 100/dia) ----
+// O marketing usa no máximo "emails_limite_diario" por dia; o resto fica livre para senha, boas-vindas e avisos de pedidos.
+const hojeBRT = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+const limiteDiarioEmails = () => Math.max(0, Number(lerConfig('emails_limite_diario') ?? 80));
+const marketingHoje = () => db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE status IN ('enviado','enviando') AND date(criado_em, '-3 hours') = ?").get(hojeBRT()).n;
+const agoraSql = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+const emailsPausados = () => (lerConfig('emails_pausa_ate') || '') > agoraSql();
+const podeMarketing = () => !emailsPausados() && marketingHoje() < limiteDiarioEmails();
+const ehErroCota = (e) => /\b429\b|quota|rate.?limit|daily|too many/i.test(String(e?.message || e));
+// Bateu na cota do provedor: pausa o marketing até 00:05 de amanhã (Brasília)
+function pausarPorCota() {
+  const amanha = new Date(`${hojeBRT()}T03:05:00Z`); amanha.setUTCDate(amanha.getUTCDate() + 1);
+  const ate = amanha.toISOString().slice(0, 19).replace('T', ' ');
+  gravarConfig('emails_pausa_ate', ate);
+  registrar(null, 'E-mails: cota diária do provedor atingida', `marketing pausado até ${P.dt(ate)}`);
+}
+// Quem falhou por cota volta para a fila (apaga a reserva para tentar de novo)
+db.prepare("DELETE FROM emails_enviados WHERE status = 'erro' AND (erro LIKE '%429%' OR erro LIKE '%quota%' OR erro LIKE '%rate%limit%' OR erro LIKE '%daily%')").run();
+
 let emailsRodando = false;
 async function processarEmails() {
+  await continuarCampanhas().catch((e) => console.error('fila de campanhas:', e.message));
   const c = emailsCfg();
-  if (!c.ativo || !c.desde || emailsRodando || !process.env.RESEND_API_KEY) return;
+  if (!c.ativo || !c.desde || emailsRodando || !process.env.RESEND_API_KEY || !podeMarketing()) return;
   emailsRodando = true;
   try {
     const bonus = bonusPrimeira();
@@ -503,6 +524,7 @@ async function processarEmails() {
           AND NOT EXISTS (SELECT 1 FROM emails_enviados e WHERE e.usuario_id = u.id AND e.criado_em > datetime('now', '-40 hours'))
         ORDER BY u.id LIMIT 40`).all(c.desde, `-${et.horas} hours`, et.chave);
       for (const u of lista) {
+        if (!podeMarketing()) return;
         // Reserva antes de enviar: nunca manda a mesma etapa duas vezes
         if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, et.chave, 'enviando').changes !== 1) continue;
         try {
@@ -511,6 +533,7 @@ async function processarEmails() {
           db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, et.chave);
         } catch (e) {
           console.error('e-mail automático:', e.message);
+          if (ehErroCota(e)) { db.prepare('DELETE FROM emails_enviados WHERE usuario_id = ? AND etapa = ?').run(u.id, et.chave); pausarPorCota(); return; }
           db.prepare("UPDATE emails_enviados SET status = 'erro', erro = ? WHERE usuario_id = ? AND etapa = ?").run(String(e.message).slice(0, 300), u.id, et.chave);
         }
         await new Promise((r) => setTimeout(r, 700)); // ritmo suave para o provedor de e-mail
@@ -596,8 +619,24 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
   const corpo = await corpoJson(req);
   json(res, { ok: true });
   const { event, payment } = corpo || {};
+  if (String(event || '').startsWith('RECEIVABLE_ANTICIPATION_') && corpo.anticipation?.id) {
+    const ant = corpo.anticipation;
+    const p = db.prepare('SELECT id, antecipacao_status FROM limpa_nome_pedidos WHERE antecipacao_id = ?').get(ant.id);
+    if (p && ant.status && ant.status !== p.antecipacao_status) {
+      db.prepare('UPDATE limpa_nome_pedidos SET antecipacao_status = ? WHERE id = ?').run(ant.status, p.id);
+      registrar(null, 'Limpa Nome: antecipação atualizada', `#${p.id} · ${p.antecipacao_status} → ${ant.status}`);
+    }
+    return;
+  }
   if (!['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) return;
   const ref = String(payment?.externalReference || '');
+  if (ref.startsWith(AS.PREFIXO_LIMPA_NOME)) {
+    const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_LIMPA_NOME.length)));
+    if (!p) return;
+    const confere = p.asaas_parcelamento ? (payment.installment === p.asaas_parcelamento || payment.id === p.asaas_id) : (payment.id === p.asaas_id && Math.round(Number(payment.value) * 100) >= p.valor_centavos);
+    if (confere) { try { confirmarPedidoLN(p.id); } catch (e) { console.error('pedido limpa nome:', e.message); } }
+    return;
+  }
   if (!ref.startsWith(AS.PREFIXO)) return;
   const rid = Number(ref.slice(AS.PREFIXO.length));
   const r = db.prepare('SELECT * FROM recargas WHERE id = ?').get(rid);
@@ -910,14 +949,19 @@ rota('GET', '/admin/operacao', exigeAdmin(async ({ res, usuario, url }) => {
   pagina(res, 'Admin · Operação', PD.adminOperacao({
     aviso: lerConfig('aviso_geral') || '', pausadas: lerConfig('consultas_pausadas') === '1', repasse: repasseCfg(), acumulado: repasseAcumulado(),
     repasses: db.prepare('SELECT * FROM repasses_apifull ORDER BY id DESC LIMIT 100').all(), saldoApiFull: await saldoApiFull(), saldoAsaas,
-    emails: { ...emailsCfg(), etapasLista: ETAPAS, perfis: PERFIS, temChave: !!process.env.RESEND_API_KEY,
+    emails: { ...emailsCfg(), etapasLista: ETAPAS, limite: limiteDiarioEmails(), hoje: marketingHoje(), pausaAte: emailsPausados() ? lerConfig('emails_pausa_ate') : '',
+      fila: filaCampanhas().map((x) => ({ ...x, nome: CAMPANHAS[x.chave]?.nome || x.chave, faltam: CAMPANHAS[x.chave] && PUBLICOS_CAMPANHA[x.publico] ? listaCampanha(x.chave, x.publico).length : 0 })), perfis: PERFIS, temChave: !!process.env.RESEND_API_KEY,
       enviados: db.prepare("SELECT etapa, status, COUNT(*) n FROM emails_enviados GROUP BY etapa, status").all(),
       descadastrados: db.prepare('SELECT COUNT(*) n FROM usuarios WHERE aceita_emails = 0').get().n,
       campanhas: Object.entries(CAMPANHAS).map(([k, c]) => ({ chave: k, nome: c.nome, rodando: campanhaRodando.has(k),
-        enviados: db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE etapa = ? AND status = 'enviado'").get(`camp:${k}`).n,
-        erros: db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE etapa = ? AND status = 'erro'").get(`camp:${k}`).n,
+        semanal: !!c.semanal, lote: c.semanal ? proximoLoteLN() : null,
+        enviados: db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE (etapa = ? OR etapa LIKE ?) AND status = 'enviado'").get(`camp:${k}`, `camp:${k}:%`).n,
+        enviadosSemana: c.semanal ? db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE etapa = ? AND status = 'enviado'").get(etapaCampanha(k)).n : null,
+        erros: db.prepare("SELECT COUNT(*) n FROM emails_enviados WHERE (etapa = ? OR etapa LIKE ?) AND status = 'erro'").get(`camp:${k}`, `camp:${k}:%`).n,
         pendentes: Object.fromEntries(Object.keys(PUBLICOS_CAMPANHA).map((p) => [p, listaCampanha(k, p).length])),
-        consultaram: db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN consultas c ON c.usuario_id = e.usuario_id AND c.status = 'concluida' AND c.criado_em > e.criado_em AND c.produto_id = (SELECT id FROM produtos WHERE slug = ?) WHERE e.etapa = ? AND e.status = 'enviado'`).get(c.produto, `camp:${k}`).n })),
+        consultaram: c.produto
+          ? db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN consultas c ON c.usuario_id = e.usuario_id AND c.status = 'concluida' AND c.criado_em > e.criado_em AND c.produto_id = (SELECT id FROM produtos WHERE slug = ?) WHERE e.etapa = ? AND e.status = 'enviado'`).get(c.produto, `camp:${k}`).n
+          : db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN limpa_nome_pedidos lp ON lp.usuario_id = e.usuario_id AND lp.pago_em > e.criado_em WHERE e.etapa LIKE ? AND e.status = 'enviado'`).get(`camp:${k}:%`).n })),
       publicosCampanha: Object.fromEntries(Object.entries(PUBLICOS_CAMPANHA).map(([k, v]) => [k, v.nome])),
       recargasDepois: db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN recargas r ON r.usuario_id = e.usuario_id AND r.status = 'paga' AND r.pago_em > e.criado_em WHERE e.status = 'enviado'`).get().n },
     ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '',
@@ -989,40 +1033,61 @@ const PUBLICOS_CAMPANHA = {
   sem_recarga: { nome: 'Quem ainda não recarregou', sql: "NOT EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')" },
   com_recarga: { nome: 'Quem já recarregou', sql: "EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')" },
 };
+// Campanha semanal: a "etapa" leva a data do próximo lote, então pode ser reenviada uma vez por semana
+const etapaCampanha = (chave) => (CAMPANHAS[chave].semanal ? `camp:${chave}:${proximoLoteLN()}` : `camp:${chave}`);
+const filtroCampanha = (chave) => (chave === 'limpa-nome-servico'
+  ? ` AND NOT EXISTS (SELECT 1 FROM limpa_nome_pedidos lp WHERE lp.usuario_id = u.id AND lp.status IN ('pago','em_lote','em_andamento','concluido'))` : '');
 const listaCampanha = (chave, publico, limite = 100000) => db.prepare(`SELECT u.* FROM usuarios u
-  WHERE u.ativo = 1 AND u.admin = 0 AND u.interno = 0 AND u.aceita_emails = 1 AND (${PUBLICOS_CAMPANHA[publico].sql})
+  WHERE u.ativo = 1 AND u.admin = 0 AND u.interno = 0 AND u.aceita_emails = 1 AND (${PUBLICOS_CAMPANHA[publico].sql})${filtroCampanha(chave)}
     AND NOT EXISTS (SELECT 1 FROM emails_enviados e WHERE e.usuario_id = u.id AND e.etapa = ?)
-  ORDER BY u.id LIMIT ?`).all(`camp:${chave}`, limite);
-const produtoCampanha = (chave) => db.prepare('SELECT * FROM produtos WHERE slug = ?').get(CAMPANHAS[chave].produto);
+  ORDER BY u.id LIMIT ?`).all(etapaCampanha(chave), limite);
+const servicoCampanha = (chave) => (chave === 'limpa-nome-servico' ? { ...lnCfgComTabela(), lote: proximoLoteLN() } : null);
+const produtoCampanha = (chave) => (CAMPANHAS[chave].produto ? db.prepare('SELECT * FROM produtos WHERE slug = ?').get(CAMPANHAS[chave].produto) : null);
 const campanhaRodando = new Set();
+// Fila de campanhas: o que não couber na cota de hoje continua sozinho nos próximos dias
+const filaCampanhas = () => { try { return JSON.parse(lerConfig('campanhas_fila') || '[]'); } catch { return []; } };
+const gravarFila = (f) => gravarConfig('campanhas_fila', JSON.stringify(f));
+async function continuarCampanhas() {
+  for (const item of filaCampanhas()) {
+    if (!podeMarketing()) return;
+    if (!CAMPANHAS[item.chave] || !PUBLICOS_CAMPANHA[item.publico]) { gravarFila(filaCampanhas().filter((x) => x.chave !== item.chave)); continue; }
+    await dispararCampanha(item.chave, item.publico, { email: item.admin });
+  }
+}
 async function dispararCampanha(chave, publico, admin) {
   if (campanhaRodando.has(chave)) return;
   campanhaRodando.add(chave);
-  let ok = 0, falhas = 0;
+  if (!filaCampanhas().some((x) => x.chave === chave)) gravarFila([...filaCampanhas(), { chave, publico, admin: admin?.email || 'sistema' }]);
+  let ok = 0, falhas = 0, parou = false;
   try {
-    const produto = produtoCampanha(chave), bonus = bonusPrimeira();
+    const produto = produtoCampanha(chave), bonus = bonusPrimeira(), etapa = etapaCampanha(chave), servico = servicoCampanha(chave);
     for (const u of listaCampanha(chave, publico)) {
-      if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, `camp:${chave}`, 'enviando').changes !== 1) continue;
+      if (!podeMarketing()) { parou = true; break; }
+      if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, etapa, 'enviando').changes !== 1) continue;
       try {
-        const m = montarCampanha({ chave, nome: u.nome, produto, bonus: publico === 'com_recarga' ? null : bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
+        const m = montarCampanha({ chave, nome: u.nome, produto, servico, bonus: publico === 'com_recarga' ? null : bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
         await enviarEmail({ para: u.email, assunto: m.assunto, html: m.html, cabecalhos: { 'List-Unsubscribe': `<${linkSair(u.id)}>` } });
-        db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, `camp:${chave}`);
+        db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, etapa);
         ok++;
       } catch (e) {
+        if (ehErroCota(e)) { db.prepare('DELETE FROM emails_enviados WHERE usuario_id = ? AND etapa = ?').run(u.id, etapa); pausarPorCota(); parou = true; break; }
         falhas++;
-        db.prepare("UPDATE emails_enviados SET status = 'erro', erro = ? WHERE usuario_id = ? AND etapa = ?").run(String(e.message).slice(0, 300), u.id, `camp:${chave}`);
+        db.prepare("UPDATE emails_enviados SET status = 'erro', erro = ? WHERE usuario_id = ? AND etapa = ?").run(String(e.message).slice(0, 300), u.id, etapa);
       }
       await new Promise((r) => setTimeout(r, 700));
     }
   } finally {
     campanhaRodando.delete(chave);
-    registrar(admin, 'Campanha de e-mail concluída', `${CAMPANHAS[chave].nome} · público: ${PUBLICOS_CAMPANHA[publico].nome} · ${ok} enviados${falhas ? `, ${falhas} com erro` : ''}`);
+    const restam = listaCampanha(chave, publico).length;
+    if (!restam) gravarFila(filaCampanhas().filter((x) => x.chave !== chave));
+    if (ok || falhas || !restam) registrar(admin, restam ? 'Campanha de e-mail: parte enviada (continua amanhã)' : 'Campanha de e-mail concluída',
+      `${CAMPANHAS[chave].nome} · público: ${PUBLICOS_CAMPANHA[publico].nome} · ${ok} enviados${falhas ? `, ${falhas} com erro` : ''}${restam ? ` · faltam ${restam} (limite diário)` : ''}`);
   }
 }
 
 rota('GET', '/admin/emails/campanha/previa', exigeAdmin(({ res, url }) => {
   const chave = CAMPANHAS[url.searchParams.get('c')] ? url.searchParams.get('c') : 'cpf-credplus';
-  const m = montarCampanha({ chave, nome: 'Maria Silva', produto: produtoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+  const m = montarCampanha({ chave, nome: 'Maria Silva', produto: produtoCampanha(chave), servico: servicoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src * data:; style-src 'unsafe-inline'", 'X-Frame-Options': 'SAMEORIGIN' });
   res.end(`<div style="font-family:Arial;padding:10px 16px;background:#0F0C14;color:#fff">Assunto: <strong>${P.esc(m.assunto)}</strong></div>${m.html}`);
 }));
@@ -1033,10 +1098,11 @@ rota('POST', '/admin/emails/campanha', exigeAdmin(async ({ req, res, usuario }) 
   const publico = PUBLICOS_CAMPANHA[f.publico] ? f.publico : 'todos';
   const volta = (m, ok) => redirecionar(res, `/admin/operacao?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
   if (!chave) return volta('Campanha inválida.');
+  if (chave === 'limpa-nome-servico' && !lnCfg().ativo) return volta('Ligue o serviço Limpa Nome (Admin → Limpa Nome) antes de disparar esta campanha.');
   if (!process.env.RESEND_API_KEY) return volta('Falta a RESEND_API_KEY no Render: sem ela nenhum e-mail sai.');
   if (f.acao === 'teste') {
     try {
-      const m = montarCampanha({ chave, nome: usuario.nome, produto: produtoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+      const m = montarCampanha({ chave, nome: usuario.nome, produto: produtoCampanha(chave), servico: servicoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
       await enviarEmail({ para: usuario.email, assunto: `[TESTE] ${m.assunto}`, html: m.html });
       return volta(`E-mail de teste enviado para ${usuario.email}.`, true);
     } catch (e) { return volta(`Falha ao enviar o teste: ${e.message}`); }
@@ -1045,9 +1111,12 @@ rota('POST', '/admin/emails/campanha', exigeAdmin(async ({ req, res, usuario }) 
   if (campanhaRodando.has(chave)) return volta('Essa campanha já está sendo enviada. Aguarde terminar.');
   const qtd = listaCampanha(chave, publico).length;
   if (!qtd) return volta('Ninguém para enviar: todos desse público já receberam ou não aceitam e-mails.');
+  if (filaCampanhas().some((x) => x.chave === chave)) return volta('Essa campanha já está na fila e continua sozinha conforme o limite diário.');
   registrar(usuario, 'Disparou campanha de e-mail', `${CAMPANHAS[chave].nome} · público: ${PUBLICOS_CAMPANHA[publico].nome} · ${qtd} destinatário(s)`);
+  const cabeHoje = emailsPausados() ? 0 : Math.max(0, limiteDiarioEmails() - marketingHoje());
   dispararCampanha(chave, publico, usuario).catch((e) => console.error('campanha:', e.message));
-  volta(`Disparo iniciado para ${qtd} cliente(s). Leva cerca de ${Math.ceil(qtd * 0.8 / 60)} minuto(s). Atualize a página para acompanhar.`, true);
+  volta(qtd <= cabeHoje ? `Disparo iniciado para ${qtd} cliente(s). Atualize a página para acompanhar.`
+    : `Disparo iniciado: ${cabeHoje} hoje e o restante (${qtd - cabeHoje}) segue sozinho nos próximos dias, respeitando o limite de ${limiteDiarioEmails()} e-mails de marketing por dia.`, true);
 }));
 // ---- Admin: e-mails automáticos ----
 rota('POST', '/admin/operacao/emails', exigeAdmin(async ({ req, res, usuario }) => {
@@ -1062,8 +1131,11 @@ rota('POST', '/admin/operacao/emails', exigeAdmin(async ({ req, res, usuario }) 
   }
   gravarConfig('emails_ativo', ligar ? '1' : '0');
   gravarConfig('emails_etapas', etapas.join(','));
-  registrar(usuario, 'Alterou e-mails automáticos', `${ligar ? 'LIGADO' : 'desligado'} · etapas: ${etapas.join(', ') || 'nenhuma'}${ligar && !estava && f.incluir_recentes === '1' ? ' · incluiu cadastros dos últimos 7 dias' : ''}`);
-  if (ligar) processarEmails().catch((e) => console.error('e-mails:', e.message));
+  const lim = Math.floor(Number(f.limite));
+  if (Number.isFinite(lim) && lim >= 0 && lim <= 100000) gravarConfig('emails_limite_diario', String(lim));
+  if (f.despausar === '1') gravarConfig('emails_pausa_ate', '');
+  registrar(usuario, 'Alterou e-mails automáticos', `${ligar ? 'LIGADO' : 'desligado'} · limite marketing/dia: ${lerConfig('emails_limite_diario')}${f.despausar === '1' ? ' · pausa por cota removida' : ''} · etapas: ${etapas.join(', ') || 'nenhuma'}${ligar && !estava && f.incluir_recentes === '1' ? ' · incluiu cadastros dos últimos 7 dias' : ''}`);
+  processarEmails().catch((e) => console.error('e-mails:', e.message));
   redirecionar(res, `/admin/operacao?ok=${encodeURIComponent('E-mails automáticos salvos.')}`);
 }));
 
@@ -1465,8 +1537,322 @@ rota('GET', '/limpa-nome', exigeLogin(async ({ res, usuario }) => {
     economicas: todos.filter((p) => p.destaque_limpa_nome === 'economica').sort((a, b) => a.preco_centavos - b.preco_centavos),
     completas: todos.filter((p) => p.destaque_limpa_nome === 'completa').sort((a, b) => a.preco_centavos - b.preco_centavos),
     saldo: await saldoExibido(usuario), admin: !!usuario.interno,
+    servico: lnCfg().ativo || usuario.admin ? lnCfgComTabela() : null,
   }), usuario);
 }));
+
+// ======================= SERVIÇO LIMPA NOME (lote semanal, Pix separado) =======================
+const lnCfg = () => ({
+  ativo: lerConfig('lns_ativo') === '1', preco: Number(lerConfig('lns_preco_centavos') || 0),
+  dia: Math.min(6, Math.max(0, Number(lerConfig('lns_dia_lote') ?? 5))),
+  prazo: lerConfig('lns_prazo') || '', executor: lerConfig('lns_executor') || '', garantia: lerConfig('lns_garantia') || '',
+  resumo: lerConfig('lns_resumo') || '', video: lerConfig('lns_video') || '',
+  parcelas: Math.min(12, Math.max(1, Number(lerConfig('lns_parcelas') || 10))),
+  juros: Math.min(15, Math.max(0, Number(lerConfig('lns_juros_mensal') ?? 2.99))),
+  antecipar: lerConfig('lns_antecipar') !== '0',
+});
+const lnCfgComTabela = () => { const c = lnCfg(); return { ...c, tabela: SV.tabelaParcelas(c.preco, c.parcelas, c.juros) }; };
+// Próximo dia de lote (horário de Brasília), sempre a partir de amanhã: quem paga no dia do lote entra no seguinte
+function proximoLoteLN(dia = lnCfg().dia) {
+  const d = new Date(Date.now() - 3 * 3600000);
+  d.setUTCDate(d.getUTCDate() + 1);
+  while (d.getUTCDay() !== dia) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+const ATIVOS_LN = "('aguardando_pagamento','pago','em_lote','em_andamento')";
+const FINAIS_LN = ['concluido', 'cancelado', 'reembolsado'];
+function tipoDoc(b) {
+  if (b.subarray(0, 5).toString() === '%PDF-') return 'pdf';
+  return tipoImagem(b);
+}
+const MIME_DOC = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
+
+function emailPedidoLN(p, titulo, texto) {
+  if (!process.env.RESEND_API_KEY || !p.email) return;
+  const base = baseEmails();
+  const html = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#F4F1F7;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden">
+<tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span> · Limpa Nome</td></tr>
+<tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">${P.esc(titulo)}</h1>
+<p>Olá, ${P.esc(String(p.nome).split(/\s+/)[0])}! ${texto}</p>
+<p style="margin:24px 0"><a href="${base}/limpa-nome/servico/${p.id}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">Acompanhar meu pedido</a></p>
+<p style="font-size:13px;color:#7A7285">Pedido #${p.id} · CPF final ${P.esc(String(p.cpf).slice(-4))}</p></td></tr></table></td></tr></table></body></html>`;
+  enviarEmail({ para: p.email, assunto: `${titulo} · Pedido #${p.id}`, html }).catch((e) => console.error('e-mail limpa nome:', e.message));
+}
+const TEXTO_STATUS_LN = {
+  pago: (p) => [`Pagamento confirmado`, `Recebemos o seu pagamento. O seu pedido entra no lote de <strong>${P.esc(p.lote?.split('-').reverse().join('/') || '')}</strong>.`],
+  em_lote: (p) => [`Seu pedido foi enviado no lote`, `O seu pedido seguiu no lote de ${P.esc(p.lote?.split('-').reverse().join('/') || '')}. Agora é aguardar o andamento; avisamos a cada etapa.`],
+  em_andamento: () => [`Seu pedido está em andamento`, 'O seu pedido está sendo processado.'],
+  concluido: () => [`Seu pedido foi concluído`, 'O seu pedido de Limpa Nome foi concluído. Recomendamos fazer uma consulta do seu CPF na plataforma para conferir a situação atualizada.'],
+  cancelado: () => [`Seu pedido foi cancelado`, 'O seu pedido foi cancelado.'],
+  reembolsado: () => [`Seu pagamento foi reembolsado`, 'O valor do seu pedido foi devolvido.'],
+};
+function avisarStatusLN(p) {
+  const f = TEXTO_STATUS_LN[p.status];
+  if (!f) return;
+  const [t, x] = f(p);
+  emailPedidoLN(p, t, x + (p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''));
+}
+// Confirma o pagamento (webhook ou consulta de status). Retorna true só na primeira vez.
+function confirmarPedidoLN(id) {
+  const lote = proximoLoteLN();
+  const ok = db.prepare("UPDATE limpa_nome_pedidos SET status = 'pago', pago_em = datetime('now'), lote = ?, atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(lote, id).changes === 1;
+  if (ok) {
+    const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
+    registrar(null, 'Limpa Nome: pedido pago', `#${id} · ${p.nome} · ${P.reais(p.valor_centavos)}${p.forma_pagamento === 'cartao' ? ` (cartão ${p.parcelas}x)` : ''} · lote ${lote}`);
+    avisarStatusLN(p);
+    if (p.forma_pagamento === 'cartao' && lnCfg().antecipar) anteciparPedidoLN(p.id).catch((e) => console.error('antecipação:', e.message));
+  }
+  return ok;
+}
+
+// Antecipação do cartão: pede ao Asaas o parcelamento inteiro de uma vez (o crédito costuma cair no próximo dia útil)
+const antecipando = new Set();
+async function anteciparPedidoLN(id, admin = null) {
+  if (antecipando.has(id)) return { ok: false, msg: 'Já está em andamento.' };
+  antecipando.add(id);
+  try {
+    const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
+    if (!p || p.forma_pagamento !== 'cartao' || !p.pago_em || p.antecipacao_id) return { ok: false, msg: 'Pedido não elegível para antecipação.' };
+    const alvo = p.asaas_parcelamento ? { installment: p.asaas_parcelamento } : { payment: p.asaas_id };
+    db.prepare('UPDATE limpa_nome_pedidos SET antecipacao_tentativas = antecipacao_tentativas + 1 WHERE id = ?').run(id);
+    try {
+      const sim = await AS.simularAntecipacao(alvo);
+      if (sim?.isDocumentationRequired) throw new Error('O Asaas pediu documentos para esta antecipação: faça pelo painel do Asaas.');
+      const a = await AS.solicitarAntecipacao(alvo);
+      const liquido = Math.round(Number(a.netValue ?? sim?.netValue ?? 0) * 100) || null;
+      db.prepare("UPDATE limpa_nome_pedidos SET antecipacao_id = ?, antecipacao_status = ?, antecipacao_liquido_centavos = ?, antecipacao_erro = NULL, atualizado_em = datetime('now') WHERE id = ?")
+        .run(a.id || null, a.status || 'PENDING', liquido, id);
+      registrar(admin, 'Limpa Nome: antecipação pedida', `#${id} · ${P.reais(p.valor_centavos)}${liquido ? ` · líquido ${P.reais(liquido)}` : ''} · ${a.status || ''}`);
+      return { ok: true, msg: `Antecipação solicitada${liquido ? `: líquido ${P.reais(liquido)}` : ''}.` };
+    } catch (e) {
+      db.prepare('UPDATE limpa_nome_pedidos SET antecipacao_erro = ? WHERE id = ?').run(String(e.message).slice(0, 300), id);
+      registrar(admin, 'Limpa Nome: antecipação falhou', `#${id} · ${e.message}`);
+      return { ok: false, msg: e.message };
+    }
+  } finally { antecipando.delete(id); }
+}
+// A cada 30 min: tenta de novo as que falharam (até 6 vezes) e atualiza o status das pedidas
+async function revisarAntecipacoesLN() {
+  if (!lnCfg().antecipar) return;
+  for (const p of db.prepare("SELECT id FROM limpa_nome_pedidos WHERE forma_pagamento = 'cartao' AND pago_em IS NOT NULL AND antecipacao_id IS NULL AND antecipacao_tentativas < 6 AND status NOT IN ('cancelado','reembolsado')").all())
+    await anteciparPedidoLN(p.id);
+  for (const p of db.prepare("SELECT id, antecipacao_id, antecipacao_status FROM limpa_nome_pedidos WHERE antecipacao_id IS NOT NULL AND antecipacao_status IN ('PENDING','SCHEDULED')").all()) {
+    try {
+      const a = await AS.buscarAntecipacao(p.antecipacao_id);
+      if (a.status && a.status !== p.antecipacao_status) {
+        db.prepare('UPDATE limpa_nome_pedidos SET antecipacao_status = ?, antecipacao_liquido_centavos = COALESCE(?, antecipacao_liquido_centavos) WHERE id = ?').run(a.status, Math.round(Number(a.netValue || 0) * 100) || null, p.id);
+        registrar(null, 'Limpa Nome: antecipação atualizada', `#${p.id} · ${p.antecipacao_status} → ${a.status}`);
+      }
+    } catch (e) { console.warn('antecipação status:', e.message); }
+  }
+}
+setInterval(() => revisarAntecipacoesLN().catch((e) => console.error('antecipações:', e.message)), 30 * 60 * 1000).unref();
+
+rota('POST', '/admin/limpa-nome/antecipar', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const r = await anteciparPedidoLN(Number(f.id), usuario);
+  redirecionar(res, `/admin/limpa-nome?f=todos&${r.ok ? 'ok' : 'erro'}=${encodeURIComponent(r.msg)}`);
+}));
+
+rota('GET', '/limpa-nome/servico', exigeLogin(({ res, usuario }) => {
+  const cfg = lnCfgComTabela();
+  const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE usuario_id = ? ORDER BY id DESC').all(usuario.id);
+  if (!cfg.ativo && !usuario.admin && !pedidos.length) return pagina(res, 'Limpa Nome', P.paginaEmBreve('Limpa Nome', 'O serviço de Limpa Nome estará disponível em breve.'), usuario);
+  pagina(res, 'Serviço Limpa Nome', (!cfg.ativo ? '<div class="aviso">Serviço desligado para novos pedidos' + (usuario.admin ? ' (você vê esta página por ser admin).' : '.') + '</div>' : '') +
+    SV.paginaServicoLN({ cfg, proximoLote: proximoLoteLN(cfg.dia), pedidos, usuario }), usuario);
+}));
+
+rota('POST', '/limpa-nome/servico', exigeLogin(async ({ req, res, usuario }) => {
+  const cfg = lnCfgComTabela();
+  const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE usuario_id = ? ORDER BY id DESC').all(usuario.id);
+  let v = {};
+  const erro = (m) => pagina(res, 'Serviço Limpa Nome', SV.paginaServicoLN({ cfg, proximoLote: proximoLoteLN(cfg.dia), pedidos, usuario, erro: m, v }), usuario, 400);
+  if (!cfg.ativo && !usuario.admin) return erro('O serviço não está recebendo pedidos no momento.');
+  if (cfg.preco < 500) return erro('O serviço ainda não está configurado. Tente novamente mais tarde.');
+  let form;
+  try { form = await corpoMultipart(req, 11 * 1024 * 1024); } catch (e) { return erro(e.message === 'arquivo grande demais' ? 'Arquivos grandes demais (até 5 MB cada).' : 'Não foi possível ler o formulário.'); }
+  v = form.campos;
+  const nome = String(v.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const cpf = A.soNumeros(v.cpf);
+  const nasc = String(v.nascimento || '');
+  const tel = A.soNumeros(v.telefone);
+  const email = String(v.email || '').trim().toLowerCase().slice(0, 120);
+  const docTipo = v.doc_tipo === 'CNH' ? 'CNH' : 'RG';
+  const forma = v.forma === 'cartao' && cfg.parcelas >= 1 ? 'cartao' : 'pix';
+  const parcelas = forma === 'cartao' ? Math.min(cfg.parcelas, Math.max(1, Math.floor(Number(v.parcelas) || 1))) : 1;
+  const totalCobrado = forma === 'cartao' ? cfg.tabela[parcelas - 1].total : cfg.preco;
+  if (nome.split(' ').length < 2) return erro('Informe o nome completo do titular.');
+  if (cpf.length !== 11 || !A.cpfValido(cpf)) return erro('CPF inválido.');
+  const anos = (Date.now() - Date.parse(nasc)) / (365.25 * 86400000);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nasc) || !(anos >= 18 && anos < 120)) return erro('Informe uma data de nascimento válida (o titular precisa ser maior de idade).');
+  if (tel.length < 10 || tel.length > 13) return erro('Informe um WhatsApp válido com DDD.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return erro('Informe um e-mail válido.');
+  if (v.aceite !== '1') return erro('É preciso aceitar a autorização para continuar.');
+  if (db.prepare(`SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND status IN ('pago','em_lote','em_andamento')`).get(cpf)) return erro('Já existe um pedido em andamento para este CPF.');
+  const docs = {};
+  for (const lado of ['doc_frente', 'doc_verso']) {
+    const a = form.arquivos[lado];
+    if (!a) continue;
+    if (a.dados.length > 5 * 1024 * 1024) return erro('Cada arquivo pode ter até 5 MB.');
+    const t = tipoDoc(a.dados);
+    if (!t) return erro('Envie o documento em JPG, PNG, WEBP ou PDF.');
+    docs[lado] = { t, dados: a.dados };
+  }
+  if (!docs.doc_frente) return erro('Envie a foto da frente do documento.');
+  if (!A.limitar(`ln:${usuario.id}`, 5, 60)) return erro('Muitos pedidos em pouco tempo. Aguarde alguns minutos.');
+  // Pedido para o mesmo CPF ainda não pago: reaproveita (não cria cobranças duplicadas)
+  const antigo = db.prepare("SELECT id FROM limpa_nome_pedidos WHERE usuario_id = ? AND cpf = ? AND status = 'aguardando_pagamento'").get(usuario.id, cpf);
+  if (antigo) db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Substituído por um novo pedido', atualizado_em = datetime('now') WHERE id = ?").run(antigo.id);
+  const id = Number(db.prepare(`INSERT INTO limpa_nome_pedidos (usuario_id, nome, cpf, nascimento, telefone, email, doc_tipo, titular_proprio, aceite_em, aceite_ip, valor_centavos, forma_pagamento, parcelas, juros_centavos)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`).run(usuario.id, nome, cpf, nasc, tel, email, docTipo, v.proprio === '1' ? 1 : 0, ipDe(req), totalCobrado, forma, parcelas, totalCobrado - cfg.preco).lastInsertRowid);
+  try {
+    const nomes = {};
+    for (const [lado, d] of Object.entries(docs)) {
+      const arq = `${id}-${lado.slice(4)}-${randomBytes(8).toString('hex')}.${d.t}`;
+      await writeFile(path.join(pastaDocsLimpaNome, arq), d.dados, { mode: 0o600 });
+      nomes[lado] = arq;
+    }
+    db.prepare('UPDATE limpa_nome_pedidos SET doc_frente = ?, doc_verso = ? WHERE id = ?').run(nomes.doc_frente || null, nomes.doc_verso || null, id);
+    let clienteId = db.prepare('SELECT asaas_cliente_id FROM usuarios WHERE id = ?').get(usuario.id).asaas_cliente_id;
+    if (!clienteId && !usuario.documento && v.proprio !== '1') {
+      // Conta sem CPF pedindo para terceiro: a cobrança sai no nome do titular (não mexe no cadastro do cliente)
+      clienteId = (await AS.criarCliente({ nome, documento: cpf, email, telefone: tel })).id;
+    } else if (!clienteId) {
+      if (!usuario.documento) { db.prepare('UPDATE usuarios SET documento = ? WHERE id = ?').run(cpf, usuario.id); usuario.documento = cpf; }
+      clienteId = (await AS.criarCliente(usuario)).id;
+      db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
+    }
+    const cob = await AS.criarCobrancaServico({ clienteId, valorCentavos: totalCobrado, pedidoId: id, forma, parcelas });
+    let pix = null;
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
+    db.prepare("UPDATE limpa_nome_pedidos SET asaas_id = ?, asaas_parcelamento = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ?, atualizado_em = datetime('now') WHERE id = ?")
+      .run(cob.id, cob.installment || null, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, id);
+    // Cartão: vai direto para a página segura do Asaas
+    if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
+    redirecionar(res, `/limpa-nome/servico/${id}`);
+  } catch (e) {
+    console.error('limpa nome:', e.message);
+    db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Falha ao gerar o Pix', atualizado_em = datetime('now') WHERE id = ?").run(id);
+    erro('Não foi possível gerar o Pix agora. Tente de novo em instantes.');
+  }
+}));
+
+rota('GET', '/limpa-nome/servico/:id', exigeLogin(({ res, usuario, params }) => {
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!p) return redirecionar(res, '/limpa-nome/servico');
+  pagina(res, `Pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg: lnCfg() }), usuario);
+}));
+
+rota('GET', '/api/limpa-nome/:id/status', async ({ res, usuario, params }) => {
+  if (!usuario) return json(res, { pago: false }, 401);
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!p) return json(res, { pago: false }, 404);
+  if (p.status !== 'aguardando_pagamento') return json(res, { pago: true, valor: p.valor_centavos / 100 });
+  if (p.asaas_id && A.limitar(`stln:${p.id}`, 30, 5)) {
+    try {
+      const c = await AS.buscarCobranca(p.asaas_id);
+      if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) { confirmarPedidoLN(p.id); return json(res, { pago: true, valor: p.valor_centavos / 100 }); }
+    } catch (e) { console.warn('status limpa nome:', e.message); }
+  }
+  json(res, { pago: false });
+});
+
+// ---------- Admin ----------
+rota('GET', '/admin/limpa-nome', exigeAdmin(({ res, usuario, url }) => {
+  const cfg = lnCfg(), lote = proximoLoteLN(cfg.dia);
+  const f = ['lote', 'ativos', 'aguardando', 'todos'].includes(url.searchParams.get('f')) ? url.searchParams.get('f') : 'lote';
+  const onde = { lote: "p.status = 'pago'", ativos: "p.status IN ('pago','em_lote','em_andamento')", aguardando: "p.status = 'aguardando_pagamento'", todos: '1=1' }[f];
+  const pedidos = db.prepare(`SELECT p.*, u.email AS cliente FROM limpa_nome_pedidos p JOIN usuarios u ON u.id = p.usuario_id WHERE ${onde} ORDER BY p.id DESC LIMIT 500`).all();
+  const lotes = {
+    proximo: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE status = 'pago'").get().n,
+    pagos: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE pago_em IS NOT NULL AND status <> 'reembolsado'").get().n,
+    receita: db.prepare("SELECT COALESCE(SUM(valor_centavos),0) s FROM limpa_nome_pedidos WHERE pago_em IS NOT NULL AND status <> 'reembolsado'").get().s,
+    aguardando: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE status = 'aguardando_pagamento'").get().n,
+  };
+  pagina(res, 'Admin · Limpa Nome', SV.adminServicoLN({ menu: PD.menu('/admin/limpa-nome'), cfg: lnCfgComTabela(), pedidos, lotes, filtro: f, proximoLote: lote,
+    ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+
+rota('POST', '/admin/limpa-nome/config', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const volta = (m, ok) => redirecionar(res, `/admin/limpa-nome?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  const preco = centavos(f.preco);
+  const ativo = f.ativo === '1';
+  if (!Number.isFinite(preco) || preco < 0 || preco > 1000000) return volta('Preço inválido.');
+  if (ativo && preco < 500) return volta('Para ligar o serviço, defina um preço de pelo menos R$ 5,00.');
+  const video = String(f.video || '').trim().slice(0, 300);
+  if (video && !SV.blocoVideo(video)) return volta('Link de vídeo não reconhecido. Use um link do YouTube, do Vimeo ou /criativos/nome.mp4.');
+  const novos = { lns_ativo: ativo ? '1' : '0', lns_preco_centavos: String(preco), lns_dia_lote: String(Math.min(6, Math.max(0, Number(f.dia) || 0))),
+    lns_prazo: String(f.prazo || '').trim().slice(0, 150), lns_executor: String(f.executor || '').trim().slice(0, 150),
+    lns_garantia: String(f.garantia || '').trim().slice(0, 300), lns_parcelas: String(Math.min(12, Math.max(1, Math.floor(Number(f.parcelas) || 1)))),
+    lns_juros_mensal: String(Math.min(15, Math.max(0, Number(String(f.juros ?? '').replace(',', '.')) || 0))), lns_antecipar: f.antecipar === '1' ? '1' : '0', lns_resumo: String(f.resumo || '').trim().slice(0, 300), lns_video: video };
+  const mudou = Object.entries(novos).filter(([k, val]) => (lerConfig(k) || '') !== val).map(([k, val]) => `${k.slice(4)}: ${val || '(vazio)'}`);
+  for (const [k, val] of Object.entries(novos)) gravarConfig(k, val);
+  registrar(usuario, 'Limpa Nome: configuração', mudou.join(' · ') || 'sem mudanças');
+  volta('Configuração salva.', true);
+}));
+
+rota('POST', '/admin/limpa-nome/status', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const volta = (m, ok) => redirecionar(res, `/admin/limpa-nome?f=todos&${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(f.id));
+  if (!p) return volta('Pedido não encontrado.');
+  if (!SV.STATUS_LN[f.status]) return volta('Status inválido.');
+  if (f.status !== 'aguardando_pagamento' && f.status !== 'cancelado' && !p.pago_em) return volta('Este pedido ainda não foi pago. Use "Conferir" ou aguarde a confirmação do Pix.');
+  const obs = String(f.obs || '').trim().slice(0, 300);
+  const lote = p.lote || (f.status === 'pago' ? proximoLoteLN() : null);
+  db.prepare("UPDATE limpa_nome_pedidos SET status = ?, obs_admin = ?, lote = ?, atualizado_em = datetime('now') WHERE id = ?").run(f.status, obs || null, lote, p.id);
+  registrar(usuario, 'Limpa Nome: status', `#${p.id} · ${p.nome} · ${p.status} → ${f.status}${obs ? ` · "${obs}"` : ''}`);
+  if (f.status !== p.status || (obs && obs !== (p.obs_admin || ''))) avisarStatusLN({ ...p, status: f.status, obs_admin: obs, lote });
+  volta(`Pedido #${p.id} atualizado.`, true);
+}));
+
+rota('POST', '/admin/limpa-nome/fechar-lote', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const lista = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status = 'pago'").all();
+  for (const p of lista) {
+    if (db.prepare("UPDATE limpa_nome_pedidos SET status = 'em_lote', lote = COALESCE(?, lote), atualizado_em = datetime('now') WHERE id = ? AND status = 'pago'").run(/^\d{4}-\d{2}-\d{2}$/.test(f.lote || '') ? f.lote : null, p.id).changes === 1)
+      avisarStatusLN({ ...p, status: 'em_lote', lote: f.lote || p.lote, obs_admin: null });
+  }
+  registrar(usuario, 'Limpa Nome: lote enviado', `lote ${f.lote} · ${lista.length} pedido(s): ${lista.map((p) => `#${p.id}`).join(', ')}`);
+  redirecionar(res, `/admin/limpa-nome?f=ativos&ok=${encodeURIComponent(`${lista.length} pedido(s) marcados como enviados no lote.`)}`);
+}));
+
+rota('GET', '/admin/limpa-nome/lote.csv', exigeAdmin(({ res, usuario }) => {
+  const lista = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status IN ('pago','em_lote','em_andamento') ORDER BY lote, id").all();
+  const c = (x) => `"${String(x ?? '').replace(/"/g, '""')}"`;
+  const linhas = [['pedido', 'lote', 'status', 'nome', 'cpf', 'nascimento', 'telefone', 'email', 'documento', 'titular_proprio', 'pagamento', 'pago_em'].join(';'),
+    ...lista.map((p) => [p.id, p.lote, p.status, p.nome, p.cpf, p.nascimento, p.telefone, p.email, p.doc_tipo, p.titular_proprio ? 'sim' : 'não (autorizado)', p.forma_pagamento === 'cartao' ? `cartão ${p.parcelas}x` : 'pix', p.pago_em].map(c).join(';'))];
+  registrar(usuario, 'Limpa Nome: baixou planilha', `${lista.length} pedido(s)`);
+  res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="limpa-nome-${proximoLoteLN()}.csv"`, 'Cache-Control': 'no-store' });
+  res.end('﻿' + linhas.join('\r\n'));
+}));
+
+rota('GET', '/admin/limpa-nome/doc/:id/:lado', exigeAdmin(async ({ res, usuario, params }) => {
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(params.id));
+  const arq = p && (params.lado === 'frente' ? p.doc_frente : params.lado === 'verso' ? p.doc_verso : null);
+  if (!arq || p.docs_apagados) { res.writeHead(404); return res.end('Documento não encontrado'); }
+  try {
+    const dados = await readFile(path.join(pastaDocsLimpaNome, path.basename(arq)));
+    registrar(usuario, 'Limpa Nome: viu documento', `#${p.id} · ${params.lado}`);
+    res.writeHead(200, { 'Content-Type': MIME_DOC[arq.split('.').pop()] || 'application/octet-stream', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; plugin-types application/pdf", 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' });
+    res.end(dados);
+  } catch { res.writeHead(404); res.end('Documento não encontrado'); }
+}));
+
+// LGPD: apaga os documentos 90 dias depois de o pedido terminar
+async function limparDocsLN() {
+  const lista = db.prepare(`SELECT id, doc_frente, doc_verso FROM limpa_nome_pedidos WHERE docs_apagados = 0 AND status IN ('concluido','cancelado','reembolsado') AND atualizado_em < datetime('now', '-90 days')`).all();
+  for (const p of lista) {
+    for (const a of [p.doc_frente, p.doc_verso]) if (a) await unlink(path.join(pastaDocsLimpaNome, path.basename(a))).catch(() => {});
+    db.prepare('UPDATE limpa_nome_pedidos SET docs_apagados = 1 WHERE id = ?').run(p.id);
+  }
+  if (lista.length) registrar(null, 'Limpa Nome: documentos apagados (LGPD)', `${lista.length} pedido(s)`);
+}
+setTimeout(() => limparDocsLN().catch((e) => console.error('docs LN:', e.message)), 20000).unref();
+setInterval(() => limparDocsLN().catch((e) => console.error('docs LN:', e.message)), 12 * 60 * 60 * 1000).unref();
 
 // ======================= PAINEL FINANCEIRO (ADMIN) =======================
 function periodoDe(url) {
@@ -1558,11 +1944,21 @@ const servidor = http.createServer(async (req, res) => {
       return res.end(scriptRastreio());
     }
     // Imagens públicas de anúncios (pasta "criativos" do repositório): usadas pela Meta/Google para buscar os criativos
-    const criativo = req.method === 'GET' && /^\/criativos\/([a-z0-9-]{1,80})\.(png|jpe?g)$/.exec(url.pathname);
+    const criativo = req.method === 'GET' && /^\/criativos\/([a-z0-9-]{1,80})\.(png|jpe?g|mp4)$/.exec(url.pathname);
     if (criativo) {
       try {
         const dados = await readFile(path.join(raiz, 'criativos', `${criativo[1]}.${criativo[2]}`));
-        res.writeHead(200, { 'Content-Type': criativo[2] === 'png' ? 'image/png' : 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+        const tipo = { png: 'image/png', mp4: 'video/mp4' }[criativo[2]] || 'image/jpeg';
+        // Vídeos: suporte a "Range" (o iPhone exige para tocar)
+        const faixa = criativo[2] === 'mp4' && /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
+        if (faixa) {
+          let ini = faixa[1] === '' ? Math.max(0, dados.length - Number(faixa[2])) : Number(faixa[1]);
+          let fim = faixa[1] !== '' && faixa[2] !== '' ? Math.min(Number(faixa[2]), dados.length - 1) : dados.length - 1;
+          if (ini > fim || ini >= dados.length) { res.writeHead(416, { 'Content-Range': `bytes */${dados.length}` }); return res.end(); }
+          res.writeHead(206, { 'Content-Type': tipo, 'Content-Range': `bytes ${ini}-${fim}/${dados.length}`, 'Accept-Ranges': 'bytes', 'Content-Length': fim - ini + 1, 'Cache-Control': 'public, max-age=86400' });
+          return res.end(dados.subarray(ini, fim + 1));
+        }
+        res.writeHead(200, { 'Content-Type': tipo, 'Accept-Ranges': 'bytes', 'Cache-Control': 'public, max-age=86400' });
         return res.end(dados);
       } catch { res.writeHead(404); return res.end(); }
     }

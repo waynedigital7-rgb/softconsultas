@@ -316,7 +316,7 @@ ${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso
 }
 
 // Área exclusiva para profissionais de limpa nome
-export function paginaLimpaNome({ economicas, completas, saldo, admin }) {
+export function paginaLimpaNome({ economicas, completas, saldo, admin, servico }) {
   const bloco = (titulo, sub, lista, destaque) => `
   <div class="cartao" style="margin-bottom:18px;${destaque ? 'border:2px solid var(--roxo)' : ''}">
     <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">
@@ -327,6 +327,11 @@ export function paginaLimpaNome({ economicas, completas, saldo, admin }) {
   return `<span class="tag">Área exclusiva</span>
 <h1 style="font-size:1.9rem;margin:10px 0 4px">Limpa Nome</h1>
 <p class="muted" style="margin:0 0 18px;max-width:760px">As consultas certas para cada etapa do seu atendimento: comece pela triagem rápida e barata e, quando o cliente fechar, faça o diagnóstico completo em todas as bases.</p>
+${servico ? `<a href="/limpa-nome/servico" class="cartao" style="display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px;text-decoration:none;color:inherit;background:linear-gradient(135deg,#2A0E3D,#5B2D8E);color:#fff;border:0">
+  <div><div style="font-size:.8rem;font-weight:700;letter-spacing:.6px;color:#E3C6F4">NOVO · SERVIÇO LIMPA NOME</div>
+  <div style="font-family:Montserrat,sans-serif;font-size:1.5rem;font-weight:800;margin:4px 0">${esc(servico.prazo || 'Limpe seu nome')}</div>
+  <div style="color:#E3C6F4">${reais(servico.preco)} no Pix${servico.parcelas > 1 ? ` ou ${servico.parcelas}x de ${reais(servico.tabela.at(-1).parcela)} no cartão` : ''} · lote toda semana · veja como funciona</div></div>
+  <span class="btn" style="background:#fff;color:#5B2D8E">Quero limpar meu nome →</span></a>` : ''}
 <div class="grade" style="margin-bottom:18px">
   <div class="saldo"><div style="color:#D9B8F0;font-weight:600">${admin ? 'Saldo APIFull' : 'Seu saldo'}</div><div class="valor">${saldo === null ? '—' : reais(saldo)}</div>
     ${admin ? '' : '<a class="btn" href="/recarregar" style="margin-top:14px">Recarregar</a>'}</div>
