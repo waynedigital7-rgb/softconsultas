@@ -742,8 +742,9 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   if (produto.sensivel && !podeSensivel(usuario)) return erro('Esta consulta contém dados sensíveis e precisa de liberação. Fale com o suporte.');
   const val = validarValor(produto.documento, f.valor);
   if (val.erro) return erro(val.erro);
-  if (!PA.FINALIDADES.includes(f.finalidade)) return erro('Selecione a finalidade da consulta.');
-  if (f.aceite !== '1') return erro('Confirme a declaração de finalidade para continuar.');
+  if (f.aceite !== '1') return erro('Marque a confirmação da LGPD e dos Termos de Uso para continuar.');
+  // Finalidade: agora uma única declaração (o histórico guarda o aceite)
+  f.finalidade = 'Declaração LGPD e Termos aceitos';
   if (!A.limitar(`con:${usuario.id}`, 30, 10)) return erro('Muitas consultas em pouco tempo. Aguarde alguns minutos.');
 
   // Reserva o valor (bloco síncrono: sem risco de gastar o mesmo saldo duas vezes)

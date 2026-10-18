@@ -137,12 +137,7 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, b
   <form method="post" action="/consultas/${esc(produto.slug)}" target="_blank" data-consulta>
     <div class="campo"><label for="valor">${ROTULO_DOC[produto.documento]}</label>
       <input id="valor" name="valor" type="text" data-tipo="${esc(produto.documento)}" ${produto.documento === 'placa' ? 'autocapitalize="characters"' : 'inputmode="numeric"'} required value="${esc(v.valor)}"></div>
-    <div class="campo"><label for="finalidade">Finalidade da consulta</label>
-      <select id="finalidade" name="finalidade" required style="font:inherit;padding:13px 15px;border:1.5px solid #D6CCE0;border-radius:12px;min-height:48px;background:#fff">
-        <option value="">Selecione...</option>
-        ${FINALIDADES.map((f) => `<option ${v.finalidade === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}
-      </select></div>
-    <label class="check"><input type="checkbox" name="aceite" value="1" required><span>Declaro que a consulta tem a finalidade informada, com base legal conforme a LGPD, e que vou usar os dados somente para esse fim.</span></label>
+    <label class="check"><input type="checkbox" name="aceite" value="1" required><span>Confirmo que esta consulta tem base legal conforme a LGPD, que vou usar os dados somente para essa finalidade e que aceito os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>.</span></label>
     <button class="btn largo" type="submit">Consultar por ${reais(produto.preco_centavos)}</button>
     <p class="muted" style="font-size:.85rem;text-align:center;margin:10px 0 0">O relatório em PDF abre numa nova aba. ${admin ? 'Conta admin: a consulta é debitada direto do saldo da APIFull, sem passar pela carteira.' : 'Se a consulta falhar, o valor volta automaticamente para o seu saldo.'}</p>
   </form>`}
