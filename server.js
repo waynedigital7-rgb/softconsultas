@@ -8,6 +8,9 @@ import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
 import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo, gerarRecargaApiFull } from './apifull.js';
 import { pdfGenerico } from './pdf.js';
+import { montarResumo as montarResumoRX } from './raiox-resumo.js';
+import { montarDiagnostico as montarDiagnosticoRX } from './raiox-diagnostico.js';
+import { gerarRelatorioPDF as gerarRaioXPDF } from './raiox-pdf.js';
 import * as PA from './paginas-app.js';
 import * as PD from './paginas-admin.js';
 import * as SV from './paginas-servico.js';
@@ -221,7 +224,7 @@ function acharRota(metodo, caminho) {
 const exigeLogin = (fn) => async (ctx) => {
   if (ctx.usuario) return fn(ctx);
   const destino = ctx.req.method === 'GET' ? `${ctx.url.pathname}${ctx.url.search}` : '';
-  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
+  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
   return redirecionar(ctx.res, '/entrar', ok ? { 'Set-Cookie': `sc_voltar=${encodeURIComponent(destino)}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax` } : {});
 };
 const exigeAdmin = (fn) => async (ctx) => (ctx.usuario?.admin ? fn(ctx) : redirecionar(ctx.res, ctx.usuario ? '/painel' : '/entrar'));
@@ -283,7 +286,7 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   const placaConsulta = placaOk(f.consulta);
   const docConsulta = placaConsulta ? '' : A.soNumeros(f.consulta || '').slice(0, 14);
   const voltarCad = String(cookies(req).sc_voltar || '');
-  const destinoCad = /^\/(ebook|monitoramento|limpa-nome)[\w\/?=&%.-]*$/.test(voltarCad) ? voltarCad : null;
+  const destinoCad = /^\/(ebook|monitoramento|limpa-nome|raio-x)[\w\/?=&%.-]*$/.test(voltarCad) ? voltarCad : null;
   redirecionar(res, destinoCad || (placaConsulta ? `/consultas/categoria/veiculos?bemvindo=1&placa=${placaConsulta}` : docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : '/painel?bemvindo=1'), { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0', 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
@@ -303,7 +306,7 @@ rota('POST', '/entrar', async ({ req, res }) => {
   if (!u.ativo) return erro('Esta conta está desativada. Fale com o suporte.', 403);
   A.limparLimite(`login:${email}`);
   const voltar = String(cookies(req).sc_voltar || '');
-  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
+  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
   redirecionar(res, destinoOk, { 'Set-Cookie': [A.cookieSessao(A.criarSessao(u.id), ehHttps(req)), 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
@@ -657,6 +660,11 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
   // Assinaturas do monitoramento (inclui PAYMENT_CREATED para avisar a renovação no Pix)
   if (payment?.subscription || ref.startsWith(AS.PREFIXO_MONITORAMENTO)) { try { if (webhookMonitoramento(event, payment)) return; } catch (e) { console.error('webhook monitoramento:', e.message); return; } }
   if (!['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) return;
+  if (ref.startsWith(AS.PREFIXO_RAIOX)) {
+    const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_RAIOX.length)));
+    if (p && p.asaas_id === payment.id && Math.round(Number(payment.value) * 100) >= p.valor_centavos) { try { confirmarRaioX(p.id); } catch (e) { console.error('raio-x:', e.message); } }
+    return;
+  }
   if (ref.startsWith(AS.PREFIXO_DIGITAL)) {
     const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_DIGITAL.length)));
     if (c && c.asaas_id === payment.id && Math.round(Number(payment.value) * 100) >= c.valor_centavos) { try { confirmarCompraDigital(c.id); } catch (e) { console.error('ebook:', e.message); } }
@@ -706,6 +714,16 @@ async function expirarCobrancasAbertas() {
       }
       db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Pagamento não realizado no prazo', atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(p.id);
     } catch (e) { console.warn('expirar pedido LN', p.id, e.message); }
+  }
+  for (const c of db.prepare("SELECT * FROM raiox_pedidos WHERE status = 'pendente' AND criado_em < datetime('now', '-48 hours') LIMIT 50").all()) {
+    try {
+      if (c.asaas_id) {
+        const cob = await AS.buscarCobranca(c.asaas_id).catch(() => null);
+        if (cob && AS.STATUS_PAGO.includes(cob.status)) { confirmarRaioX(c.id); continue; }
+        if (cob && !cob.deleted && cob.status === 'PENDING') await AS.cancelarCobranca(c.asaas_id);
+      }
+      db.prepare("UPDATE raiox_pedidos SET status = 'expirada' WHERE id = ? AND status = 'pendente'").run(c.id);
+    } catch (e) { console.warn('expirar raio-x', c.id, e.message); }
   }
   for (const c of db.prepare("SELECT * FROM compras_digitais WHERE status = 'pendente' AND criado_em < datetime('now', '-48 hours') LIMIT 50").all()) {
     try {
@@ -1844,6 +1862,182 @@ rota('POST', '/admin/ebook/reenviar', exigeAdmin(async ({ req, res, usuario }) =
   redirecionar(res, '/admin/ebook?ok=' + encodeURIComponent('E-mail com o guia reenviado.'));
 }));
 
+// ======================= RAIO-X DO CPF (venda avulsa: página de vendas → Pix/cartão → PDF no e-mail) =======================
+const raioxCfg = () => ({
+  ativo: lerConfig('raiox_ativo') === '1', preco: Number(lerConfig('raiox_preco') || 3790), precoDe: Number(lerConfig('raiox_preco_de') || 0),
+  produto: lerConfig('raiox_produto') || 'cred-completa-plus',
+});
+const produtoRaioX = () => db.prepare("SELECT * FROM produtos WHERE slug = ? AND endpoint <> ''").get(raioxCfg().produto);
+const arquivoRaioX = (id) => path.join(pastaProdutos, `raiox-${Number(id)}.pdf`);
+const pedidoRX = (token) => (/^[a-f0-9]{32}$/.test(String(token)) ? db.prepare('SELECT * FROM raiox_pedidos WHERE token = ?').get(token) : null);
+const raioxEmAndamento = new Set();
+
+function confirmarRaioX(id) {
+  const ok = db.prepare("UPDATE raiox_pedidos SET status = 'paga', pago_em = datetime('now') WHERE id = ? AND status <> 'paga'").run(id).changes === 1;
+  if (ok) {
+    const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(id);
+    registrar(null, 'Raio-X: venda paga', `#${id} · ${p.email} · ${P.reais(p.valor_centavos)} · ${p.forma}`);
+    entregarRaioX(id);
+  }
+  return ok;
+}
+
+// Consulta → diagnóstico → PDF → e-mail (com o PDF em anexo)
+async function entregarRaioX(id, { reenviar = false } = {}) {
+  if (raioxEmAndamento.has(id)) return;
+  raioxEmAndamento.add(id);
+  try {
+    const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(id);
+    if (!p || p.status !== 'paga') return;
+    let pdf = null;
+    if (p.entregue_em) { try { pdf = await readFile(arquivoRaioX(p.id)); } catch {} }
+    if (!pdf) {
+      const produto = produtoRaioX();
+      if (!produto) throw new Error('consulta do Raio-X não configurada');
+      db.prepare('UPDATE raiox_pedidos SET tentativas = tentativas + 1 WHERE id = ?').run(p.id);
+      const dados = await consultarApiFull(produto, p.documento);
+      limparCacheSaldo();
+      const resumo = montarResumoRX(dados);
+      const diag = montarDiagnosticoRX(resumo, p.documento, { limpaNome: lnCfg().ativo ? lnCfg() : null });
+      pdf = await gerarRaioXPDF({ nome: resumo.cadastro?.nome || p.nome, documento: p.documento, resumo, diagnostico: diag, fonte: 'Boa Vista (SCPC)' });
+      await writeFile(arquivoRaioX(p.id), pdf);
+      db.prepare("UPDATE raiox_pedidos SET entregue_em = datetime('now'), erro = NULL, resumo = ? WHERE id = ?")
+        .run(JSON.stringify({ nivel: diag.nivel, titulo: diag.titulo, score: resumo.score?.valor ?? null, qtd: resumo.quantidade, total: resumo.total, custo: produto.custo_centavos }), p.id);
+      registrar(null, 'Raio-X: entregue', `#${p.id} · ${p.email} · ${diag.titulo}`);
+    }
+    const r = JSON.parse(db.prepare('SELECT resumo FROM raiox_pedidos WHERE id = ?').get(p.id).resumo || '{}');
+    const base = baseEmails();
+    await enviarEmail({ para: p.email, assunto: `🩺 Seu Raio-X do ${String(p.documento).length === 14 ? 'CNPJ' : 'CPF'} está pronto`,
+      html: `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#F4F1F7;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden">
+<tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span> · Raio-X</td></tr>
+<tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">Seu Raio-X está pronto 🩺</h1>
+<p>Olá, ${P.esc(String(p.nome).split(' ')[0])}! ${r.titulo ? `<strong>${P.esc(r.titulo)}.</strong> ` : ''}O relatório completo está <strong>em anexo</strong>: o diagnóstico, tudo o que aparece no seu documento e o <strong>plano de ação</strong> para agora, 30 e 90 dias.</p>
+<p style="margin:24px 0"><a href="${base}/raio-x/r/${p.token}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">Abrir meu Raio-X</a></p>
+<p style="font-size:14px">Comece pelo item 1 do plano ainda hoje. Quanto antes, melhor.</p>
+<p style="font-size:12px;color:#7A7285">Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01</p></td></tr></table></td></tr></table></body></html>`,
+      anexos: [{ filename: 'raio-x-soft-consultas.pdf', content: pdf.toString('base64') }] });
+    if (reenviar) registrar(null, 'Raio-X: e-mail reenviado', `#${p.id}`);
+  } catch (e) {
+    console.error('raio-x', id, e.message);
+    db.prepare('UPDATE raiox_pedidos SET erro = ? WHERE id = ?').run(String(e.message).slice(0, 300), id);
+    registrar(null, 'Raio-X: falha na entrega', `#${id} · ${e.message}`);
+  } finally { raioxEmAndamento.delete(id); }
+}
+// Pagos e não entregues (ex.: APIFull fora do ar): tenta de novo a cada 30 min, até 5 vezes
+setInterval(() => {
+  for (const p of db.prepare("SELECT id FROM raiox_pedidos WHERE status = 'paga' AND entregue_em IS NULL AND tentativas < 5").all()) entregarRaioX(p.id);
+}, 30 * 60 * 1000).unref();
+
+// Página de vendas com o formulário (sem cadastro)
+rota('GET', '/raio-x', ({ res, usuario, url }) => {
+  const cfg = raioxCfg();
+  if (!cfg.ativo && !usuario?.admin) return pagina(res, 'Raio-X do CPF', P.paginaEmBreve('Raio-X do CPF', 'Em breve: o diagnóstico completo do seu CPF com plano de ação personalizado.'), usuario);
+  pagina(res, 'Raio-X do CPF', SV.paginaVendaRaioX({ cfg, v: { nome: usuario?.nome, email: usuario?.email, whatsapp: usuario?.telefone, documento: usuario?.documento } }), usuario);
+});
+
+rota('POST', '/raio-x', async ({ req, res, usuario }) => {
+  const cfg = raioxCfg();
+  const f = await corpoForm(req);
+  const erro = (m) => pagina(res, 'Raio-X do CPF', SV.paginaVendaRaioX({ cfg, v: f, erro: m }), usuario, 400);
+  if (!cfg.ativo && !usuario?.admin) return redirecionar(res, '/raio-x');
+  if (!produtoRaioX()) return erro('O Raio-X está indisponível no momento. Tente mais tarde.');
+  const nome = String(f.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const email = String(f.email || '').trim().toLowerCase().slice(0, 120);
+  const whats = A.soNumeros(f.whatsapp).slice(0, 13);
+  const doc = A.soNumeros(f.documento);
+  if (nome.split(' ').length < 2) return erro('Informe seu nome completo.');
+  if (!A.documentoValido(doc)) return erro('Informe um CPF ou CNPJ válido.');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return erro('Informe um e-mail válido: é para ele que enviamos o Raio-X.');
+  if (whats && (whats.length < 10 || whats.length > 13)) return erro('Informe o WhatsApp com DDD (ou deixe em branco).');
+  if (f.aceite !== '1') return erro('Marque a declaração para continuar.');
+  if (!A.limitar(`rx:${ipDe(req)}`, 8, 60)) return erro('Muitas tentativas. Aguarde alguns minutos.');
+  const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
+  const aberto = db.prepare("SELECT token FROM raiox_pedidos WHERE email = ? AND documento = ? AND status = 'pendente' AND forma = 'pix' AND asaas_id IS NOT NULL AND criado_em > datetime('now', '-2 hours') ORDER BY id DESC").get(email, doc);
+  if (aberto && forma === 'pix') return redirecionar(res, `/raio-x/r/${aberto.token}`);
+  const token = randomBytes(16).toString('hex');
+  let org = {}; try { org = JSON.parse(cookies(req).sc_origem || '{}') || {}; } catch {}
+  const id = Number(db.prepare('INSERT INTO raiox_pedidos (token, nome, email, whatsapp, documento, valor_centavos, forma, aceite_ip, origem) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(token, nome, email, whats || null, doc, cfg.preco, forma, ipDe(req), String(org.utm_campaign || org.origem || '').slice(0, 80)).lastInsertRowid);
+  try {
+    const cli = await AS.criarCliente({ nome, documento: doc, email, telefone: whats || undefined });
+    const cob = await AS.criarCobrancaDigital({ clienteId: cli.id, valorCentavos: cfg.preco, compraId: id, forma, prefixo: AS.PREFIXO_RAIOX, descricao: `Raio-X do ${doc.length === 14 ? 'CNPJ' : 'CPF'} - Soft Consultas #${id}` });
+    let pix = null;
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
+    db.prepare('UPDATE raiox_pedidos SET asaas_id = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ? WHERE id = ?').run(cob.id, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, id);
+    if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
+    redirecionar(res, `/raio-x/r/${token}`);
+  } catch (e) {
+    console.error('raio-x:', e.message);
+    db.prepare("UPDATE raiox_pedidos SET status = 'expirada' WHERE id = ?").run(id);
+    erro('Não foi possível gerar o pagamento agora. Tente de novo em instantes.');
+  }
+});
+
+// Página do pedido (link secreto): pagamento → "enviamos para o seu e-mail" → baixar
+rota('GET', '/raio-x/r/:token', ({ res, usuario, params }) => {
+  const p = pedidoRX(params.token);
+  if (!p) return redirecionar(res, '/raio-x');
+  pagina(res, 'Meu Raio-X', SV.paginaPedidoRaioX({ p }), usuario);
+});
+rota('GET', '/api/raio-x/:token/status', async ({ res, params }) => {
+  const p = pedidoRX(params.token);
+  if (!p) return json(res, { pago: false }, 404);
+  if (p.status === 'paga') return json(res, { pago: true, entregue: !!p.entregue_em, valor: p.valor_centavos / 100 });
+  if (p.asaas_id && A.limitar(`strx:${p.id}`, 30, 5)) {
+    try {
+      const cob = await AS.buscarCobranca(p.asaas_id);
+      if (AS.STATUS_PAGO.includes(cob.status) && Math.round(Number(cob.value) * 100) >= p.valor_centavos) { confirmarRaioX(p.id); return json(res, { pago: true, entregue: false, valor: p.valor_centavos / 100 }); }
+    } catch (e) { console.warn('status raio-x:', e.message); }
+  }
+  json(res, { pago: false });
+});
+rota('GET', '/raio-x/r/:token/pdf', async ({ res, params }) => {
+  const p = pedidoRX(params.token);
+  if (!p || p.status !== 'paga' || !p.entregue_em) return redirecionar(res, p ? `/raio-x/r/${p.token}` : '/raio-x');
+  try {
+    const pdf = await readFile(arquivoRaioX(p.id));
+    db.prepare('UPDATE raiox_pedidos SET downloads = downloads + 1 WHERE id = ?').run(p.id);
+    res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="raio-x-${p.id}.pdf"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex' });
+    res.end(pdf);
+  } catch { redirecionar(res, `/raio-x/r/${p.token}`); }
+});
+
+// ---------- Admin ----------
+rota('GET', '/admin/raio-x', exigeAdmin(({ res, usuario, url }) => {
+  const pedidos = db.prepare('SELECT * FROM raiox_pedidos ORDER BY id DESC LIMIT 300').all();
+  const pagos = pedidos.filter((p) => p.status === 'paga');
+  pagina(res, 'Admin · Raio-X', SV.adminRaioX({ menu: PD.menu('/admin/raio-x'), cfg: raioxCfg(), pedidos, vendas: pagos.length, receita: pagos.reduce((s, p) => s + p.valor_centavos, 0),
+    produto: produtoRaioX(), produtos: db.prepare("SELECT slug, nome, custo_centavos FROM produtos WHERE endpoint <> '' AND documento IN ('cpf','cnpj','cpf_cnpj') ORDER BY nome").all(),
+    ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+rota('POST', '/admin/raio-x', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const volta = (m, ok) => redirecionar(res, `/admin/raio-x?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  if (f.acao === 'refazer' || f.acao === 'reenviar' || f.acao === 'conferir') {
+    const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(Number(f.id));
+    if (!p) return volta('Pedido não encontrado.');
+    if (f.acao === 'conferir') {
+      try { const cob = await AS.buscarCobranca(p.asaas_id); if (AS.STATUS_PAGO.includes(cob.status)) { confirmarRaioX(p.id); registrar(usuario, 'Raio-X: pagamento conferido', `#${p.id}`); return volta('Pagamento confirmado: o Raio-X está sendo gerado e enviado.', true); } return volta(`Ainda não pago (status ${cob.status}).`); }
+      catch (e) { return volta(`Falhou: ${e.message}`); }
+    }
+    if (p.status !== 'paga') return volta('Esse pedido não está pago.');
+    if (f.acao === 'refazer') { db.prepare('UPDATE raiox_pedidos SET entregue_em = NULL, erro = NULL WHERE id = ?').run(p.id); await unlink(arquivoRaioX(p.id)).catch(() => {}); }
+    await entregarRaioX(p.id, { reenviar: true });
+    registrar(usuario, f.acao === 'refazer' ? 'Raio-X: refeito pelo admin' : 'Raio-X: reenviado pelo admin', `#${p.id}`);
+    const d = db.prepare('SELECT erro FROM raiox_pedidos WHERE id = ?').get(p.id);
+    return d.erro ? volta(`Falhou: ${d.erro}`) : volta(f.acao === 'refazer' ? 'Raio-X refeito e enviado.' : 'E-mail reenviado.', true);
+  }
+  const preco = centavos(f.preco), de = String(f.preco_de || '').trim() ? centavos(f.preco_de) : 0;
+  if (!Number.isFinite(preco) || preco < 500) return volta('Preço inválido (mínimo R$ 5,00).');
+  if (!Number.isFinite(de) || de < 0) return volta('Preço "de" inválido.');
+  if (!db.prepare("SELECT 1 FROM produtos WHERE slug = ? AND endpoint <> ''").get(f.produto)) return volta('Escolha uma consulta com endpoint configurado.');
+  gravarConfig('raiox_ativo', f.ativo === '1' ? '1' : '0'); gravarConfig('raiox_preco', String(preco)); gravarConfig('raiox_preco_de', String(de)); gravarConfig('raiox_produto', f.produto);
+  registrar(usuario, 'Raio-X: configuração', `${f.ativo === '1' ? 'à venda' : 'fora do ar'} · ${P.reais(preco)} · consulta ${f.produto}`);
+  volta('Salvo.', true);
+}));
+
 // ======================= MONITORAMENTO DE CPF/CNPJ (assinatura) =======================
 const monCfg = () => ({
   ativo: lerConfig('mon_ativo') === '1',
@@ -2581,6 +2775,12 @@ rota('GET', '/saude', ({ res }) => json(res, { ok: true, discoPermanente: armaze
 const servidor = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://local');
+    // Subdomínio/domínio do Raio-X (ex.: raiox.softconsultas.com, softcredito.com.br): leva para a página do Raio-X
+    const hostRx = String(req.headers.host || '').toLowerCase().split(':')[0];
+    if ((process.env.HOSTS_RAIOX || 'raiox.softconsultas.com').split(',').map((h) => h.trim()).filter(Boolean).includes(hostRx)) {
+      res.writeHead(301, { Location: `${process.env.URL_BASE || 'https://softconsultas.com'}/raio-x${url.search}` });
+      return res.end();
+    }
     if (req.method === 'GET' && url.pathname === '/rastreio.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
       return res.end(scriptRastreio());

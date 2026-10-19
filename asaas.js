@@ -107,8 +107,11 @@ export const cancelarAssinatura = (id) => asaas(`/subscriptions/${id}`, { method
 
 // ---------- Produtos digitais (ebook) ----------
 export const PREFIXO_DIGITAL = 'scdig_';
-export function criarCobrancaDigital({ clienteId, valorCentavos, compraId, descricao, forma = 'pix' }) {
+export function criarCobrancaDigital({ clienteId, valorCentavos, compraId, descricao, forma = 'pix', prefixo = PREFIXO_DIGITAL }) {
   const venc = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
   return asaas('/payments', { method: 'POST', body: JSON.stringify({ customer: clienteId, billingType: forma === 'cartao' ? 'CREDIT_CARD' : 'PIX',
-    value: valorCentavos / 100, dueDate: venc, description: descricao, externalReference: `${PREFIXO_DIGITAL}${compraId}` }) });
+    value: valorCentavos / 100, dueDate: venc, description: descricao, externalReference: `${prefixo}${compraId}` }) });
 }
+
+// ---------- Raio-X (venda avulsa) ----------
+export const PREFIXO_RAIOX = 'scrx_';

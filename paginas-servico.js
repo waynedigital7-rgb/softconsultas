@@ -443,9 +443,9 @@ export function paginaCheckoutEbook({ cfg, usuario, erro }) {
   </form></div>`;
 }
 
-export function paginaPagarEbook({ c }) {
-  return `<div class="cartao estreito" style="max-width:520px;text-align:center" data-ebook="${c.id}">
-  <h1 style="font-size:1.4rem;margin-top:0">Pague ${reais(c.valor_centavos)} e receba o guia</h1>
+export function paginaPagarEbook({ c, titulo = '', destino = '' }) {
+  return `<div class="cartao estreito" style="max-width:520px;text-align:center" data-ebook="${c.id}" ${destino ? `data-destino="${esc(destino)}"` : ''}>
+  <h1 style="font-size:1.4rem;margin-top:0">${titulo ? esc(titulo) : `Pague ${reais(c.valor_centavos)} e receba o guia`}</h1>
   ${c.pix_imagem ? `<img src="data:image/png;base64,${esc(c.pix_imagem)}" alt="QR Code Pix" style="width:230px;height:230px;max-width:100%">
   <textarea id="pix-codigo" readonly rows="3" aria-label="Código Pix copia e cola" style="width:100%;font:inherit;font-size:.8rem;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px;resize:none">${esc(c.pix_codigo)}</textarea>
   <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
@@ -485,5 +485,111 @@ export function adminEbook({ menu, cfg, compras, vendas, receita, tamanho, ok, e
 <div class="cartao"><div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Cliente</th><th>Valor</th><th>Status</th><th>Downloads</th><th></th></tr>
 ${compras.map((c) => `<tr><td>${c.id}</td><td>${dt(c.criado_em)}</td><td>${esc(c.cliente)}</td><td>${reais(c.valor_centavos)} · ${c.forma}</td><td>${c.status === 'paga' ? '<strong style="color:var(--ok)">Paga</strong>' : esc(c.status)}</td><td>${c.downloads}</td>
   <td>${c.status === 'paga' ? `<form method="post" action="/admin/ebook/reenviar" style="margin:0"><input type="hidden" name="id" value="${c.id}"><button class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem">Reenviar e-mail</button></form>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhuma venda ainda.</td></tr>'}
+</table></div></div>`;
+}
+
+// ======================= RAIO-X DO CPF (venda avulsa, sem cadastro) =======================
+export function paginaVendaRaioX({ cfg, v = {}, erro = '' }) {
+  const f = (k) => esc(v[k] ?? '');
+  return `<div style="max-width:1000px;margin:0 auto">
+<div style="background:#0F0C14;color:#fff;border-radius:24px;padding:32px;margin-bottom:22px;background-image:radial-gradient(600px 400px at 90% 0%,#5B2D8E 0%,transparent 70%)">
+  <span class="tag" style="background:#2A2233;color:#D9B8F0">RAIO-X DO CPF · NO SEU E-MAIL EM MINUTOS</span>
+  <h1 style="font-size:2.3rem;line-height:1.1;margin:14px 0 10px;color:#fff;max-width:760px">Descubra por que seu crédito é negado <span style="color:#C98BEB">e o que fazer, passo a passo</span></h1>
+  <p style="color:#E2D3EE;font-size:1.1rem;margin:0 0 18px;max-width:720px">Não é só uma consulta: o Raio-X analisa o seu CPF ou CNPJ e envia para o seu e-mail um PDF com diagnóstico em linguagem simples e um plano de ação feito para o seu caso.</p>
+  <p style="margin:0 0 6px">${cfg.precoDe > cfg.preco ? `<s style="color:#9A8FA8">${reais(cfg.precoDe)}</s> ` : ''}<span style="font-family:Montserrat,sans-serif;font-size:2.2rem;font-weight:800">${reais(cfg.preco)}</span> <span style="color:#C9BFD4">pagamento único · Pix ou cartão · sem cadastro</span></p>
+  <p style="margin:12px 0 0"><a class="btn" href="#pedido" style="font-size:1.05rem">Quero meu Raio-X</a></p>
+</div>
+<div class="grade" style="margin-bottom:22px">
+  <div class="cartao"><div style="font-size:1.8rem">🔎</div><h3 style="margin:6px 0">Tudo o que aparece no seu nome</h3><p class="muted" style="margin:0">Score, restrições, protestos, ações, cheques e quem consultou o seu documento.</p></div>
+  <div class="cartao"><div style="font-size:1.8rem">🩺</div><h3 style="margin:6px 0">Diagnóstico claro</h3><p class="muted" style="margin:0">O que está travando o seu crédito: dívidas antigas, consultas demais, cadastro positivo desligado, score baixo.</p></div>
+  <div class="cartao"><div style="font-size:1.8rem">🗺️</div><h3 style="margin:6px 0">Plano de ação</h3><p class="muted" style="margin:0">O que fazer agora, em 30 e em 90 dias, na ordem certa, com base na lei e no seu resultado.</p></div>
+  <div class="cartao"><div style="font-size:1.8rem">📩</div><h3 style="margin:6px 0">Direto no e-mail</h3><p class="muted" style="margin:0">Pagou, recebeu: o PDF chega no seu e-mail em poucos minutos. Sem criar conta.</p></div>
+</div>
+<div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;margin-bottom:22px">
+  <div class="cartao" style="flex:1 1 320px">
+    <h2 style="font-size:1.3rem;margin-top:0">Exemplos do que o Raio-X aponta</h2>
+    <p style="margin:8px 0">⚠️ <strong>"1 registro tem mais de 5 anos"</strong>: pela lei, ele não pode mais aparecer. Você pode pedir a retirada.</p>
+    <p style="margin:8px 0">📉 <strong>"6 consultas ao seu CPF"</strong>: pedir crédito em vários lugares derruba o score. Espere 90 dias.</p>
+    <p style="margin:8px 0">✅ <strong>"Cadastro Positivo desligado"</strong>: ative de graça e o mercado passa a ver o que você paga em dia.</p>
+    <p style="margin:8px 0">🧭 <strong>Próximo passo recomendado</strong>: negociar, Limpa Nome ou trabalhar o score, conforme o seu caso.</p>
+  </div>
+  <form id="pedido" class="cartao" method="post" action="/raio-x" style="flex:1 1 380px">
+    <h2 style="font-size:1.3rem;margin-top:0">Fazer meu Raio-X · ${reais(cfg.preco)}</h2>
+    ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+    <div class="campo"><label for="rx-nome">Nome completo</label><input id="rx-nome" type="text" name="nome" required maxlength="120" value="${f('nome')}"></div>
+    <div class="campo"><label for="rx-doc">CPF ou CNPJ</label><input id="rx-doc" type="text" name="documento" inputmode="numeric" maxlength="18" required value="${f('documento')}"></div>
+    <div class="campo"><label for="rx-email">E-mail (o Raio-X chega aqui)</label><input id="rx-email" type="email" name="email" required maxlength="120" value="${f('email')}"></div>
+    <div class="campo"><label for="rx-wpp">WhatsApp (opcional)</label><input id="rx-wpp" type="tel" name="whatsapp" inputmode="tel" maxlength="20" value="${f('whatsapp')}"></div>
+    <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 14px"><legend style="font-weight:700;padding:0 6px">Pagamento</legend>
+      <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" ${v.forma === 'cartao' ? '' : 'checked'} style="width:20px;height:20px"> <span><strong>Pix</strong> · confirmado na hora</span></label>
+      <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="cartao" ${v.forma === 'cartao' ? 'checked' : ''} style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong></span></label>
+    </fieldset>
+    <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Declaro que sou o titular do CPF (ou responsável pela empresa do CNPJ) e autorizo a consulta para gerar o meu Raio-X, conforme a LGPD e os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a>.</span></label>
+    <button class="btn largo" type="submit">Pagar e receber meu Raio-X</button>
+    <p class="muted" style="font-size:.82rem;margin:10px 0 0;text-align:center">O Raio-X é informativo: ajuda você a entender e agir, mas não garante aprovação de crédito.</p>
+  </form>
+</div>
+<div class="cartao" style="margin-bottom:22px">
+  <h2 style="font-size:1.3rem;margin-top:0">Perguntas frequentes</h2>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Qual a diferença para uma consulta comum?</summary><p style="margin:8px 0 0">A consulta mostra os dados. O Raio-X explica o que eles significam para o seu crédito e diz o que fazer, na ordem certa.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Preciso criar conta?</summary><p style="margin:8px 0 0">Não. Você preenche os dados, paga e recebe o PDF no e-mail informado.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Consultar o meu CPF baixa o meu score?</summary><p style="margin:8px 0 0">Não. Consultar o próprio documento não conta como pedido de crédito.</p></details>
+  <details style="padding:10px 0"><summary style="cursor:pointer;font-weight:700">Posso fazer de outra pessoa?</summary><p style="margin:8px 0 0">Não. Pela LGPD, o Raio-X é do seu próprio CPF ou do CNPJ de uma empresa pela qual você responde.</p></details>
+</div>
+</div>`;
+}
+
+export function paginaPedidoRaioX({ p }) {
+  if (p.status === 'expirada') return `<div class="cartao estreito" style="max-width:520px;text-align:center"><h1 style="font-size:1.4rem">Esse pagamento expirou</h1><p class="muted">O Pix não foi pago no prazo. É só fazer um novo pedido.</p><p><a class="btn" href="/raio-x">Fazer meu Raio-X</a></p></div>`;
+  if (p.status !== 'paga') return `<div class="cartao estreito" style="max-width:520px;text-align:center" data-raiox="${esc(p.token)}">
+  <h1 style="font-size:1.4rem;margin-top:0">Pague ${reais(p.valor_centavos)} e receba seu Raio-X</h1>
+  ${p.pix_imagem ? `<img src="data:image/png;base64,${esc(p.pix_imagem)}" alt="QR Code Pix" style="width:230px;height:230px;max-width:100%">
+  <textarea id="pix-codigo" readonly rows="3" aria-label="Código Pix copia e cola" style="width:100%;font:inherit;font-size:.8rem;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px;resize:none">${esc(p.pix_codigo)}</textarea>
+  <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
+  ${p.link_pagamento ? `<p><a href="${esc(p.link_pagamento)}" target="_blank" rel="noopener">${p.pix_imagem ? 'Prefiro pagar pela página do Asaas' : 'Abrir página de pagamento'}</a></p>` : ''}
+  <p class="muted pulsando" aria-live="polite">Aguardando pagamento… esta página atualiza sozinha.</p>
+  <p class="muted" style="font-size:.85rem">O Raio-X será enviado para <strong>${esc(p.email)}</strong>.</p></div>`;
+  let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {}
+  if (!p.entregue_em) return `<div class="cartao estreito" style="max-width:520px;text-align:center" ${p.erro ? '' : `data-raiox="${esc(p.token)}"`}>
+    <h1 style="font-size:1.4rem">Pagamento confirmado ✅</h1>
+    <p>${p.erro ? 'A fonte de dados demorou para responder. Tentamos de novo automaticamente e o Raio-X chega no seu e-mail assim que ficar pronto.' : 'Estamos gerando o seu Raio-X. Em instantes ele chega no seu e-mail.'}</p>
+    <p class="muted">E-mail: <strong>${esc(p.email)}</strong></p></div>`;
+  const cor = { critico: '#C62828', atencao: '#B26A00', bom: '#1E7B4D' }[r.nivel] || '#5B2D8E';
+  return `<div class="cartao estreito" style="max-width:600px">
+  <span class="tag">Raio-X #${p.id}</span>
+  <h1 style="font-size:1.6rem;margin:10px 0 6px;color:${cor}">${esc(r.titulo || 'Seu Raio-X está pronto')}</h1>
+  <p class="muted">${r.score != null ? `Score ${r.score} · ` : ''}${r.qtd ? `${r.qtd} restrição(ões)` : 'Sem restrições'} · enviado para ${esc(p.email)}</p>
+  <p><a class="btn" href="/raio-x/r/${esc(p.token)}/pdf" target="_blank" rel="noopener">Abrir o relatório completo (PDF)</a></p>
+  <p class="muted" style="font-size:.9rem">O PDF tem o diagnóstico, tudo o que aparece no seu documento e o plano de ação para agora, 30 e 90 dias.</p>
+  <div class="aviso" style="margin-top:14px">Quer acompanhar a evolução do seu CPF? Conheça o <a href="/monitoramento">Monitoramento da Soft Consultas</a>.</div>
+</div>`;
+}
+
+export function adminRaioX({ menu, cfg, pedidos, vendas, receita, produto, produtos, ok, erro }) {
+  return `<h1 style="font-size:1.7rem">Raio-X do CPF</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div class="muted">Vendas</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${vendas}</div></div>
+  <div class="cartao"><div class="muted">Receita</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${reais(receita)}</div></div>
+  <div class="cartao"><div class="muted">Custo por Raio-X</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${produto ? reais(produto.custo_centavos) : '—'}</div><div class="muted">${produto ? esc(produto.nome) : 'configure a consulta'}</div></div>
+</div>
+<form class="cartao" method="post" action="/admin/raio-x" style="max-width:720px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Configuração</h2>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${cfg.ativo ? 'checked' : ''} style="width:22px;height:22px"> À venda</label>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 160px"><label for="rx-p">Preço (R$)</label><input id="rx-p" type="text" name="preco" inputmode="decimal" value="${(cfg.preco / 100).toFixed(2).replace('.', ',')}"></div>
+    <div class="campo" style="flex:1 1 160px"><label for="rx-d">Preço "de" riscado (opcional)</label><input id="rx-d" type="text" name="preco_de" inputmode="decimal" value="${cfg.precoDe ? (cfg.precoDe / 100).toFixed(2).replace('.', ',') : ''}"></div>
+  </div>
+  <div class="campo"><label for="rx-prod">Consulta usada</label><select id="rx-prod" name="produto" style="min-height:46px">${produtos.map((p) => `<option value="${esc(p.slug)}" ${p.slug === cfg.produto ? 'selected' : ''}>${esc(p.nome)} · custo ${reais(p.custo_centavos)}</option>`).join('')}</select>
+    <small class="muted">Use uma consulta Boa Vista com score e restrições (ex.: Cred Completa Plus).</small></div>
+  <button class="btn">Salvar</button>
+  <p class="muted" style="margin:10px 0 0">Página de vendas: <a href="/raio-x" target="_blank" rel="noopener">/raio-x</a> · também abre por raiox.softconsultas.com depois de apontar o subdomínio.</p>
+</form>
+<div class="cartao"><div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Cliente</th><th>Documento</th><th>Valor</th><th>Status</th><th>Ações</th></tr>
+${pedidos.map((p) => { let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {} return `<tr><td>${p.id}</td><td>${dt(p.criado_em)}</td><td>${esc(p.nome)}<br><span class="muted">${esc(p.email)}${p.whatsapp ? ` · ${esc(p.whatsapp)}` : ''}</span></td><td>${esc(formatarDoc(p.documento))}</td><td>${reais(p.valor_centavos)} · ${p.forma}</td>
+  <td>${p.status === 'paga' ? (p.entregue_em ? `<strong style="color:var(--ok)">Entregue</strong><br><span class="muted">${esc(r.titulo || '')}</span>` : `<strong style="color:var(--erro)">Pago, não entregue</strong>${p.erro ? `<br><span class="muted">${esc(p.erro)}</span>` : ''}`) : esc(p.status)}</td>
+  <td><form method="post" action="/admin/raio-x" style="display:flex;gap:6px;flex-wrap:wrap;margin:0"><input type="hidden" name="id" value="${p.id}">
+    ${p.status === 'pendente' && p.asaas_id ? '<button class="btn sec" name="acao" value="conferir" style="min-height:30px;padding:2px 10px;font-size:.78rem">Conferir no Asaas</button>' : ''}
+    ${p.status === 'paga' && p.entregue_em ? `<a class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem" href="/raio-x/r/${esc(p.token)}/pdf" target="_blank" rel="noopener">PDF</a><button class="btn sec" name="acao" value="reenviar" style="min-height:30px;padding:2px 10px;font-size:.78rem">Reenviar</button>` : ''}
+    ${p.status === 'paga' ? '<button class="btn sec" name="acao" value="refazer" style="min-height:30px;padding:2px 10px;font-size:.78rem" data-confirmar="Refazer a consulta (gasta 1 consulta na APIFull) e reenviar?">Refazer</button>' : ''}</form></td></tr>`; }).join('') || '<tr><td colspan="7" class="vazio">Nenhuma venda ainda.</td></tr>'}
 </table></div></div>`;
 }

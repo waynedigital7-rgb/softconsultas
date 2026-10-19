@@ -106,12 +106,25 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(verificar, 4000);
   }
 
+  // Acompanhar pagamento do Raio-X (venda avulsa): recarrega quando pagar e quando o PDF ficar pronto
+  const rx = document.querySelector('[data-raiox]');
+  if (rx) {
+    const aguardandoPix = !!document.querySelector('.pulsando');
+    const ver = async () => {
+      try { const j = await (await fetch(`/api/raio-x/${rx.getAttribute('data-raiox')}/status`, { headers: { Accept: 'application/json' } })).json();
+        if (j.pago && aguardandoPix) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.reload(); }
+        if (j.entregue) return location.reload(); } catch {}
+      setTimeout(ver, 5000);
+    };
+    setTimeout(ver, 4000);
+  }
+
   // Acompanhar pagamento do ebook
   const ebk = document.querySelector('[data-ebook]');
   if (ebk) {
     const ver = async () => {
       try { const j = await (await fetch(`/api/ebook/${ebk.getAttribute('data-ebook')}/status`, { headers: { Accept: 'application/json' } })).json();
-        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.assign('/ebook/baixar'); } } catch {}
+        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.assign(ebk.getAttribute('data-destino') || '/ebook/baixar'); } } catch {}
       setTimeout(ver, 5000);
     };
     setTimeout(ver, 4000);

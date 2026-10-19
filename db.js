@@ -239,6 +239,35 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_mon_usuario ON monitoramentos(usuario_id);
   CREATE INDEX IF NOT EXISTS idx_mon_sub ON monitoramentos(asaas_sub_id);
 `);
+// Raio-X do CPF: venda avulsa, sem conta (o cliente recebe o PDF direto no e-mail)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS raiox_pedidos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT NOT NULL UNIQUE,
+    nome TEXT NOT NULL,
+    email TEXT NOT NULL,
+    whatsapp TEXT,
+    documento TEXT NOT NULL,
+    valor_centavos INTEGER NOT NULL,
+    forma TEXT NOT NULL DEFAULT 'pix',
+    asaas_id TEXT,
+    pix_codigo TEXT,
+    pix_imagem TEXT,
+    link_pagamento TEXT,
+    status TEXT NOT NULL DEFAULT 'pendente',
+    pago_em TEXT,
+    entregue_em TEXT,
+    consulta_id INTEGER,
+    resumo TEXT,
+    erro TEXT,
+    tentativas INTEGER NOT NULL DEFAULT 0,
+    downloads INTEGER NOT NULL DEFAULT 0,
+    aceite_ip TEXT,
+    origem TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_rx_asaas ON raiox_pedidos(asaas_id);
+`);
 // Produtos digitais (ebook)
 db.exec(`
   CREATE TABLE IF NOT EXISTS compras_digitais (
@@ -258,6 +287,9 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_cd_usuario ON compras_digitais(usuario_id);
 `);
+for (const [c, def] of [['documento', 'TEXT'], ['consulta_id', 'INTEGER'], ['entregue_em', 'TEXT'], ['erro', 'TEXT'], ['resumo', 'TEXT'], ['tentativas', 'INTEGER NOT NULL DEFAULT 0']]) {
+  if (!colunas('compras_digitais').includes(c)) db.exec(`ALTER TABLE compras_digitais ADD COLUMN ${c} ${def}`);
+}
 export const pastaProdutos = path.join(pasta, 'produtos');
 try { mkdirSync(pastaProdutos, { recursive: true }); } catch {}
 // Origem do cliente (campanhas de tráfego pago)
@@ -420,6 +452,10 @@ const padrao = {
   anuncio_arte_centavos: '9700',
   anuncio_max_simultaneos: '4',
   anuncio_mostrar_numeros: '0',
+  raiox_ativo: '0',
+  raiox_preco: '3790',
+  raiox_preco_de: '',
+  raiox_produto: 'cred-completa-plus',
   ebook_ativo: '0',
   ebook_preco: '2700',
   ebook_preco_de: '4700',
