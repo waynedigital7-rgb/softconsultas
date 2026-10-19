@@ -91,3 +91,24 @@ export const buscarAntecipacao = (id) => asaas(`/anticipations/${id}`);
 
 // Cancela (remove) uma cobrança ainda não paga
 export const cancelarCobranca = (id) => asaas(`/payments/${id}`, { method: 'DELETE' });
+
+// ---------- Assinaturas (Monitoramento de CPF/CNPJ) ----------
+export const PREFIXO_MONITORAMENTO = 'scmon_';
+export function criarAssinatura({ clienteId, valorCentavos, ciclo, forma, monId, descricao }) {
+  const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+  return asaas('/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify({ customer: clienteId, billingType: forma === 'cartao' ? 'CREDIT_CARD' : 'PIX', value: valorCentavos / 100,
+      nextDueDate: hoje, cycle: ciclo === 'anual' ? 'YEARLY' : 'MONTHLY', description: descricao, externalReference: `${PREFIXO_MONITORAMENTO}${monId}` }),
+  });
+}
+export const pagamentosAssinatura = (id) => asaas(`/subscriptions/${id}/payments`);
+export const cancelarAssinatura = (id) => asaas(`/subscriptions/${id}`, { method: 'DELETE' });
+
+// ---------- Produtos digitais (ebook) ----------
+export const PREFIXO_DIGITAL = 'scdig_';
+export function criarCobrancaDigital({ clienteId, valorCentavos, compraId, descricao, forma = 'pix' }) {
+  const venc = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+  return asaas('/payments', { method: 'POST', body: JSON.stringify({ customer: clienteId, billingType: forma === 'cartao' ? 'CREDIT_CARD' : 'PIX',
+    value: valorCentavos / 100, dueDate: venc, description: descricao, externalReference: `${PREFIXO_DIGITAL}${compraId}` }) });
+}

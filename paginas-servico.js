@@ -257,3 +257,233 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
   <p class="muted" style="margin:12px 0 0">Pagamentos no cartão aparecem como pagos quando o Asaas confirma a transação. Reembolso: faça o estorno no painel do Asaas e depois mude o status para "Reembolsado". Os documentos são apagados automaticamente 90 dias depois de o pedido ser concluído, cancelado ou reembolsado (LGPD).</p>
 </div>`;
 }
+
+// ======================= MONITORAMENTO DE CPF/CNPJ =======================
+const ST_MON = {
+  aguardando: ['Aguardando pagamento', '#9A6B00'], ativo: ['Ativo', '#1E7B4D'], inadimplente: ['Pausado (renovação não paga)', '#B3261E'], cancelado: ['Cancelado', '#7A7285'],
+};
+const etqMon = (m) => {
+  const [t, c] = m.status === 'ativo' && m.cancelado_em ? ['Ativo · não renova', '#9A6B00'] : ST_MON[m.status] || [m.status, '#555'];
+  return `<span style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:.82rem;font-weight:700;background:${c}1A;color:${c}">${esc(t)}</span>`;
+};
+const docMon = (d) => `${String(d).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(d))}`;
+const resumoMon = (m) => { try { return JSON.parse(m.ultimo_resumo || 'null'); } catch { return null; } };
+
+export function paginaMonitoramento({ cfg, lista, usuario, ok, erro }) {
+  const economia = Math.round((1 - cfg.anual / (cfg.mensal * 12)) * 100);
+  const ativos = lista.filter((m) => m.status !== 'cancelado' || m.ultima_checagem);
+  return `
+<span class="tag">Proteção</span>
+<h1 style="font-size:2rem;margin:10px 0 6px">Monitoramento de CPF e CNPJ</h1>
+<p class="muted" style="margin:0 0 18px;max-width:760px">A gente vigia o seu documento e avisa por e-mail quando aparecer <strong>negativação nova, protesto ou queda no score</strong>. Você descobre antes de ser surpreendido no banco, na loja ou no aluguel.</p>
+${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+${ativos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Seus monitoramentos</h2><div class="rolar"><table class="tabela">
+  <tr><th>Documento</th><th>Plano</th><th>Status</th><th>Última checagem</th><th></th></tr>
+  ${ativos.map((m) => { const r = resumoMon(m); return `<tr><td>${docMon(m.documento)}</td><td>${m.plano === 'anual' ? 'Anual' : 'Mensal'} · ${reais(m.valor_centavos)}</td><td>${etqMon(m)}${m.ativo_ate && m.status === 'ativo' ? `<br><span class="muted">até ${dataBR(m.ativo_ate)}</span>` : ''}</td>
+    <td>${m.ultima_checagem ? `${dataBR(m.ultima_checagem)}<br><span class="muted">score ${r?.score ?? '—'} · ${r?.qtd ?? 0} restrição(ões)</span>${m.ultima_consulta_id ? `<br><a href="/consulta/${m.ultima_consulta_id}">Ver relatório</a>` : ''}` : m.status === 'ativo' ? 'em andamento…' : '—'}</td>
+    <td>${m.status === 'aguardando' ? `<a class="btn sec" style="min-height:34px;padding:4px 12px;font-size:.82rem" href="/monitoramento/${m.id}">Pagar</a>` : ''}
+      ${!m.cancelado_em && m.status !== 'cancelado' ? `<form method="post" action="/monitoramento/cancelar" style="margin:6px 0 0"><input type="hidden" name="id" value="${m.id}"><button class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem" data-confirmar="Cancelar a renovação? O monitoramento continua até o fim do período já pago.">Cancelar renovação</button></form>` : ''}</td></tr>`; }).join('')}
+</table></div></div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div style="font-size:2rem">🚨</div><h3 style="margin:6px 0">Alerta de negativação</h3><p class="muted" style="margin:0">Apareceu dívida nova no seu nome? Você recebe o aviso com credor, valor e data.</p></div>
+  <div class="cartao"><div style="font-size:2rem">📉</div><h3 style="margin:6px 0">Queda de score</h3><p class="muted" style="margin:0">Se o seu score cair ${cfg.quedaScore} pontos ou mais, avisamos e explicamos o que costuma causar isso.</p></div>
+  <div class="cartao"><div style="font-size:2rem">🕵️</div><h3 style="margin:6px 0">Proteção contra fraude</h3><p class="muted" style="margin:0">Dívida que você não reconhece pode ser golpe com o seu CPF. Quanto antes souber, mais fácil resolver.</p></div>
+  <div class="cartao"><div style="font-size:2rem">📄</div><h3 style="margin:6px 0">Relatório completo</h3><p class="muted" style="margin:0">A cada ${cfg.freq} dias, uma checagem completa em PDF: score, restrições, protestos e consultas ao seu documento.</p></div>
+</div>
+<form class="cartao" method="post" action="/monitoramento" style="max-width:720px;margin-bottom:18px">
+  <h2 style="font-size:1.3rem;margin-top:0">Escolha seu plano</h2>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+    <label style="flex:1 1 220px;border:2px solid var(--roxo);border-radius:16px;padding:16px;cursor:pointer;display:flex;gap:12px;align-items:flex-start">
+      <input type="radio" name="plano" value="anual" checked style="width:20px;height:20px;margin-top:4px">
+      <span><strong>Anual</strong> ${economia > 0 ? `<span class="tag">economize ${economia}%</span>` : ''}<br><span style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${reais(cfg.anual)}</span><span class="muted">/ano</span><br><span class="muted">equivale a ${reais(Math.round(cfg.anual / 12))} por mês</span></span></label>
+    <label style="flex:1 1 220px;border:1.5px solid #D6CCE0;border-radius:16px;padding:16px;cursor:pointer;display:flex;gap:12px;align-items:flex-start">
+      <input type="radio" name="plano" value="mensal" style="width:20px;height:20px;margin-top:4px">
+      <span><strong>Mensal</strong><br><span style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${reais(cfg.mensal)}</span><span class="muted">/mês</span><br><span class="muted">cancele quando quiser</span></span></label>
+  </div>
+  <div class="campo"><label for="mon-doc">CPF ou CNPJ a monitorar</label><input id="mon-doc" type="text" name="documento" required inputmode="numeric" maxlength="18" value="${esc(usuario.documento || '')}">
+    <small class="muted">Pela LGPD, só é possível monitorar o seu próprio CPF (o do cadastro) ou o CNPJ de uma empresa da qual você é responsável.</small></div>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><input type="checkbox" name="responsavel" value="1" style="width:20px;height:20px;margin-top:3px"> <span>Se for CNPJ: declaro que sou sócio ou responsável pela empresa.</span></label>
+  <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 14px"><legend style="font-weight:700;padding:0 6px">Pagamento</legend>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="cartao" checked style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong> · renova sozinho, sem você precisar lembrar</span></label>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" style="width:20px;height:20px"> <span><strong>Pix</strong> · enviamos o Pix por e-mail a cada renovação</span></label>
+  </fieldset>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Autorizo as consultas periódicas do documento informado para este monitoramento e aceito os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a>. Posso cancelar a renovação a qualquer momento.</span></label>
+  <button class="btn" type="submit">Ativar meu monitoramento</button>
+  <p class="muted" style="margin:12px 0 0;font-size:.88rem">O monitoramento avisa sobre mudanças; ele não impede que uma empresa negative o seu nome nem garante crédito.</p>
+</form>`;
+}
+
+export function paginaPagarMonitoramento({ m }) {
+  return `<div class="cartao estreito" style="max-width:520px;text-align:center" data-mon="${m.id}">
+  <h1 style="font-size:1.4rem;margin-top:0">Pague ${reais(m.valor_centavos)} e ative seu monitoramento</h1>
+  <p class="muted">${docMon(m.documento)} · plano ${m.plano}</p>
+  ${m.pix_imagem ? `<img src="data:image/png;base64,${esc(m.pix_imagem)}" alt="QR Code Pix" style="width:230px;height:230px;max-width:100%">
+  <textarea id="pix-codigo" readonly rows="3" aria-label="Código Pix copia e cola" style="width:100%;font:inherit;font-size:.8rem;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px;resize:none">${esc(m.pix_codigo)}</textarea>
+  <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
+  ${m.link_pagamento ? `<p><a href="${esc(m.link_pagamento)}" target="_blank" rel="noopener">${m.pix_imagem ? 'Prefiro pagar pela página do Asaas' : 'Abrir página de pagamento'}</a></p>` : ''}
+  <p class="muted pulsando" aria-live="polite">Aguardando pagamento… esta página atualiza sozinha.</p>
+</div>`;
+}
+
+export function adminMonitoramento({ menu, cfg, lista, ativos, mrr, produto, produtos, ok, erro }) {
+  return `<h1 style="font-size:1.7rem">Monitoramento de CPF/CNPJ</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div class="muted">Assinaturas ativas</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${ativos}</div></div>
+  <div class="cartao"><div class="muted">Receita recorrente (por mês)</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${reais(mrr)}</div></div>
+  <div class="cartao"><div class="muted">Custo por checagem</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${produto ? reais(produto.custo_centavos) : '—'}</div><div class="muted">${produto ? esc(produto.nome) : 'configure a consulta'}</div></div>
+</div>
+<form class="cartao" method="post" action="/admin/monitoramento/config" style="max-width:760px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Configuração</h2>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${cfg.ativo ? 'checked' : ''} style="width:22px;height:22px"> Produto disponível para os clientes</label>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 150px"><label for="m-men">Mensal (R$)</label><input id="m-men" type="text" name="mensal" inputmode="decimal" value="${(cfg.mensal / 100).toFixed(2).replace('.', ',')}"></div>
+    <div class="campo" style="flex:1 1 150px"><label for="m-anu">Anual (R$)</label><input id="m-anu" type="text" name="anual" inputmode="decimal" value="${(cfg.anual / 100).toFixed(2).replace('.', ',')}"></div>
+    <div class="campo" style="flex:1 1 150px"><label for="m-freq">Checar a cada (dias)</label><input id="m-freq" type="text" name="freq" inputmode="numeric" value="${cfg.freq}"></div>
+    <div class="campo" style="flex:1 1 150px"><label for="m-q">Alerta de queda de score (pontos)</label><input id="m-q" type="text" name="queda" inputmode="numeric" value="${cfg.quedaScore}"></div>
+  </div>
+  <div class="campo"><label for="m-prod">Consulta usada na checagem</label><select id="m-prod" name="produto" style="min-height:46px">${produtos.map((p) => `<option value="${esc(p.slug)}" ${p.slug === cfg.produto ? 'selected' : ''}>${esc(p.nome)} · custo ${reais(p.custo_centavos)}</option>`).join('')}</select>
+    <small class="muted">Escolha uma consulta com score e negativações (ex.: Cred Completa Plus). O custo sai do saldo da APIFull a cada checagem.</small></div>
+  <button class="btn">Salvar</button>
+  <p class="muted" style="margin:10px 0 0">Página do cliente: <a href="/monitoramento" target="_blank" rel="noopener">/monitoramento</a> · No Asaas, deixe ligado no webhook o evento <strong>"Cobrança criada"</strong> para o cliente do Pix receber o link de renovação.</p>
+</form>
+<div class="cartao"><div class="rolar"><table class="tabela">
+  <tr><th>#</th><th>Cliente</th><th>Documento</th><th>Plano</th><th>Status</th><th>Checagens</th><th>Ações</th></tr>
+  ${lista.map((m) => { const r = resumoMon(m); return `<tr><td>${m.id}</td><td>${esc(m.cliente)}<br><span class="muted">${dt(m.criado_em)}</span></td><td>${docMon(m.documento)}</td>
+    <td>${m.plano} · ${m.forma}<br>${reais(m.valor_centavos)} · ${m.pagamentos} pagto(s)</td><td>${etqMon(m)}${m.ativo_ate ? `<br><span class="muted">até ${dataBR(m.ativo_ate)}</span>` : ''}</td>
+    <td>${m.checagens}${m.ultima_checagem ? `<br><span class="muted">última ${dataBR(m.ultima_checagem)} · score ${r?.score ?? '—'} · ${r?.qtd ?? 0} restr.</span>` : ''}${m.proxima_checagem && m.status === 'ativo' ? `<br><span class="muted">próxima ${dataBR(m.proxima_checagem)}</span>` : ''}</td>
+    <td><form method="post" action="/admin/monitoramento/acao" style="display:flex;gap:6px;flex-wrap:wrap;margin:0"><input type="hidden" name="id" value="${m.id}">
+      ${m.status === 'ativo' ? '<button class="btn sec" name="acao" value="checar" style="min-height:32px;padding:4px 10px;font-size:.8rem">Checar agora</button>' : ''}
+      ${m.asaas_sub_id ? '<button class="btn sec" name="acao" value="conferir" style="min-height:32px;padding:4px 10px;font-size:.8rem">Conferir no Asaas</button>' : ''}
+      ${!m.cancelado_em && m.status !== 'cancelado' ? '<button class="btn sec" name="acao" value="cancelar" style="min-height:32px;padding:4px 10px;font-size:.8rem" data-confirmar="Cancelar esta assinatura?">Cancelar</button>' : ''}</form></td></tr>`; }).join('') || '<tr><td colspan="7" class="vazio">Nenhuma assinatura ainda.</td></tr>'}
+</table></div></div>`;
+}
+
+// ======================= EBOOK =======================
+const CAPS_EBOOK = [
+  ['Raio-X do seu nome', 'Onde consultar tudo o que existe contra o seu CPF, inclusive o que ainda não foi negativado.'],
+  ['Como a negativação funciona', 'A diferença entre dívida, negativação e protesto, e por que pagar nem sempre limpa o nome.'],
+  ['Seus direitos', 'Aviso prévio, limite de 5 anos, baixa em 5 dias úteis: o que a lei garante e onde reclamar.'],
+  ['Dívida antiga, prescrita ou indevida', 'Quando não pagar, quando contestar e o que fazer se for fraude.'],
+  ['Negociação que funciona', 'A ordem certa de pagar, onde negociar e o roteiro pronto para conseguir desconto.'],
+  ['Pagou? Cobre a baixa', 'O passo a passo para garantir que o nome realmente saiu dos cadastros.'],
+  ['Score de verdade', 'Como a nota é calculada e os 15 hábitos que fazem ela subir.'],
+  ['Cadastro Positivo', 'O aliado que quase ninguém usa direito.'],
+  ['Crédito sem recusa', 'Como pedir cartão e empréstimo sem tomar "não" e derrubar o score.'],
+  ['Golpes', 'Os golpes que miram quem está negativado e como proteger o seu CPF.'],
+  ['Plano de 30, 60 e 90 dias', 'Checklists prontos para você sair da leitura e partir para a ação.'],
+];
+
+export function paginaVendaEbook({ cfg, comprou }) {
+  const cta = (txt = 'Quero o guia agora') => comprou ? '<a class="btn" href="/ebook/baixar" style="font-size:1.05rem">Você já comprou: baixar meu guia</a>' : `<a class="btn" href="/ebook/comprar" style="font-size:1.05rem">${txt} · ${reais(cfg.preco)}</a>`;
+  return `<div style="max-width:1000px;margin:0 auto">
+<div style="display:flex;gap:32px;align-items:center;flex-wrap:wrap;background:#0F0C14;color:#fff;border-radius:24px;padding:32px;margin-bottom:22px;background-image:radial-gradient(600px 400px at 90% 0%,#5B2D8E 0%,transparent 70%)">
+  <div style="flex:1 1 360px">
+    <span class="tag" style="background:#2A2233;color:#D9B8F0">GUIA PRÁTICO · PDF</span>
+    <h1 style="font-size:2.3rem;line-height:1.1;margin:14px 0 10px;color:#fff">Nome limpo e score alto, <span style="color:#C98BEB">do jeito certo</span></h1>
+    <p style="color:#E2D3EE;font-size:1.1rem;margin:0 0 18px">O passo a passo para sair da lista de negativados, negociar suas dívidas pagando menos e voltar a ter crédito. Sem promessa milagrosa: só o que funciona.</p>
+    <p style="margin:0 0 6px">${cfg.precoDe > cfg.preco ? `<s style="color:#9A8FA8">${reais(cfg.precoDe)}</s> ` : ''}<span style="font-family:Montserrat,sans-serif;font-size:2.2rem;font-weight:800">${reais(cfg.preco)}</span> <span style="color:#C9BFD4">no Pix ou cartão</span></p>
+    <p style="margin:12px 0 0">${cta()}</p>
+    <p style="color:#C9BFD4;font-size:.88rem;margin:10px 0 0">📩 Entrega imediata no seu e-mail · 🔒 Garantia de 7 dias</p>
+  </div>
+  <div style="flex:0 1 260px;text-align:center"><img src="/criativos/ebook-capa.png" alt="Capa do guia Nome Limpo e Score Alto" style="width:100%;max-width:260px;border-radius:10px;box-shadow:0 24px 60px rgba(0,0,0,.55);transform:rotate(-3deg)"></div>
+</div>
+<div class="grade" style="margin-bottom:22px">
+  <div class="cartao"><div style="font-size:1.8rem">💳</div><h3 style="margin:6px 0">Cartão negado?</h3><p class="muted" style="margin:0">Descubra exatamente o que as empresas veem quando consultam o seu CPF.</p></div>
+  <div class="cartao"><div style="font-size:1.8rem">📉</div><h3 style="margin:6px 0">Dívidas acumuladas?</h3><p class="muted" style="margin:0">Saiba qual pagar primeiro, qual contestar e como conseguir até 90% de desconto.</p></div>
+  <div class="cartao"><div style="font-size:1.8rem">✅</div><h3 style="margin:6px 0">Pagou e o nome não saiu?</h3><p class="muted" style="margin:0">A lei dá 5 dias úteis para a baixa. Veja como cobrar o seu direito.</p></div>
+</div>
+<div class="cartao" style="margin-bottom:22px">
+  <h2 style="font-size:1.4rem;margin-top:0">O que você vai aprender</h2>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px 22px">
+    ${CAPS_EBOOK.map(([t, d], i) => `<div style="display:flex;gap:12px"><span style="flex:none;width:30px;height:30px;border-radius:50%;background:var(--roxo);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:.85rem">${i + 1}</span><div><strong>${esc(t)}</strong><br><span class="muted">${esc(d)}</span></div></div>`).join('')}
+  </div>
+</div>
+<div class="grade" style="margin-bottom:22px">
+  <div class="cartao"><h3 style="margin-top:0">📝 Roteiros prontos</h3><p class="muted" style="margin:0">As frases exatas para negociar desconto por telefone ou chat.</p></div>
+  <div class="cartao"><h3 style="margin-top:0">☑️ Checklists em cada capítulo</h3><p class="muted" style="margin:0">Você não só lê: marca o que já fez e vê o progresso.</p></div>
+  <div class="cartao"><h3 style="margin-top:0">⚖️ Baseado na lei</h3><p class="muted" style="margin:0">Código de Defesa do Consumidor e decisões do STJ, explicados em linguagem simples.</p></div>
+</div>
+<div class="cartao" style="margin-bottom:22px">
+  <h2 style="font-size:1.4rem;margin-top:0">É para você se…</h2>
+  <p style="margin:6px 0">✓ seu nome está sujo e você não sabe por onde começar;</p>
+  <p style="margin:6px 0">✓ você já tentou negociar e se perdeu nas propostas;</p>
+  <p style="margin:6px 0">✓ precisa do nome limpo para financiar, alugar ou abrir empresa;</p>
+  <p style="margin:6px 0">✓ quer subir o score de forma real, sem cair em golpe.</p>
+</div>
+<div class="cartao" style="margin-bottom:22px;text-align:center;border:2px solid var(--roxo)">
+  <h2 style="font-size:1.5rem;margin-top:0">Garantia de 7 dias</h2>
+  <p class="muted" style="max-width:620px;margin:0 auto 16px">Leia o guia inteiro. Se não achar que valeu cada centavo, peça o reembolso em até 7 dias respondendo o e-mail de entrega. Simples assim.</p>
+  ${cta('Quero limpar meu nome')}
+</div>
+<div class="cartao" style="margin-bottom:22px">
+  <h2 style="font-size:1.3rem;margin-top:0">Perguntas frequentes</h2>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Como recebo o guia?</summary><p style="margin:8px 0 0">Assim que o pagamento é confirmado, o PDF chega no seu e-mail e fica disponível para baixar na sua conta da Soft Consultas.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Preciso criar conta?</summary><p style="margin:8px 0 0">Sim, é grátis e leva 30 segundos. É por ela que você baixa o guia quando quiser.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">O guia limpa meu nome sozinho?</summary><p style="margin:8px 0 0">Não. Ele mostra o caminho certo, passo a passo, para você mesmo resolver. Quem segue os passos economiza dinheiro e evita armadilhas.</p></details>
+  <details style="padding:10px 0;border-bottom:1px solid #EEE7F4"><summary style="cursor:pointer;font-weight:700">Quantas páginas tem?</summary><p style="margin:8px 0 0">São 26 páginas diretas ao ponto, com tabelas, roteiros e checklists. Dá para ler em cerca de 1 hora.</p></details>
+  <details style="padding:10px 0"><summary style="cursor:pointer;font-weight:700">Posso pagar no cartão?</summary><p style="margin:8px 0 0">Pode: Pix (confirmado na hora) ou cartão de crédito, na página segura do Asaas.</p></details>
+</div>
+<p style="text-align:center;margin-bottom:10px">${cta()}</p>
+</div>`;
+}
+
+export function paginaCheckoutEbook({ cfg, usuario, erro }) {
+  return `<div class="cartao estreito" style="max-width:560px">
+  <div style="display:flex;gap:16px;align-items:center;margin-bottom:12px"><img src="/criativos/ebook-capa.png" alt="" style="width:80px;border-radius:6px"><div><h1 style="font-size:1.3rem;margin:0">Nome Limpo e Score Alto</h1><p class="muted" style="margin:4px 0 0">Guia prático em PDF · entrega imediata</p>
+  <div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800;margin-top:4px">${reais(cfg.preco)}</div></div></div>
+  ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+  <form method="post" action="/ebook/comprar">
+    ${usuario.documento ? '' : '<div class="campo"><label for="eb-doc">Seu CPF (para emitir o pagamento)</label><input id="eb-doc" type="text" name="documento" inputmode="numeric" required></div>'}
+    <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 16px"><legend style="font-weight:700;padding:0 6px">Pagamento</legend>
+      <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" checked style="width:20px;height:20px"> <span><strong>Pix</strong> · confirmado na hora</span></label>
+      <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="cartao" style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong></span></label>
+    </fieldset>
+    <button class="btn largo" type="submit">Finalizar compra</button>
+    <p class="muted" style="font-size:.85rem;text-align:center;margin:10px 0 0">O guia chega no e-mail ${esc(usuario.email)} · Garantia de 7 dias</p>
+  </form></div>`;
+}
+
+export function paginaPagarEbook({ c }) {
+  return `<div class="cartao estreito" style="max-width:520px;text-align:center" data-ebook="${c.id}">
+  <h1 style="font-size:1.4rem;margin-top:0">Pague ${reais(c.valor_centavos)} e receba o guia</h1>
+  ${c.pix_imagem ? `<img src="data:image/png;base64,${esc(c.pix_imagem)}" alt="QR Code Pix" style="width:230px;height:230px;max-width:100%">
+  <textarea id="pix-codigo" readonly rows="3" aria-label="Código Pix copia e cola" style="width:100%;font:inherit;font-size:.8rem;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px;resize:none">${esc(c.pix_codigo)}</textarea>
+  <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
+  ${c.link_pagamento ? `<p><a href="${esc(c.link_pagamento)}" target="_blank" rel="noopener">${c.pix_imagem ? 'Prefiro pagar pela página do Asaas' : 'Abrir página de pagamento'}</a></p>` : ''}
+  <p class="muted pulsando" aria-live="polite">Aguardando pagamento… esta página atualiza sozinha.</p>
+</div>`;
+}
+
+export function paginaBaixarEbook({ c }) {
+  return `<div class="cartao estreito" style="max-width:560px;text-align:center">
+  <img src="/criativos/ebook-capa.png" alt="" style="width:150px;border-radius:8px;box-shadow:0 12px 30px rgba(0,0,0,.25)">
+  <h1 style="font-size:1.5rem">Seu guia está pronto 📘</h1>
+  <p class="muted">${c ? `Comprado em ${dt(c.pago_em)}. Também enviamos o PDF para o seu e-mail.` : 'Visualização de admin.'}</p>
+  <p><a class="btn" href="/ebook/arquivo">Baixar o PDF</a></p>
+  <div class="aviso" style="text-align:left;margin-top:18px"><strong>Comece pelo capítulo 1:</strong> descubra tudo o que existe no seu CPF. <a href="/consultas/cred-completa-plus">Consultar meu CPF agora →</a></div>
+</div>`;
+}
+
+export function adminEbook({ menu, cfg, compras, vendas, receita, tamanho, ok, erro }) {
+  return `<h1 style="font-size:1.7rem">Ebook · Nome Limpo e Score Alto</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div class="muted">Vendas</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${vendas}</div></div>
+  <div class="cartao"><div class="muted">Receita</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${reais(receita)}</div></div>
+  <div class="cartao"><div class="muted">Arquivo</div><div style="font-weight:700">${tamanho ? `PDF enviado (${(tamanho / 1024 / 1024).toFixed(1)} MB)` : '<span style="color:var(--erro)">Nenhum PDF enviado</span>'}</div></div>
+</div>
+<form class="cartao" method="post" action="/admin/ebook" enctype="multipart/form-data" style="max-width:720px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Configuração</h2>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${cfg.ativo ? 'checked' : ''} style="width:22px;height:22px"> À venda</label>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 160px"><label for="e-p">Preço (R$)</label><input id="e-p" type="text" name="preco" inputmode="decimal" value="${(cfg.preco / 100).toFixed(2).replace('.', ',')}"></div>
+    <div class="campo" style="flex:1 1 160px"><label for="e-d">Preço "de" riscado (R$, opcional)</label><input id="e-d" type="text" name="preco_de" inputmode="decimal" value="${cfg.precoDe ? (cfg.precoDe / 100).toFixed(2).replace('.', ',') : ''}"></div>
+  </div>
+  <div class="campo"><label for="e-pdf">PDF do guia ${tamanho ? '(envie só se quiser trocar)' : ''}</label><input id="e-pdf" type="file" name="pdf" accept="application/pdf"><small class="muted">O arquivo fica guardado no servidor e só quem comprou consegue baixar.</small></div>
+  <button class="btn">Salvar</button>
+  <p class="muted" style="margin:10px 0 0">Página de vendas: <a href="/ebook" target="_blank" rel="noopener">/ebook</a></p>
+</form>
+<div class="cartao"><div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Cliente</th><th>Valor</th><th>Status</th><th>Downloads</th><th></th></tr>
+${compras.map((c) => `<tr><td>${c.id}</td><td>${dt(c.criado_em)}</td><td>${esc(c.cliente)}</td><td>${reais(c.valor_centavos)} · ${c.forma}</td><td>${c.status === 'paga' ? '<strong style="color:var(--ok)">Paga</strong>' : esc(c.status)}</td><td>${c.downloads}</td>
+  <td>${c.status === 'paga' ? `<form method="post" action="/admin/ebook/reenviar" style="margin:0"><input type="hidden" name="id" value="${c.id}"><button class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem">Reenviar e-mail</button></form>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhuma venda ainda.</td></tr>'}
+</table></div></div>`;
+}

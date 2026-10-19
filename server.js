@@ -3,7 +3,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar, pastaAnuncios, pastaDocsLimpaNome } from './db.js';
+import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar, pastaAnuncios, pastaDocsLimpaNome, pastaProdutos } from './db.js';
 import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
 import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo, gerarRecargaApiFull } from './apifull.js';
@@ -221,7 +221,7 @@ function acharRota(metodo, caminho) {
 const exigeLogin = (fn) => async (ctx) => {
   if (ctx.usuario) return fn(ctx);
   const destino = ctx.req.method === 'GET' ? `${ctx.url.pathname}${ctx.url.search}` : '';
-  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
+  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
   return redirecionar(ctx.res, '/entrar', ok ? { 'Set-Cookie': `sc_voltar=${encodeURIComponent(destino)}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax` } : {});
 };
 const exigeAdmin = (fn) => async (ctx) => (ctx.usuario?.admin ? fn(ctx) : redirecionar(ctx.res, ctx.usuario ? '/painel' : '/entrar'));
@@ -282,7 +282,9 @@ rota('POST', '/cadastro', async ({ req, res }) => {
     .catch((e) => console.error('e-mail boas-vindas:', e.message));
   const placaConsulta = placaOk(f.consulta);
   const docConsulta = placaConsulta ? '' : A.soNumeros(f.consulta || '').slice(0, 14);
-  redirecionar(res, placaConsulta ? `/consultas/categoria/veiculos?bemvindo=1&placa=${placaConsulta}` : docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : '/painel?bemvindo=1', { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0'] });
+  const voltarCad = String(cookies(req).sc_voltar || '');
+  const destinoCad = /^\/(ebook|monitoramento|limpa-nome)[\w\/?=&%.-]*$/.test(voltarCad) ? voltarCad : null;
+  redirecionar(res, destinoCad || (placaConsulta ? `/consultas/categoria/veiculos?bemvindo=1&placa=${placaConsulta}` : docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : '/painel?bemvindo=1'), { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0', 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
 // Login
@@ -301,7 +303,7 @@ rota('POST', '/entrar', async ({ req, res }) => {
   if (!u.ativo) return erro('Esta conta está desativada. Fale com o suporte.', 403);
   A.limparLimite(`login:${email}`);
   const voltar = String(cookies(req).sc_voltar || '');
-  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
+  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
   redirecionar(res, destinoOk, { 'Set-Cookie': [A.cookieSessao(A.criarSessao(u.id), ehHttps(req)), 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
@@ -651,8 +653,15 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
     }
     return;
   }
-  if (!['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) return;
   const ref = String(payment?.externalReference || '');
+  // Assinaturas do monitoramento (inclui PAYMENT_CREATED para avisar a renovação no Pix)
+  if (payment?.subscription || ref.startsWith(AS.PREFIXO_MONITORAMENTO)) { try { if (webhookMonitoramento(event, payment)) return; } catch (e) { console.error('webhook monitoramento:', e.message); return; } }
+  if (!['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) return;
+  if (ref.startsWith(AS.PREFIXO_DIGITAL)) {
+    const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_DIGITAL.length)));
+    if (c && c.asaas_id === payment.id && Math.round(Number(payment.value) * 100) >= c.valor_centavos) { try { confirmarCompraDigital(c.id); } catch (e) { console.error('ebook:', e.message); } }
+    return;
+  }
   if (ref.startsWith(AS.PREFIXO_LIMPA_NOME)) {
     const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_LIMPA_NOME.length)));
     if (!p) return;
@@ -698,6 +707,27 @@ async function expirarCobrancasAbertas() {
       db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Pagamento não realizado no prazo', atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(p.id);
     } catch (e) { console.warn('expirar pedido LN', p.id, e.message); }
   }
+  for (const c of db.prepare("SELECT * FROM compras_digitais WHERE status = 'pendente' AND criado_em < datetime('now', '-48 hours') LIMIT 50").all()) {
+    try {
+      if (c.asaas_id) {
+        const cob = await AS.buscarCobranca(c.asaas_id).catch(() => null);
+        if (cob && AS.STATUS_PAGO.includes(cob.status)) { confirmarCompraDigital(c.id); continue; }
+        if (cob && !cob.deleted && cob.status === 'PENDING') await AS.cancelarCobranca(c.asaas_id);
+      }
+      db.prepare("UPDATE compras_digitais SET status = 'expirada' WHERE id = ? AND status = 'pendente'").run(c.id);
+    } catch (e) { console.warn('expirar compra', c.id, e.message); }
+  }
+  const mons = db.prepare("SELECT * FROM monitoramentos WHERE status = 'aguardando' AND criado_em < datetime('now', '-3 days') LIMIT 50").all();
+  for (const m of mons) {
+    try {
+      if (m.asaas_sub_id) {
+        const pago = (await AS.pagamentosAssinatura(m.asaas_sub_id).catch(() => null))?.data?.find((p) => AS.STATUS_PAGO.includes(p.status));
+        if (pago) { confirmarPagamentoMon(m, pago.id); continue; }
+        await AS.cancelarAssinatura(m.asaas_sub_id).catch(() => {});
+      }
+      db.prepare("UPDATE monitoramentos SET status = 'cancelado', cancelado_em = datetime('now') WHERE id = ? AND status = 'aguardando'").run(m.id);
+    } catch (e) { console.warn('expirar monitoramento', m.id, e.message); }
+  }
   if (recs.length || peds.length) registrar(null, 'Cobranças em aberto expiradas', `${recs.length} recarga(s) e ${peds.length} pedido(s) de Limpa Nome sem pagamento`);
 }
 async function limparExpiradas() {
@@ -717,7 +747,9 @@ async function limparExpiradas() {
   if (travadas.length) console.log(`Consultas interrompidas estornadas: ${travadas.length}`);
   await expirarCobrancasAbertas().catch((e) => console.error('expirar cobranças:', e.message));
   const dias = diasHistorico();
-  const lista = db.prepare(`SELECT id FROM consultas WHERE status = 'concluida' AND resultado IS NOT NULL AND criado_em < datetime('now', ?)`).all(`-${dias} days`);
+  // Relatórios do monitoramento ficam até a checagem seguinte (35 dias); as demais consultas seguem o prazo configurado
+  const lista = db.prepare(`SELECT id FROM consultas WHERE status = 'concluida' AND resultado IS NOT NULL AND (
+    (produto NOT LIKE 'Monitoramento ·%' AND criado_em < datetime('now', ?)) OR (produto LIKE 'Monitoramento ·%' AND criado_em < datetime('now', '-35 days')))`).all(`-${dias} days`);
   for (const { id } of lista) {
     db.prepare('UPDATE consultas SET resultado = NULL, pdf_origem = NULL WHERE id = ?').run(id);
     await unlink(path.join(pastaPdfs, `${id}.pdf`)).catch(() => {});
@@ -1643,6 +1675,469 @@ rota('GET', '/limpa-nome', exigeLogin(async ({ res, usuario }) => {
     saldo: await saldoExibido(usuario), admin: !!usuario.interno,
     servico: lnCfg().ativo || usuario.admin ? lnCfgComTabela() : null,
   }), usuario);
+}));
+
+// ======================= EBOOK (produto digital, entrega automática) =======================
+const ebookCfg = () => ({
+  ativo: lerConfig('ebook_ativo') === '1', preco: Number(lerConfig('ebook_preco') || 2700), precoDe: Number(lerConfig('ebook_preco_de') || 0),
+  arquivo: lerConfig('ebook_arquivo') || '',
+});
+const EBOOK = 'ebook-nome-limpo';
+const EBOOK_NOME = 'Nome Limpo e Score Alto';
+const comprouEbook = (uid) => db.prepare("SELECT * FROM compras_digitais WHERE usuario_id = ? AND produto = ? AND status = 'paga' ORDER BY id DESC").get(uid, EBOOK);
+async function arquivoEbook() {
+  const c = ebookCfg();
+  if (!c.arquivo) return null;
+  try { return await readFile(path.join(pastaProdutos, path.basename(c.arquivo))); } catch { return null; }
+}
+async function entregarEbook(compra) {
+  const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(compra.usuario_id);
+  if (!u || !process.env.RESEND_API_KEY) return;
+  const pdf = await arquivoEbook();
+  const base = baseEmails();
+  const html = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#F4F1F7;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden">
+<tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span></td></tr>
+<tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">Seu guia chegou! 📘</h1>
+<p>Olá, ${P.esc(String(u.nome).split(' ')[0])}! Obrigado pela compra do <strong>${EBOOK_NOME}</strong>. ${pdf ? 'O PDF está em anexo neste e-mail.' : ''} Você também pode baixar quando quiser pela sua conta:</p>
+<p style="margin:24px 0"><a href="${base}/ebook/baixar" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">Baixar meu guia</a></p>
+<p><strong>Comece pelo capítulo 1:</strong> o primeiro passo é saber exatamente o que tem no seu nome. Você pode consultar o seu CPF na Soft Consultas e ver tudo em um relatório só.</p>
+<p style="font-size:13px;color:#7A7285">Você tem 7 dias de garantia: se não gostar, é só responder este e-mail pedindo o reembolso.</p></td></tr></table></td></tr></table></body></html>`;
+  await enviarEmail({ para: u.email, assunto: `📘 Seu guia "${EBOOK_NOME}" chegou`, html,
+    anexos: pdf ? [{ filename: 'nome-limpo-score-alto.pdf', content: pdf.toString('base64') }] : undefined }).catch((e) => console.error('entrega ebook:', e.message));
+}
+function confirmarCompraDigital(id) {
+  const ok = db.prepare("UPDATE compras_digitais SET status = 'paga', pago_em = datetime('now') WHERE id = ? AND status <> 'paga'").run(id).changes === 1;
+  if (ok) {
+    const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ?').get(id);
+    registrar(null, 'Ebook: venda paga', `#${id} · ${P.reais(c.valor_centavos)} · ${c.forma}`);
+    entregarEbook(c).catch(() => {});
+  }
+  return ok;
+}
+
+// Página de vendas (pública)
+rota('GET', '/ebook', ({ res, usuario }) => {
+  const cfg = ebookCfg();
+  if (!cfg.ativo && !usuario?.admin) return pagina(res, EBOOK_NOME, P.paginaEmBreve(EBOOK_NOME, 'Em breve: o guia prático para limpar o nome e aumentar o score.'), usuario);
+  pagina(res, `${EBOOK_NOME} · Guia prático`, SV.paginaVendaEbook({ cfg, comprou: usuario ? !!comprouEbook(usuario.id) : false }), usuario,
+    200, undefined);
+});
+
+// Comprar: sem conta → cadastro grátis e volta para cá
+rota('GET', '/ebook/comprar', ({ res, usuario, req }) => {
+  if (!usuario) return redirecionar(res, '/cadastro?origem=ebook', { 'Set-Cookie': 'sc_voltar=%2Febook%2Fcomprar; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax' });
+  const cfg = ebookCfg();
+  if (comprouEbook(usuario.id)) return redirecionar(res, '/ebook/baixar');
+  if (!cfg.ativo && !usuario.admin) return redirecionar(res, '/ebook');
+  pagina(res, 'Comprar o guia', SV.paginaCheckoutEbook({ cfg, usuario }), usuario);
+});
+
+rota('POST', '/ebook/comprar', exigeLogin(async ({ req, res, usuario }) => {
+  const cfg = ebookCfg();
+  const f = await corpoForm(req);
+  const erro = (m) => pagina(res, 'Comprar o guia', SV.paginaCheckoutEbook({ cfg, usuario, erro: m }), usuario, 400);
+  if (comprouEbook(usuario.id)) return redirecionar(res, '/ebook/baixar');
+  if (!cfg.ativo && !usuario.admin) return redirecionar(res, '/ebook');
+  if (!cfg.arquivo) return erro('O guia ainda não está disponível. Tente mais tarde.');
+  if (!usuario.documento) {
+    const doc = A.soNumeros(f.documento);
+    if (!A.documentoValido(doc)) return erro('Informe um CPF válido para emitir o pagamento.');
+    db.prepare('UPDATE usuarios SET documento = ? WHERE id = ?').run(doc, usuario.id); usuario.documento = doc;
+  }
+  const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
+  const aberta = db.prepare("SELECT id FROM compras_digitais WHERE usuario_id = ? AND produto = ? AND status = 'pendente' AND forma = ? AND asaas_id IS NOT NULL AND criado_em > datetime('now', '-2 hours') ORDER BY id DESC").get(usuario.id, EBOOK, forma);
+  if (aberta && forma === 'pix') return redirecionar(res, `/ebook/pedido/${aberta.id}`);
+  if (!A.limitar(`ebk:${usuario.id}`, 5, 60)) return erro('Muitas tentativas. Aguarde alguns minutos.');
+  const id = Number(db.prepare('INSERT INTO compras_digitais (usuario_id, produto, valor_centavos, forma) VALUES (?, ?, ?, ?)').run(usuario.id, EBOOK, cfg.preco, forma).lastInsertRowid);
+  try {
+    let clienteId = db.prepare('SELECT asaas_cliente_id FROM usuarios WHERE id = ?').get(usuario.id).asaas_cliente_id;
+    if (!clienteId) { clienteId = (await AS.criarCliente(usuario)).id; db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id); }
+    const cob = await AS.criarCobrancaDigital({ clienteId, valorCentavos: cfg.preco, compraId: id, forma, descricao: `Ebook ${EBOOK_NOME} - Soft Consultas #${id}` });
+    let pix = null;
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
+    db.prepare('UPDATE compras_digitais SET asaas_id = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ? WHERE id = ?').run(cob.id, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, id);
+    if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
+    redirecionar(res, `/ebook/pedido/${id}`);
+  } catch (e) {
+    console.error('ebook:', e.message);
+    db.prepare("UPDATE compras_digitais SET status = 'expirada' WHERE id = ?").run(id);
+    erro('Não foi possível gerar o pagamento agora. Tente de novo em instantes.');
+  }
+}));
+
+rota('GET', '/ebook/pedido/:id', exigeLogin(({ res, usuario, params }) => {
+  const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!c) return redirecionar(res, '/ebook');
+  if (c.status === 'paga') return redirecionar(res, '/ebook/baixar');
+  pagina(res, 'Pagar o guia', SV.paginaPagarEbook({ c }), usuario);
+}));
+
+rota('GET', '/api/ebook/:id/status', async ({ res, usuario, params }) => {
+  if (!usuario) return json(res, { pago: false }, 401);
+  const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!c) return json(res, { pago: false }, 404);
+  if (c.status === 'paga') return json(res, { pago: true, valor: c.valor_centavos / 100 });
+  if (c.asaas_id && A.limitar(`stebk:${c.id}`, 30, 5)) {
+    try {
+      const cob = await AS.buscarCobranca(c.asaas_id);
+      if (AS.STATUS_PAGO.includes(cob.status) && Math.round(Number(cob.value) * 100) >= c.valor_centavos) { confirmarCompraDigital(c.id); return json(res, { pago: true, valor: c.valor_centavos / 100 }); }
+    } catch (e) { console.warn('status ebook:', e.message); }
+  }
+  json(res, { pago: false });
+});
+
+rota('GET', '/ebook/baixar', exigeLogin(({ res, usuario }) => {
+  const c = comprouEbook(usuario.id);
+  if (!c && !usuario.admin) return redirecionar(res, '/ebook');
+  pagina(res, 'Meu guia', SV.paginaBaixarEbook({ c }), usuario);
+}));
+
+rota('GET', '/ebook/arquivo', exigeLogin(async ({ res, usuario }) => {
+  const c = comprouEbook(usuario.id);
+  if (!c && !usuario.admin) return redirecionar(res, '/ebook');
+  const pdf = await arquivoEbook();
+  if (!pdf) { res.writeHead(404); return res.end('Arquivo indisponível'); }
+  if (c) db.prepare('UPDATE compras_digitais SET downloads = downloads + 1 WHERE id = ?').run(c.id);
+  res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename="nome-limpo-score-alto.pdf"', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+  res.end(pdf);
+}));
+
+// ---------- Admin ----------
+rota('GET', '/admin/ebook', exigeAdmin(async ({ res, usuario, url }) => {
+  const compras = db.prepare('SELECT c.*, u.email AS cliente FROM compras_digitais c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300').all();
+  const pagas = compras.filter((c) => c.status === 'paga');
+  const pdf = await arquivoEbook();
+  pagina(res, 'Admin · Ebook', SV.adminEbook({ menu: PD.menu('/admin/ebook'), cfg: ebookCfg(), compras, vendas: pagas.length, receita: pagas.reduce((s, c) => s + c.valor_centavos, 0),
+    tamanho: pdf ? pdf.length : 0, ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+
+rota('POST', '/admin/ebook', exigeAdmin(async ({ req, res, usuario }) => {
+  const volta = (m, ok) => redirecionar(res, `/admin/ebook?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  let form;
+  try { form = await corpoMultipart(req, 25 * 1024 * 1024); } catch (e) { return volta(e.message === 'arquivo grande demais' ? 'PDF grande demais (máximo 25 MB).' : 'Não foi possível ler o formulário.'); }
+  const f = form.campos, pdf = form.arquivos.pdf;
+  const preco = centavos(f.preco), de = String(f.preco_de || '').trim() ? centavos(f.preco_de) : 0;
+  if (!Number.isFinite(preco) || preco < 500) return volta('Preço inválido (mínimo R$ 5,00).');
+  if (!Number.isFinite(de) || de < 0) return volta('Preço "de" inválido.');
+  if (pdf) {
+    if (pdf.dados.subarray(0, 5).toString() !== '%PDF-') return volta('O arquivo precisa ser um PDF.');
+    const nome = `ebook-${Date.now()}.pdf`;
+    await writeFile(path.join(pastaProdutos, nome), pdf.dados);
+    const antigo = lerConfig('ebook_arquivo');
+    gravarConfig('ebook_arquivo', nome);
+    if (antigo) await unlink(path.join(pastaProdutos, path.basename(antigo))).catch(() => {});
+  }
+  if (f.ativo === '1' && !lerConfig('ebook_arquivo')) return volta('Envie o PDF do guia antes de ligar a venda.');
+  gravarConfig('ebook_ativo', f.ativo === '1' ? '1' : '0'); gravarConfig('ebook_preco', String(preco)); gravarConfig('ebook_preco_de', String(de));
+  registrar(usuario, 'Ebook: configuração', `${f.ativo === '1' ? 'à venda' : 'fora do ar'} · ${P.reais(preco)}${pdf ? ' · novo PDF enviado' : ''}`);
+  volta('Salvo.', true);
+}));
+
+rota('POST', '/admin/ebook/reenviar', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const c = db.prepare("SELECT * FROM compras_digitais WHERE id = ? AND status = 'paga'").get(Number(f.id));
+  if (!c) return redirecionar(res, '/admin/ebook?erro=' + encodeURIComponent('Compra não encontrada.'));
+  await entregarEbook(c);
+  registrar(usuario, 'Ebook: reenviou o guia', `#${c.id}`);
+  redirecionar(res, '/admin/ebook?ok=' + encodeURIComponent('E-mail com o guia reenviado.'));
+}));
+
+// ======================= MONITORAMENTO DE CPF/CNPJ (assinatura) =======================
+const monCfg = () => ({
+  ativo: lerConfig('mon_ativo') === '1',
+  mensal: Number(lerConfig('mon_preco_mensal') || 1490), anual: Number(lerConfig('mon_preco_anual') || 12900),
+  produto: lerConfig('mon_produto') || 'cred-completa-plus',
+  freq: Math.min(90, Math.max(7, Number(lerConfig('mon_frequencia_dias') || 30))),
+  quedaScore: Math.max(10, Number(lerConfig('mon_queda_score') || 50)),
+});
+const produtoMonitor = () => db.prepare("SELECT * FROM produtos WHERE slug = ? AND endpoint <> ''").get(monCfg().produto);
+const sqlAgora = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+const somarPeriodo = (base, plano) => {
+  const d = new Date(String(base).replace(' ', 'T') + 'Z');
+  if (plano === 'anual') d.setUTCFullYear(d.getUTCFullYear() + 1); else d.setUTCMonth(d.getUTCMonth() + 1);
+  d.setUTCDate(d.getUTCDate() + 3); // 3 dias de tolerância para o pagamento seguinte
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+};
+
+// E-mail de serviço (transacional: o cliente contratou)
+function emailServico({ para, assunto, titulo, html, botao }) {
+  if (!process.env.RESEND_API_KEY || !para) return Promise.resolve();
+  const base = baseEmails();
+  const corpo = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#F4F1F7;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden">
+<tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px"><img src="${base}/icone-branco.png" width="26" height="26" alt="" style="vertical-align:middle"> Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span></td></tr>
+<tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">${titulo}</h1>${html}
+${botao ? `<p style="margin:24px 0"><a href="${botao.href.startsWith('http') ? botao.href : base + botao.href}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">${P.esc(botao.texto)}</a></p>` : ''}
+<p style="font-size:12px;color:#7A7285;margin-top:24px">Você recebe este e-mail porque contratou o Monitoramento de CPF/CNPJ da Soft Consultas.</p></td></tr></table></td></tr></table></body></html>`;
+  return enviarEmail({ para, assunto, html: corpo }).catch((e) => console.error('e-mail monitoramento:', e.message));
+}
+const docFmt = (d) => (String(d).length === 14 ? 'CNPJ' : 'CPF') + ' final ' + String(d).slice(-4);
+
+// Pagamento confirmado (webhook ou conferência): ativa/renova
+function confirmarPagamentoMon(m, pagamentoId) {
+  const novo = db.prepare("UPDATE monitoramentos SET pagamento_atual = ? WHERE id = ? AND (pagamento_atual IS NULL OR pagamento_atual <> ? OR status = 'aguardando')").run(pagamentoId, m.id, pagamentoId).changes === 1;
+  if (!novo && m.status === 'ativo') return false;
+  // Renovação em dia: soma a partir do fim do período anterior (sem acumular os 3 dias de tolerância)
+  const fimAnterior = m.ativo_ate ? new Date(new Date(m.ativo_ate.replace(' ', 'T') + 'Z').getTime() - 3 * 86400000).toISOString().slice(0, 19).replace('T', ' ') : null;
+  const base = fimAnterior && fimAnterior > sqlAgora() ? fimAnterior : sqlAgora();
+  const ate = somarPeriodo(base, m.plano);
+  const primeiro = m.status === 'aguardando';
+  db.prepare("UPDATE monitoramentos SET status = 'ativo', ativo_ate = ?, pagamentos = pagamentos + 1, proxima_checagem = COALESCE(CASE WHEN ? THEN datetime('now') END, proxima_checagem, datetime('now')) WHERE id = ?").run(ate, primeiro ? 1 : 0, m.id);
+  registrar(null, primeiro ? 'Monitoramento: assinatura ativada' : 'Monitoramento: renovação paga', `#${m.id} · ${docFmt(m.documento)} · ${m.plano} · ${P.reais(m.valor_centavos)} · ativo até ${ate.slice(0, 10)}`);
+  const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(m.usuario_id);
+  if (primeiro) emailServico({ para: u?.email, assunto: 'Seu monitoramento está ativo 🛡️', titulo: 'Monitoramento ativado!',
+    html: `<p>Olá, ${P.esc(String(u?.nome || '').split(' ')[0])}! A partir de agora vigiamos o seu ${docFmt(m.documento)}. A primeira checagem acontece agora e você recebe o resultado por e-mail.</p><p>Se aparecer negativação nova, protesto ou queda no score, avisamos na hora.</p>`,
+    botao: { href: '/monitoramento', texto: 'Ver meu monitoramento' } });
+  if (primeiro) setTimeout(() => checarMonitoramentos().catch((e) => console.error('monitoramento:', e.message)), 3000).unref();
+  return true;
+}
+
+// Uma checagem: consulta, compara com a anterior e avisa
+async function checarUm(m) {
+  const produto = produtoMonitor();
+  if (!produto) throw new Error('consulta do monitoramento não configurada');
+  const cid = Number(db.prepare(`INSERT INTO consultas (usuario_id, produto_id, produto, parametro, finalidade, status, preco_centavos, custo_centavos, indicador_id, comissao_centavos)
+    VALUES (?, ?, ?, ?, 'Monitoramento contratado pelo titular', 'processando', 0, ?, NULL, 0)`).run(m.usuario_id, produto.id, `Monitoramento · ${produto.nome}`, m.documento, produto.custo_centavos).lastInsertRowid);
+  let dados;
+  try {
+    dados = await consultarApiFull(produto, m.documento);
+  } catch (e) {
+    db.prepare("UPDATE consultas SET status = 'falhou', erro = ?, custo_centavos = 0 WHERE id = ?").run(String(e.message).slice(0, 500), cid);
+    db.prepare("UPDATE monitoramentos SET proxima_checagem = datetime('now', '+6 hours') WHERE id = ?").run(m.id);
+    throw e;
+  }
+  const a = analisar(dados);
+  const origemBanco = a.pdfOrigem && !a.pdfOrigem.startsWith('base64:') ? a.pdfOrigem : null;
+  if (dados?.aux && a.pdfOrigem?.startsWith('base64:')) dados.aux = { type: 'pdf', data: '(salvo em arquivo)' };
+  db.prepare("UPDATE consultas SET status = 'concluida', resultado = ?, pdf_origem = ? WHERE id = ?").run(JSON.stringify(dados), origemBanco, cid);
+  const bytes = await obterPdf(a.pdfOrigem).catch(() => null);
+  if (bytes) await writeFile(path.join(pastaPdfs, `${cid}.pdf`), bytes).catch(() => {});
+  limparCacheSaldo();
+
+  const chave = (i) => `${i.tipo}|${i.credor}|${i.valor}|${i.data}`;
+  const resumo = { score: a.score, qtd: a.qtdRestricoes, total: a.totalValor, itens: a.itens.map(chave).slice(0, 200), consultas: a.consultasRecentes };
+  let antes = null; try { antes = m.ultimo_resumo ? JSON.parse(m.ultimo_resumo) : null; } catch {}
+  const novos = antes ? a.itens.filter((i) => !antes.itens.includes(chave(i))) : [];
+  const quedaScore = antes && antes.score != null && a.score != null ? antes.score - a.score : 0;
+  const cfg = monCfg();
+  db.prepare("UPDATE monitoramentos SET ultima_checagem = datetime('now'), proxima_checagem = datetime('now', ?), ultimo_resumo = ?, ultima_consulta_id = ?, checagens = checagens + 1 WHERE id = ?")
+    .run(`+${cfg.freq} days`, JSON.stringify(resumo), cid, m.id);
+
+  const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(m.usuario_id);
+  const primeiroNome = P.esc(String(u?.nome || '').split(' ')[0]);
+  const resumoHtml = `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;background:#F6ECFC;border-radius:12px;margin:12px 0"><tr><td style="padding:14px 16px;font-size:15px">
+    <strong>Score:</strong> ${a.score ?? 'não informado'}${antes && antes.score != null && a.score != null && a.score !== antes.score ? ` (antes ${antes.score})` : ''}<br>
+    <strong>Restrições:</strong> ${a.qtdRestricoes}${a.totalValor ? ` · ${P.reais(Math.round(a.totalValor * 100))}` : ''}<br>
+    <strong>Consultas recentes ao documento:</strong> ${a.consultasRecentes}</td></tr></table>`;
+  const ofertaLN = lnCfg().ativo ? `<p>Quer resolver? Com o <strong>Limpa Nome</strong>, as negativações saem por ação judicial coletiva, ${P.esc(lnCfg().prazo.toLowerCase() || 'em até 30 dias')}.</p>` : '';
+  let tipo;
+  if (novos.length) {
+    tipo = 'alerta';
+    await emailServico({ para: u?.email, assunto: `⚠️ Alerta: ${novos.length === 1 ? 'nova restrição' : `${novos.length} novas restrições`} no seu ${docFmt(m.documento)}`, titulo: 'Encontramos algo novo no seu documento',
+      html: `<p>Olá, ${primeiroNome}. Na checagem de hoje apareceu${novos.length > 1 ? 'ram' : ''}:</p><ul>${novos.slice(0, 10).map((i) => `<li><strong>${P.esc(i.tipo)}</strong> · ${P.esc(i.credor)}${i.valor ? ` · ${P.reais(Math.round(i.valor * 100))}` : ''}${i.data ? ` · ${P.esc(i.data)}` : ''}</li>`).join('')}</ul>${resumoHtml}<p>Se você não reconhece, pode ser fraude: entre em contato com o credor e registre um boletim de ocorrência.</p>${ofertaLN}`,
+      botao: { href: `/consulta/${cid}`, texto: 'Ver o relatório completo' } });
+  } else if (quedaScore >= cfg.quedaScore) {
+    tipo = 'score';
+    await emailServico({ para: u?.email, assunto: `📉 Seu score caiu ${quedaScore} pontos`, titulo: 'Seu score caiu',
+      html: `<p>Olá, ${primeiroNome}. Seu score passou de ${antes.score} para <strong>${a.score}</strong>.</p>${resumoHtml}<p>Quedas assim costumam vir de muitas consultas ao CPF em pouco tempo, atraso em contas ou uso alto do limite do cartão.</p>`,
+      botao: { href: `/consulta/${cid}`, texto: 'Ver o relatório completo' } });
+  } else {
+    tipo = antes ? 'ok' : 'inicial';
+    await emailServico({ para: u?.email, assunto: antes ? `✅ Monitoramento: nada de novo no seu ${docFmt(m.documento)}` : `📋 Primeira checagem do seu ${docFmt(m.documento)}`,
+      titulo: antes ? 'Tudo certo por aqui' : 'Sua primeira checagem está pronta',
+      html: `<p>Olá, ${primeiroNome}. ${antes ? 'Nenhuma restrição nova desde a última checagem.' : 'Esta é a foto atual do seu documento. A partir dela, avisamos qualquer mudança.'}</p>${resumoHtml}${!antes && a.qtdRestricoes ? ofertaLN : ''}<p style="font-size:14px;color:#5B5366">Próxima checagem em ${cfg.freq} dias.</p>`,
+      botao: { href: `/consulta/${cid}`, texto: 'Ver o relatório completo' } });
+  }
+  registrar(null, 'Monitoramento: checagem', `#${m.id} · ${docFmt(m.documento)} · ${tipo} · score ${a.score ?? '—'} · ${a.qtdRestricoes} restrição(ões)${novos.length ? ` · ${novos.length} nova(s)` : ''}`);
+  return tipo;
+}
+
+let monRodando = false;
+async function checarMonitoramentos() {
+  if (monRodando) return;
+  monRodando = true;
+  try {
+    // Venceu sem pagar: para de checar
+    for (const m of db.prepare("SELECT * FROM monitoramentos WHERE status = 'ativo' AND ativo_ate < datetime('now')").all()) {
+      db.prepare("UPDATE monitoramentos SET status = ? WHERE id = ?").run(m.cancelado_em ? 'cancelado' : 'inadimplente', m.id);
+      registrar(null, 'Monitoramento: encerrado por falta de pagamento ou cancelamento', `#${m.id} · ${docFmt(m.documento)}`);
+      if (!m.cancelado_em) {
+        const u = db.prepare('SELECT email FROM usuarios WHERE id = ?').get(m.usuario_id);
+        emailServico({ para: u?.email, assunto: 'Seu monitoramento foi pausado', titulo: 'Monitoramento pausado', html: '<p>Não identificamos o pagamento da renovação, então pausamos as checagens do seu documento. Para voltar a ficar protegido, é só assinar de novo.</p>', botao: { href: '/monitoramento', texto: 'Reativar monitoramento' } });
+      }
+    }
+    if (!produtoMonitor()) return;
+    for (const m of db.prepare("SELECT * FROM monitoramentos WHERE status = 'ativo' AND ativo_ate >= datetime('now') AND proxima_checagem <= datetime('now') ORDER BY proxima_checagem LIMIT 20").all()) {
+      try { await checarUm(m); } catch (e) { console.error('checagem monitoramento', m.id, e.message); }
+    }
+  } finally { monRodando = false; }
+}
+setInterval(() => checarMonitoramentos().catch((e) => console.error('monitoramento:', e.message)), 30 * 60 * 1000).unref();
+setTimeout(() => checarMonitoramentos().catch((e) => console.error('monitoramento:', e.message)), 30000).unref();
+
+// Webhook do Asaas para assinaturas (chamado pelo /webhook/asaas)
+function webhookMonitoramento(event, payment) {
+  const ref = String(payment?.externalReference || '');
+  const m = (payment?.subscription && db.prepare('SELECT * FROM monitoramentos WHERE asaas_sub_id = ?').get(payment.subscription))
+    || (ref.startsWith(AS.PREFIXO_MONITORAMENTO) && db.prepare('SELECT * FROM monitoramentos WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_MONITORAMENTO.length))));
+  if (!m || (m.asaas_sub_id && payment.subscription && payment.subscription !== m.asaas_sub_id)) return false;
+  if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) {
+    if (Math.round(Number(payment.value) * 100) >= m.valor_centavos) confirmarPagamentoMon(m, payment.id);
+  } else if (event === 'PAYMENT_CREATED' && m.status === 'ativo' && m.forma === 'pix' && !m.cancelado_em) {
+    // Nova mensalidade no Pix: manda o link para o cliente pagar
+    db.prepare('UPDATE monitoramentos SET link_pagamento = ? WHERE id = ?').run(payment.invoiceUrl || m.link_pagamento, m.id);
+    const u = db.prepare('SELECT email FROM usuarios WHERE id = ?').get(m.usuario_id);
+    emailServico({ para: u?.email, assunto: 'Renove seu monitoramento de CPF', titulo: 'Sua renovação está disponível',
+      html: `<p>A ${m.plano === 'anual' ? 'anuidade' : 'mensalidade'} do seu monitoramento (${docFmt(m.documento)}) de <strong>${P.reais(m.valor_centavos)}</strong> já pode ser paga por Pix. Pagando, a proteção continua sem interrupção.</p>`,
+      botao: { href: payment.invoiceUrl || '/monitoramento', texto: 'Pagar com Pix' } });
+  }
+  return true;
+}
+
+// ---------- Cliente ----------
+rota('GET', '/monitoramento', exigeLogin(({ res, usuario, url }) => {
+  const cfg = monCfg();
+  const lista = db.prepare('SELECT * FROM monitoramentos WHERE usuario_id = ? ORDER BY id DESC').all(usuario.id);
+  if (!cfg.ativo && !usuario.admin && !lista.length) return pagina(res, 'Monitoramento', P.paginaEmBreve('Monitoramento de CPF', 'Em breve: monitoramento do seu CPF com alertas de negativação e queda de score.'), usuario);
+  pagina(res, 'Monitoramento de CPF', (!cfg.ativo ? '<div class="aviso">Produto desligado para novos clientes (você vê por ser admin).</div>' : '') +
+    SV.paginaMonitoramento({ cfg, lista, usuario, ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+
+rota('POST', '/monitoramento', exigeLogin(async ({ req, res, usuario }) => {
+  const cfg = monCfg();
+  const f = await corpoForm(req);
+  const volta = (m) => redirecionar(res, `/monitoramento?erro=${encodeURIComponent(m)}`);
+  if (!cfg.ativo && !usuario.admin) return volta('O monitoramento não está disponível no momento.');
+  if (!produtoMonitor()) return volta('O monitoramento ainda não está configurado.');
+  const doc = A.soNumeros(f.documento);
+  if (!A.documentoValido(doc)) return volta('Informe um CPF ou CNPJ válido.');
+  // LGPD: só o próprio CPF (o do cadastro) ou um CNPJ do qual o cliente declara ser responsável
+  if (doc.length === 11 && usuario.documento && usuario.documento.length === 11 && usuario.documento !== doc) return volta('Por segurança (LGPD), só é possível monitorar o seu próprio CPF, o mesmo do seu cadastro.');
+  if (doc.length === 14 && f.responsavel !== '1') return volta('Para monitorar um CNPJ, confirme que você é sócio ou responsável pela empresa.');
+  if (f.aceite !== '1') return volta('Aceite os termos para continuar.');
+  if (db.prepare("SELECT 1 FROM monitoramentos WHERE usuario_id = ? AND documento = ? AND status = 'ativo' AND cancelado_em IS NULL").get(usuario.id, doc)) return volta('Esse documento já está sendo monitorado.');
+  const plano = f.plano === 'anual' ? 'anual' : 'mensal';
+  const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
+  const valor = plano === 'anual' ? cfg.anual : cfg.mensal;
+  if (!A.limitar(`mon:${usuario.id}`, 5, 60)) return volta('Muitas tentativas. Aguarde alguns minutos.');
+  // Pedido anterior não pago do mesmo documento: cancela a assinatura velha
+  for (const old of db.prepare("SELECT * FROM monitoramentos WHERE usuario_id = ? AND documento = ? AND status = 'aguardando'").all(usuario.id, doc)) {
+    if (old.asaas_sub_id) await AS.cancelarAssinatura(old.asaas_sub_id).catch(() => {});
+    db.prepare("UPDATE monitoramentos SET status = 'cancelado', cancelado_em = datetime('now') WHERE id = ?").run(old.id);
+  }
+  if (doc.length === 11 && !usuario.documento) { db.prepare('UPDATE usuarios SET documento = ? WHERE id = ?').run(doc, usuario.id); usuario.documento = doc; }
+  const id = Number(db.prepare("INSERT INTO monitoramentos (usuario_id, documento, plano, forma, valor_centavos, aceite_em, aceite_ip) VALUES (?, ?, ?, ?, ?, datetime('now'), ?)")
+    .run(usuario.id, doc, plano, forma, valor, ipDe(req)).lastInsertRowid);
+  try {
+    let clienteId = db.prepare('SELECT asaas_cliente_id FROM usuarios WHERE id = ?').get(usuario.id).asaas_cliente_id;
+    if (!clienteId) {
+      if (!usuario.documento) throw new Error('Cadastre seu CPF em Minha conta antes de assinar.');
+      clienteId = (await AS.criarCliente(usuario)).id;
+      db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
+    }
+    const sub = await AS.criarAssinatura({ clienteId, valorCentavos: valor, ciclo: plano, forma, monId: id, descricao: `Monitoramento de ${doc.length === 14 ? 'CNPJ' : 'CPF'} - Soft Consultas (${plano})` });
+    let pag = null;
+    for (let i = 0; i < 3 && !pag; i++) {
+      pag = (await AS.pagamentosAssinatura(sub.id).catch(() => ({ data: [] })))?.data?.[0] || null;
+      if (!pag) await new Promise((r) => setTimeout(r, 1200));
+    }
+    let pix = null;
+    if (pag && forma === 'pix') { try { pix = await AS.pixQrCode(pag.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
+    db.prepare('UPDATE monitoramentos SET asaas_sub_id = ?, link_pagamento = ?, pix_codigo = ?, pix_imagem = ? WHERE id = ?').run(sub.id, pag?.invoiceUrl || null, pix?.payload || null, pix?.encodedImage || null, id);
+    registrar(null, 'Monitoramento: assinatura criada', `#${id} · ${usuario.email} · ${docFmt(doc)} · ${plano} · ${forma}`);
+    if (forma === 'cartao' && pag?.invoiceUrl) return redirecionar(res, pag.invoiceUrl);
+    redirecionar(res, `/monitoramento/${id}`);
+  } catch (e) {
+    console.error('monitoramento:', e.message);
+    db.prepare("UPDATE monitoramentos SET status = 'cancelado', cancelado_em = datetime('now') WHERE id = ?").run(id);
+    volta(e.message.startsWith('Cadastre') ? e.message : 'Não foi possível gerar o pagamento agora. Tente de novo em instantes.');
+  }
+}));
+
+rota('GET', '/monitoramento/:id', exigeLogin(({ res, usuario, params }) => {
+  const m = db.prepare('SELECT * FROM monitoramentos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!m) return redirecionar(res, '/monitoramento');
+  if (m.status !== 'aguardando') return redirecionar(res, '/monitoramento');
+  pagina(res, 'Pagar monitoramento', SV.paginaPagarMonitoramento({ m }), usuario);
+}));
+
+rota('GET', '/api/monitoramento/:id/status', async ({ res, usuario, params }) => {
+  if (!usuario) return json(res, { pago: false }, 401);
+  const m = db.prepare('SELECT * FROM monitoramentos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!m) return json(res, { pago: false }, 404);
+  if (m.status === 'ativo') return json(res, { pago: true, valor: m.valor_centavos / 100 });
+  if (m.asaas_sub_id && A.limitar(`stmon:${m.id}`, 30, 5)) {
+    try {
+      const pag = (await AS.pagamentosAssinatura(m.asaas_sub_id))?.data?.find((p) => AS.STATUS_PAGO.includes(p.status));
+      if (pag && Math.round(Number(pag.value) * 100) >= m.valor_centavos) { confirmarPagamentoMon(m, pag.id); return json(res, { pago: true, valor: m.valor_centavos / 100 }); }
+    } catch (e) { console.warn('status monitoramento:', e.message); }
+  }
+  json(res, { pago: false });
+});
+
+rota('POST', '/monitoramento/cancelar', exigeLogin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const m = db.prepare('SELECT * FROM monitoramentos WHERE id = ? AND usuario_id = ?').get(Number(f.id), usuario.id);
+  if (!m || m.cancelado_em) return redirecionar(res, '/monitoramento');
+  if (m.asaas_sub_id) await AS.cancelarAssinatura(m.asaas_sub_id).catch((e) => console.warn('cancelar assinatura:', e.message));
+  db.prepare("UPDATE monitoramentos SET cancelado_em = datetime('now'), status = CASE WHEN status = 'ativo' THEN 'ativo' ELSE 'cancelado' END WHERE id = ?").run(m.id);
+  registrar(null, 'Monitoramento: cancelado pelo cliente', `#${m.id} · ${usuario.email} · ${docFmt(m.documento)}`);
+  redirecionar(res, `/monitoramento?ok=${encodeURIComponent(m.status === 'ativo' ? `Assinatura cancelada. Seu monitoramento continua até ${m.ativo_ate.slice(0, 10).split('-').reverse().join('/')} e não será mais cobrado.` : 'Assinatura cancelada.')}`);
+}));
+
+// ---------- Admin ----------
+rota('GET', '/admin/monitoramento', exigeAdmin(({ res, usuario, url }) => {
+  const lista = db.prepare('SELECT m.*, u.email AS cliente FROM monitoramentos m JOIN usuarios u ON u.id = m.usuario_id ORDER BY m.id DESC LIMIT 500').all();
+  const ativos = lista.filter((m) => m.status === 'ativo');
+  const mrr = ativos.filter((m) => !m.cancelado_em).reduce((s, m) => s + (m.plano === 'anual' ? Math.round(m.valor_centavos / 12) : m.valor_centavos), 0);
+  const prod = produtoMonitor();
+  pagina(res, 'Admin · Monitoramento', SV.adminMonitoramento({ menu: PD.menu('/admin/monitoramento'), cfg: monCfg(), lista, ativos: ativos.length, mrr, produto: prod,
+    produtos: db.prepare("SELECT slug, nome, custo_centavos FROM produtos WHERE endpoint <> '' AND documento IN ('cpf','cnpj','cpf_cnpj') ORDER BY nome").all(),
+    ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+
+rota('POST', '/admin/monitoramento/config', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const mensal = centavos(f.mensal), anual = centavos(f.anual);
+  const volta = (m, ok) => redirecionar(res, `/admin/monitoramento?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  if (!Number.isFinite(mensal) || mensal < 500 || !Number.isFinite(anual) || anual < 500) return volta('Preços inválidos (mínimo R$ 5,00).');
+  if (!db.prepare("SELECT 1 FROM produtos WHERE slug = ? AND endpoint <> ''").get(f.produto)) return volta('Escolha uma consulta com endpoint configurado.');
+  gravarConfig('mon_ativo', f.ativo === '1' ? '1' : '0');
+  gravarConfig('mon_preco_mensal', String(mensal)); gravarConfig('mon_preco_anual', String(anual));
+  gravarConfig('mon_produto', f.produto);
+  gravarConfig('mon_frequencia_dias', String(Math.min(90, Math.max(7, Math.floor(Number(f.freq) || 30)))));
+  gravarConfig('mon_queda_score', String(Math.max(10, Math.floor(Number(f.queda) || 50))));
+  registrar(usuario, 'Monitoramento: configuração', `${f.ativo === '1' ? 'LIGADO' : 'desligado'} · mensal ${P.reais(mensal)} · anual ${P.reais(anual)} · consulta ${f.produto} · a cada ${f.freq} dias`);
+  volta('Configuração salva.', true);
+}));
+
+rota('POST', '/admin/monitoramento/acao', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const m = db.prepare('SELECT * FROM monitoramentos WHERE id = ?').get(Number(f.id));
+  const volta = (msg, ok) => redirecionar(res, `/admin/monitoramento?${ok ? 'ok' : 'erro'}=${encodeURIComponent(msg)}`);
+  if (!m) return volta('Assinatura não encontrada.');
+  if (f.acao === 'checar') {
+    if (m.status !== 'ativo') return volta('Só assinaturas ativas são checadas.');
+    try { const t = await checarUm(m); registrar(usuario, 'Monitoramento: checagem manual', `#${m.id} · ${t}`); return volta(`Checagem feita (${t}). O cliente recebeu o e-mail.`, true); }
+    catch (e) { return volta(`Falhou: ${e.message}`); }
+  }
+  if (f.acao === 'conferir') {
+    try {
+      const pag = (await AS.pagamentosAssinatura(m.asaas_sub_id))?.data?.find((p) => AS.STATUS_PAGO.includes(p.status) && p.id !== m.pagamento_atual);
+      if (pag) { confirmarPagamentoMon(m, pag.id); registrar(usuario, 'Monitoramento: pagamento conferido', `#${m.id}`); return volta('Pagamento encontrado e assinatura atualizada.', true); }
+      return volta('Nenhum pagamento novo no Asaas.');
+    } catch (e) { return volta(`Falhou: ${e.message}`); }
+  }
+  if (f.acao === 'cancelar') {
+    if (m.asaas_sub_id) await AS.cancelarAssinatura(m.asaas_sub_id).catch(() => {});
+    db.prepare("UPDATE monitoramentos SET cancelado_em = COALESCE(cancelado_em, datetime('now')), status = CASE WHEN status = 'ativo' THEN 'ativo' ELSE 'cancelado' END WHERE id = ?").run(m.id);
+    registrar(usuario, 'Monitoramento: cancelado pelo admin', `#${m.id} · ${docFmt(m.documento)}`);
+    return volta('Assinatura cancelada (não será mais cobrada; segue ativa até o fim do período pago).', true);
+  }
+  volta('Ação inválida.');
 }));
 
 // ======================= SERVIÇO LIMPA NOME (lote semanal, Pix separado) =======================

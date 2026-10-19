@@ -209,6 +209,57 @@ db.exec(`
 for (const [c, def] of [['imagem_mobile', 'TEXT'], ['plano', "TEXT NOT NULL DEFAULT ''"], ['exclusivo', 'INTEGER NOT NULL DEFAULT 0'], ['contato', "TEXT NOT NULL DEFAULT ''"]]) {
   if (!colunas('anuncios').includes(c)) db.exec(`ALTER TABLE anuncios ADD COLUMN ${c} ${def}`);
 }
+// Monitoramento de CPF/CNPJ (assinatura)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS monitoramentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    documento TEXT NOT NULL,
+    plano TEXT NOT NULL DEFAULT 'mensal',
+    forma TEXT NOT NULL DEFAULT 'pix',
+    valor_centavos INTEGER NOT NULL,
+    asaas_sub_id TEXT,
+    pagamento_atual TEXT,
+    link_pagamento TEXT,
+    pix_codigo TEXT,
+    pix_imagem TEXT,
+    status TEXT NOT NULL DEFAULT 'aguardando',
+    ativo_ate TEXT,
+    proxima_checagem TEXT,
+    ultima_checagem TEXT,
+    ultimo_resumo TEXT,
+    ultima_consulta_id INTEGER,
+    checagens INTEGER NOT NULL DEFAULT 0,
+    pagamentos INTEGER NOT NULL DEFAULT 0,
+    aceite_em TEXT,
+    aceite_ip TEXT,
+    cancelado_em TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_mon_usuario ON monitoramentos(usuario_id);
+  CREATE INDEX IF NOT EXISTS idx_mon_sub ON monitoramentos(asaas_sub_id);
+`);
+// Produtos digitais (ebook)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS compras_digitais (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    produto TEXT NOT NULL,
+    valor_centavos INTEGER NOT NULL,
+    forma TEXT NOT NULL DEFAULT 'pix',
+    asaas_id TEXT,
+    pix_codigo TEXT,
+    pix_imagem TEXT,
+    link_pagamento TEXT,
+    status TEXT NOT NULL DEFAULT 'pendente',
+    pago_em TEXT,
+    downloads INTEGER NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_cd_usuario ON compras_digitais(usuario_id);
+`);
+export const pastaProdutos = path.join(pasta, 'produtos');
+try { mkdirSync(pastaProdutos, { recursive: true }); } catch {}
 // Origem do cliente (campanhas de tráfego pago)
 if (!colunas('usuarios').includes('origem')) db.exec("ALTER TABLE usuarios ADD COLUMN origem TEXT NOT NULL DEFAULT ''");
 if (!colunas('usuarios').includes('utm_source')) db.exec("ALTER TABLE usuarios ADD COLUMN utm_source TEXT NOT NULL DEFAULT ''");
@@ -369,6 +420,16 @@ const padrao = {
   anuncio_arte_centavos: '9700',
   anuncio_max_simultaneos: '4',
   anuncio_mostrar_numeros: '0',
+  ebook_ativo: '0',
+  ebook_preco: '2700',
+  ebook_preco_de: '4700',
+  ebook_arquivo: '',
+  mon_ativo: '0',
+  mon_preco_mensal: '1490',
+  mon_preco_anual: '12900',
+  mon_produto: 'cred-completa-plus',
+  mon_frequencia_dias: '30',
+  mon_queda_score: '50',
   lns_ativo: '0',
   lns_preco_centavos: '129900',
   lns_dia_lote: '5',

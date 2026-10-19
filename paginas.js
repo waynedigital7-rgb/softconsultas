@@ -171,7 +171,7 @@ a.cartao:hover{transform:translateY(-4px);box-shadow:0 14px 30px -18px rgba(159,
 
 export function layout({ titulo, corpo, usuario, descricao = '', minimo = false }) {
   const nav = usuario
-    ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/limpa-nome">Limpa Nome</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
+    ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/limpa-nome">Limpa Nome</a><a href="/monitoramento">Monitoramento</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a><a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
        <form method="post" action="/sair" style="margin:0"><button class="btn sec" style="min-height:40px;padding:8px 18px;color:#fff;border-color:#3A3046">Sair</button></form>`
     : `<a href="/entrar">Entrar</a><a class="btn" href="/cadastro" style="min-height:40px;padding:8px 20px">Criar conta</a>`;
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">

@@ -106,6 +106,28 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(verificar, 4000);
   }
 
+  // Acompanhar pagamento do ebook
+  const ebk = document.querySelector('[data-ebook]');
+  if (ebk) {
+    const ver = async () => {
+      try { const j = await (await fetch(`/api/ebook/${ebk.getAttribute('data-ebook')}/status`, { headers: { Accept: 'application/json' } })).json();
+        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.assign('/ebook/baixar'); } } catch {}
+      setTimeout(ver, 5000);
+    };
+    setTimeout(ver, 4000);
+  }
+
+  // Acompanhar pagamento do monitoramento
+  const mon = document.querySelector('[data-mon]');
+  if (mon) {
+    const ver = async () => {
+      try { const j = await (await fetch(`/api/monitoramento/${mon.getAttribute('data-mon')}/status`, { headers: { Accept: 'application/json' } })).json();
+        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.assign('/monitoramento?ok=' + encodeURIComponent('Pagamento confirmado! Seu monitoramento está ativo e a primeira checagem chega no seu e-mail.')); } } catch {}
+      setTimeout(ver, 5000);
+    };
+    setTimeout(ver, 4000);
+  }
+
   // Acompanhar pagamento do serviço Limpa Nome
   const ln = document.querySelector('[data-pedido-ln]');
   if (ln) {
