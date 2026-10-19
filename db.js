@@ -413,7 +413,7 @@ for (const [c, def] of [['forma_pagamento', "TEXT NOT NULL DEFAULT 'pix'"], ['pa
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
 }
 // Área de parceiros (Limpa Nome): o parceiro cadastra clientes e ganha comissão (cliente paga) ou paga o preço de atacado
-for (const [c, def] of [['parceiro_id', 'INTEGER'], ['parceiro_modelo', 'TEXT'], ['parceiro_comissao_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['token', 'TEXT'], ['preco_venda_centavos', 'INTEGER'], ['cliente_aceite_em', 'TEXT'], ['cliente_aceite_ip', 'TEXT']]) {
+for (const [c, def] of [['parceiro_id', 'INTEGER'], ['parceiro_modelo', 'TEXT'], ['parceiro_comissao_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['token', 'TEXT'], ['preco_venda_centavos', 'INTEGER'], ['servico', "TEXT NOT NULL DEFAULT 'limpa_nome'"], ['combo_de', 'INTEGER'], ['cliente_aceite_em', 'TEXT'], ['cliente_aceite_ip', 'TEXT']]) {
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
 }
 if (!colunas('usuarios').includes('parceiro')) db.exec('ALTER TABLE usuarios ADD COLUMN parceiro INTEGER NOT NULL DEFAULT 0');
@@ -432,7 +432,7 @@ db.exec(`
   );
 `);
 // Mensalidade do parceiro (assinatura no Asaas)
-for (const [c, def] of [['preco_centavos', 'INTEGER'], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
+for (const [c, def] of [['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
 export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
@@ -481,6 +481,21 @@ const padrao = {
   parceiro_atacado_centavos: '',
   parceiro_mensalidade_centavos: '9900',
   parceiro_preco_centavos: '150000',
+  // Rating bancário (venda direta) e combo Limpa Nome + Rating
+  rtg_ativo: '0',
+  rtg_preco_centavos: '0',
+  rtg_prazo: 'Acompanhamento de 90 dias',
+  rtg_resumo: '',
+  cmb_preco_centavos: '0',
+  // Parceiros: rating e combo (preço sugerido ao cliente, comissão e atacado)
+  parceiro_rating_preco_centavos: '',
+  parceiro_rating_comissao_tipo: 'percentual',
+  parceiro_rating_comissao_valor: '20',
+  parceiro_rating_atacado_centavos: '',
+  parceiro_combo_preco_centavos: '',
+  parceiro_combo_comissao_tipo: 'percentual',
+  parceiro_combo_comissao_valor: '20',
+  parceiro_combo_atacado_centavos: '',
   raiox_preco: '3790',
   raiox_preco_de: '',
   raiox_produto: 'cred-completa-plus',

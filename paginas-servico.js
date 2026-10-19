@@ -13,10 +13,14 @@ export const STATUS_LN = {
   cancelado: { t: 'Cancelado', c: '#7A7285' },
   reembolsado: { t: 'Reembolsado', c: '#7A7285' },
 };
+export const SERVICOS = { limpa_nome: 'Limpa Nome', rating: 'Rating Bancário', combo: 'Limpa Nome + Rating Bancário' };
+// Rating: mesmos status, nomes próprios (não tem lote nem baixa por órgão)
+const STATUS_RTG = { pago: 'Pago · início em breve', em_analise: 'Análise do perfil bancário', em_andamento: 'Rating em andamento', decisao: 'Reavaliação do perfil', concluido: 'Concluído' };
 // Órgãos acompanhados um a um (o cliente vê cada baixa)
 export const ORGAOS_LN = [['serasa', 'Serasa Experian'], ['spc', 'SPC Brasil'], ['boavista', 'Boa Vista (SCPC)'], ['cenprot', 'Protestos em cartório (CENPROT)']];
 export const lerBaixas = (p) => { try { return JSON.parse(p.baixas || '{}') || {}; } catch { return {}; } };
-const etiqueta = (s) => `<span style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:.82rem;font-weight:700;background:${STATUS_LN[s]?.c || '#555'}1A;color:${STATUS_LN[s]?.c || '#555'}">${esc(STATUS_LN[s]?.t || s)}</span>`;
+const etiqueta = (s, svc) => `<span style="display:inline-block;padding:4px 12px;border-radius:999px;font-size:.82rem;font-weight:700;background:${STATUS_LN[s]?.c || '#555'}1A;color:${STATUS_LN[s]?.c || '#555'}">${esc((svc === 'rating' && STATUS_RTG[s]) || STATUS_LN[s]?.t || s)}</span>`;
+const tagServico = (svc) => (svc && svc !== 'limpa_nome' ? ` <span class="tag" style="font-size:.72rem">${esc(SERVICOS[svc] || svc)}</span>` : '');
 const dataBR = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
 // Vídeo explicativo: link do YouTube/Vimeo ou arquivo .mp4 (ex.: /criativos/limpa-nome.mp4)
 export function blocoVideo(link) {
@@ -40,6 +44,11 @@ export function tabelaParcelas(preco, max, jurosPct) {
     return { n, parcela, total: parcela * n };
   });
 }
+// Combo Limpa Nome + Rating: opção no formulário (o valor final aparece na página de pagamento)
+const blocoCombo = (combo, v = {}) => `<label style="display:flex;gap:12px;align-items:flex-start;margin:0 0 16px;padding:14px 16px;border:2px solid #9F31D3;border-radius:14px;background:#FBF6FE">
+  <input type="checkbox" name="combo" value="1" ${v.combo === '1' ? 'checked' : ''} style="width:22px;height:22px;margin-top:2px">
+  <span><strong>Quero o combo Limpa Nome + Rating Bancário por ${reais(combo.preco)}</strong>${combo.precoSeparado > combo.preco ? ` <span style="color:#1E7B4D;font-weight:700">(economize ${reais(combo.precoSeparado - combo.preco)})</span>` : ''}<br>
+  <span class="muted">Primeiro limpamos o nome; assim que concluir, começamos o trabalho no seu perfil junto aos bancos${combo.prazoRating ? ` (${esc(combo.prazoRating.toLowerCase())})` : ''}.</span></span></label>`;
 // Atendimento humano (WhatsApp): discreto, para quem não conseguir sozinho
 const ajudaFlutuante = (cfg, q = '') => (cfg.whatsapp ? `<div style="height:64px" aria-hidden="true"></div><a href="${cfg.ajudaUrl || '/limpa-nome/ajuda'}${q}" target="_blank" rel="noopener" aria-label="Falar com o atendimento no WhatsApp" style="position:fixed;right:16px;bottom:16px;z-index:50;display:flex;align-items:center;gap:8px;background:#1FA855;color:#fff;text-decoration:none;font-weight:700;padding:12px 16px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.25)"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4a.5.5 0 0 0 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.7a2.7 2.7 0 0 0 1.8-1.3 2.2 2.2 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z"/></svg><span>Ajuda</span></a>` : '');
 const ajudaCartao = (cfg, q = '') => (cfg.whatsapp ? `<div class="cartao" style="margin-bottom:18px;display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap">
@@ -48,7 +57,7 @@ const ajudaCartao = (cfg, q = '') => (cfg.whatsapp ? `<div class="cartao" style=
 const DIAS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 
 // ---------- Cliente ----------
-export function paginaServicoLN({ cfg, proximoLote, pedidos, usuario, erro, v = {} }) {
+export function paginaServicoLN({ cfg, combo = null, proximoLote, pedidos, usuario, erro, v = {} }) {
   const p = (t) => esc(t || '');
   return `
 <span class="tag">Serviço</span>
@@ -57,7 +66,7 @@ export function paginaServicoLN({ cfg, proximoLote, pedidos, usuario, erro, v = 
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 ${pedidos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Seus pedidos</h2><div class="rolar"><table class="tabela">
   <tr><th>#</th><th>Titular</th><th>Lote</th><th>Status</th><th></th></tr>
-  ${pedidos.map((x) => `<tr><td>${x.id}</td><td>${esc(x.nome)}<br><span class="muted">${esc(formatarDoc(x.cpf))}</span></td><td>${x.lote ? dataBR(x.lote) : '—'}</td><td>${etiqueta(x.status)}</td><td><a href="/limpa-nome/servico/${x.id}">Ver</a></td></tr>`).join('')}
+  ${pedidos.map((x) => `<tr><td>${x.id}</td><td>${esc(x.nome)}${tagServico(x.servico)}<br><span class="muted">${esc(formatarDoc(x.cpf))}</span></td><td>${x.lote ? dataBR(x.lote) : '—'}</td><td>${etiqueta(x.status, x.servico)}</td><td><a href="/limpa-nome/servico/${x.id}">Ver</a></td></tr>`).join('')}
 </table></div></div>` : ''}
 <div class="grade" style="margin-bottom:18px">
   <div class="saldo"><div style="color:#D9B8F0;font-weight:600">Valor do serviço</div><div class="valor">${reais(cfg.preco)}</div><div style="color:#D9B8F0;margin-top:6px">no Pix${cfg.parcelas > 1 ? ` ou em até ${cfg.parcelas}x de ${reais(cfg.tabela.at(-1).parcela)} no cartão` : ''}</div></div>
@@ -124,8 +133,9 @@ ${ajudaFlutuante(cfg, erro ? '?e=erro-formulario' : '?e=pagina')}
   <small class="muted" style="display:block;margin:-6px 0 14px">JPG, PNG ou PDF, até 5 MB cada. Na CNH digital (PDF), a frente basta.</small>
   <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><input type="checkbox" name="proprio" value="1" ${v.proprio === '0' ? '' : 'checked'} style="width:20px;height:20px;margin-top:3px"> <span>O pedido é para o <strong>meu próprio CPF/CNPJ</strong> (ou empresa da qual sou sócio). Se desmarcar, você declara ter autorização por escrito do titular.</span></label>
   <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Autorizo a minha inclusão, como associado(a), na ação judicial coletiva${cfg.executor ? ` conduzida por ${p(cfg.executor)}` : ''}, e o uso destes dados e documentos exclusivamente para este serviço. Entendo que a ação retira as negativações, que a dívida continua com o credor e que o serviço não garante aprovação de crédito.</span></label>
+  ${combo?.ativo ? blocoCombo(combo, v) : ''}
   <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 16px"><legend style="font-weight:700;padding:0 6px">Forma de pagamento</legend>
-    <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" ${v.forma === 'cartao' ? '' : 'checked'} style="width:20px;height:20px"> <span><strong>Pix</strong> · ${reais(cfg.preco)} à vista</span></label>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" ${v.forma === 'cartao' ? '' : 'checked'} style="width:20px;height:20px"> <span><strong>Pix</strong> · ${reais(cfg.preco)} à vista${combo?.ativo ? ` <span class="muted">(combo: ${reais(combo.preco)})</span>` : ''}</span></label>
     ${cfg.parcelas >= 1 ? `<label style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap"><input type="radio" name="forma" value="cartao" ${v.forma === 'cartao' ? 'checked' : ''} style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong> em</span>
       <select name="parcelas" aria-label="Número de parcelas" style="min-height:40px">${Array.from({ length: cfg.parcelas }, (_, i) => i + 1).map((n) => `<option value="${n}" ${Number(v.parcelas || cfg.parcelas) === n ? 'selected' : ''}>${n}x de ${reais(cfg.tabela[n - 1].parcela)}${n > 1 && cfg.juros > 0 ? ` (total ${reais(cfg.tabela[n - 1].total)})` : ' sem juros'}</option>`).join('')}</select></label>
       ${cfg.juros > 0 && cfg.parcelas > 1 ? `<small class="muted" style="display:block;margin:2px 0 0 30px">Parcelado a partir de 2x com juros de ${String(cfg.juros).replace('.', ',')}% ao mês, já incluídos no valor das parcelas.</small>` : ''}` : ''}
@@ -134,8 +144,17 @@ ${ajudaFlutuante(cfg, erro ? '?e=erro-formulario' : '?e=pagina')}
 </form>`;
 }
 
-export function paginaPedidoLN({ p, cfg, voltar = ['/limpa-nome/servico', '← Limpa Nome'], statusUrl = '', semPagamento = false, topo = '' }) {
-  const passos = [
+export function paginaPedidoLN({ p, cfg, voltar = ['/limpa-nome/servico', '← Limpa Nome'], statusUrl = '', semPagamento = false, topo = '', filho = null, pai = null }) {
+  const rating = p.servico === 'rating';
+  const linkRel = (x) => (x.token ? `/ln/${x.token}` : x.servico === 'rating' ? `/rating/${x.id}` : `/limpa-nome/servico/${x.id}`);
+  const passos = rating ? [
+    ['aguardando_pagamento', 'Pedido criado'],
+    ['pago', p.combo_de ? 'Garantido no combo · começa após o Limpa Nome' : `Pagamento confirmado${p.pago_em ? ` em ${dt(p.pago_em)}` : ''}`],
+    ['em_analise', 'Análise do seu perfil bancário (Registrato/SCR, score, Cadastro Positivo)'],
+    ['em_andamento', 'Trabalho no seu rating: cadastro, Cadastro Positivo e relacionamento'],
+    ['decisao', 'Reavaliação do perfil'],
+    ['concluido', 'Concluído'],
+  ] : [
     ['aguardando_pagamento', 'Pedido criado'],
     ['pago', `Pagamento confirmado${p.pago_em ? ` em ${dt(p.pago_em)}` : ''}`],
     ['em_analise', 'Análise dos documentos'],
@@ -145,14 +164,16 @@ export function paginaPedidoLN({ p, cfg, voltar = ['/limpa-nome/servico', '← L
     ['concluido', 'Concluído · nome limpo'],
   ];
   const baixas = lerBaixas(p);
-  const mostraBaixas = ['em_andamento', 'decisao', 'concluido'].includes(p.status) || Object.keys(baixas).length;
+  const mostraBaixas = !rating && (['em_andamento', 'decisao', 'concluido'].includes(p.status) || Object.keys(baixas).length);
   const ordem = passos.map((x) => x[0]);
   const atual = ordem.indexOf(p.status);
   const final = ['cancelado', 'reembolsado'].includes(p.status);
   return `
 ${voltar ? `<p><a href="${esc(voltar[0])}">${esc(voltar[1])}</a></p>` : ''}
-<h1 style="font-size:1.6rem;margin:6px 0">Pedido #${p.id} · ${esc(p.nome)}</h1>
-<p style="margin:0 0 18px">${etiqueta(p.status)} <span class="muted">CPF ${esc(formatarDoc(p.cpf))}</span></p>
+<h1 style="font-size:1.6rem;margin:6px 0">${esc(SERVICOS[p.servico] || 'Limpa Nome')} · Pedido #${p.id}</h1>
+<p style="margin:0 0 18px">${etiqueta(p.status, p.servico)} <span class="muted">${esc(p.nome)} · ${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(p.cpf))}</span></p>
+${filho ? `<div class="aviso" style="max-width:620px">Este pedido é um <strong>combo</strong>: o seu <strong>Rating Bancário</strong> (pedido #${filho.id}) começa assim que o Limpa Nome for concluído. <a href="${esc(linkRel(filho))}">Acompanhar o Rating</a></div>` : ''}
+${pai ? `<div class="aviso" style="max-width:620px">Este Rating faz parte do <strong>combo</strong> do pedido #${pai.id} (Limpa Nome). <a href="${esc(linkRel(pai))}">Ver o Limpa Nome</a></div>` : ''}
 ${topo}
 ${p.status === 'aguardando_pagamento' && semPagamento ? `<div class="cartao estreito" style="max-width:520px;text-align:center;margin-bottom:18px" data-pedido-ln="${p.id}"${statusUrl ? ` data-status-url="${esc(statusUrl)}"` : ''}><p style="margin:0">Aguardando a confirmação do pagamento. Esta página atualiza sozinha.</p></div>` : ''}
 ${p.status === 'aguardando_pagamento' && !semPagamento && p.forma_pagamento === 'cartao' ? `
@@ -172,7 +193,7 @@ ${p.status === 'aguardando_pagamento' && !semPagamento && p.forma_pagamento !== 
 </div>` : ''}
 <div class="cartao" style="max-width:620px">
   <h2 style="font-size:1.2rem;margin-top:0">Andamento</h2>
-  ${final ? `<p>${etiqueta(p.status)}</p>` : passos.map(([k, t], i) => `<div style="display:flex;gap:12px;align-items:center;padding:8px 0;opacity:${i <= atual ? 1 : .45}">
+  ${final ? `<p>${etiqueta(p.status, p.servico)}</p>` : passos.map(([k, t], i) => `<div style="display:flex;gap:12px;align-items:center;padding:8px 0;opacity:${i <= atual ? 1 : .45}">
     <span style="width:26px;height:26px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;background:${i <= atual ? 'var(--roxo)' : '#C9BFD4'}">${i < atual || (i === atual && k === 'concluido') ? '✓' : i + 1}</span><span>${esc(t)}</span></div>`).join('')}
   ${p.obs_admin ? `<div class="aviso" style="margin-top:12px"><strong>Atualização:</strong> ${esc(p.obs_admin)}</div>` : ''}
   ${cfg.prazo ? `<p class="muted" style="margin:12px 0 0">${esc(cfg.prazo)}</p>` : ''}
@@ -182,7 +203,7 @@ ${mostraBaixas && !final ? `<div class="cartao" style="max-width:620px;margin-to
   ${ORGAOS_LN.map(([k, n]) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #EEE7F4"><span>${esc(n)}</span>${baixas[k] ? `<strong style="color:#1E7B4D">✓ Baixa em ${dataBR(baixas[k])}</strong>` : '<span class="muted">aguardando</span>'}</div>`).join('')}
   <p class="muted" style="margin:10px 0 0;font-size:.88rem">Cada órgão cumpre a decisão no seu próprio prazo. Depois da última baixa, consulte o seu CPF/CNPJ aqui na plataforma para conferir.</p>
 </div>` : ''}
-${p.status === 'concluido' && p.blindagem_ate ? `<div class="cartao" style="max-width:620px;margin-top:18px;border:2px solid #1E7B4D">
+${!rating && p.status === 'concluido' && p.blindagem_ate ? `<div class="cartao" style="max-width:620px;margin-top:18px;border:2px solid #1E7B4D">
   <h2 style="font-size:1.2rem;margin-top:0">🛡️ Blindagem ativa até ${dataBR(p.blindagem_ate)}</h2>
   <p style="margin:0">Se alguma das negativações abrangidas pela ação voltar a aparecer até essa data, chame o atendimento: fazemos o reprotocolo sem custo.</p>
   ${cfg.whatsapp ? `<p style="margin:12px 0 0"><a class="btn sec" href="${cfg.ajudaUrl || '/limpa-nome/ajuda'}?p=${p.id}&e=blindagem" target="_blank" rel="noopener">Uma negativação voltou</a></p>` : ''}
@@ -241,7 +262,7 @@ export function adminServicoLN({ menu, cfg, pedidos, lotes, filtro, proximoLote,
   <div class="rolar"><table class="tabela">
     <tr><th>#</th><th>Data</th><th>Titular</th><th>Contato</th><th>Documentos</th><th>Lote</th><th>Status</th><th>Baixas e status</th></tr>
     ${pedidos.map((x) => `<tr><td>${x.id}</td><td>${dt(x.criado_em)}</td>
-      <td><strong>${esc(x.nome)}</strong><br>${esc(formatarDoc(x.cpf))}<br><span class="muted">nasc. ${dataBR(x.nascimento)}${x.titular_proprio ? '' : ' · <strong>terceiro</strong>'}</span><br><span class="muted">${x.parceiro_id ? `<strong style="color:#5B2D8E">parceiro: ${esc(x.parceiro_nome || '')}</strong> · ${x.parceiro_modelo === 'atacado' ? 'atacado' : `comissão ${reais(x.parceiro_comissao_centavos)}`}` : `cliente: ${esc(x.cliente)}`}</span></td>
+      <td><strong>${esc(x.nome)}</strong>${tagServico(x.servico)}<br>${esc(formatarDoc(x.cpf))}<br><span class="muted">nasc. ${dataBR(x.nascimento)}${x.titular_proprio ? '' : ' · <strong>terceiro</strong>'}</span><br><span class="muted">${x.parceiro_id ? `<strong style="color:#5B2D8E">parceiro: ${esc(x.parceiro_nome || '')}</strong> · ${x.parceiro_modelo === 'atacado' ? 'atacado' : `comissão ${reais(x.parceiro_comissao_centavos)}`}` : `cliente: ${esc(x.cliente)}`}</span></td>
       <td>${esc(x.telefone)}<br><span class="muted">${esc(x.email)}</span></td>
       <td>${x.docs_apagados ? '<span class="muted">apagados</span>' : `${esc(x.doc_tipo)}: ${x.doc_frente ? `<a href="/admin/limpa-nome/doc/${x.id}/frente" target="_blank" rel="noopener">frente</a>` : ''}${x.doc_verso ? ` · <a href="/admin/limpa-nome/doc/${x.id}/verso" target="_blank" rel="noopener">verso</a>` : ''}`}</td>
       <td>${x.lote ? dataBR(x.lote) : '—'}</td><td>${etiqueta(x.status)}<br><span class="muted">${reais(x.valor_centavos)} · ${x.forma_pagamento === 'cartao' ? `cartão ${x.parcelas}x` : 'Pix'}</span>
@@ -631,7 +652,8 @@ const kpiP = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${r
 const btnPeq = 'min-height:32px;padding:4px 12px;font-size:.8rem';
 export const textoComissao = (r) => (r.comissaoTipo === 'fixo' ? reais(r.comissaoValor) : `${r.comissaoValor}% (${reais(r.comissaoCentavos)})`);
 
-export function paginaParceiro({ usuario, r, cfg, pedidos, k, saldo, base, ok, erro }) {
+export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro }) {
+  const disp = regras.filter((x) => x.disponivel);
   const linkCliente = (p) => `${base}/ln/${p.token}`;
   const wpp = (p) => {
     const tel = String(p.telefone || '').replace(/\D/g, '');
@@ -641,7 +663,7 @@ export function paginaParceiro({ usuario, r, cfg, pedidos, k, saldo, base, ok, e
   return `<h1 style="font-size:1.7rem;margin-bottom:4px">Área do parceiro</h1>
 <p class="muted" style="margin:0 0 18px">Limpa Nome · olá, ${esc(String(usuario.nome).split(' ')[0])}</p>
 ${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
-${!cfg.ativo ? '<div class="aviso">O serviço de Limpa Nome está pausado para novos pedidos no momento. Você continua acompanhando os seus clientes.</div>' : ''}
+${!disp.length ? '<div class="aviso">Os serviços estão pausados para novos pedidos no momento. Você continua acompanhando os seus clientes.</div>' : ''}
 <div class="grade" style="margin-bottom:18px">
   ${kpiP('Clientes cadastrados', k.total, `${k.aguardando} aguardando pagamento`)}
   ${kpiP('Pagos', k.pagos, `${k.andamento} em andamento · ${k.concluidos} concluído(s)`)}
@@ -649,20 +671,21 @@ ${!cfg.ativo ? '<div class="aviso">O serviço de Limpa Nome está pausado para n
   ${kpiP('Saldo para sacar', reais(saldo), '<a href="/indicacoes#saque">Sacar pelo Pix</a>')}
 </div>
 <div class="cartao" style="margin-bottom:18px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;justify-content:space-between">
-  <div style="flex:1 1 320px">
+  <div style="flex:1 1 420px">
     <h2 style="font-size:1.15rem;margin:0 0 8px">Como você ganha</h2>
-    <p style="margin:4px 0">💸 <strong>O cliente paga</strong> pelo link que você envia (Pix ou até ${cfg.parcelas}x no cartão). Preço sugerido: <strong>${reais(r.preco)}</strong>, e você ganha <strong>${reais(r.comissaoCentavos)}</strong>. Quer cobrar mais? A nossa parte é fixa em ${reais(r.nossaParte)}: <strong>tudo o que passar disso é seu</strong>.</p>
-    ${r.atacado ? `<p style="margin:4px 0">🏷️ <strong>Você paga o atacado</strong> de <strong>${reais(r.atacado)}</strong> por cliente e cobra dele o valor que quiser.</p>` : ''}
+    <p class="muted" style="margin:0 0 8px">O cliente paga pelo link que você envia (Pix ou até ${cfg.parcelas}x no cartão). Você pode cobrar o preço sugerido ou mais: a nossa parte é fixa e <strong>tudo o que passar dela é seu</strong>.</p>
+    <div class="rolar"><table class="tabela" style="font-size:.92rem"><tr><th>Serviço</th><th>Preço sugerido</th><th>Sua comissão</th><th>Nossa parte</th><th>Atacado</th></tr>
+    ${disp.map((x) => `<tr><td><strong>${esc(x.nomeServico)}</strong></td><td>${reais(x.preco)}</td><td><strong>${reais(x.comissaoCentavos)}</strong></td><td>${reais(x.nossaParte)}</td><td>${x.atacado ? reais(x.atacado) : '—'}</td></tr>`).join('')}</table></div>
   </div>
-  ${cfg.ativo ? '<a class="btn" href="/parceiro/novo" style="flex:none">+ Cadastrar cliente</a>' : ''}
+  ${disp.length ? '<a class="btn" href="/parceiro/novo" style="flex:none">+ Cadastrar cliente</a>' : ''}
 </div>
 <div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Meus clientes</h2><div class="rolar"><table class="tabela"><tr><th>#</th><th>Cliente</th><th>Modelo</th><th>Valor</th><th>Status</th><th>Baixas</th><th>Ações</th></tr>
 ${pedidos.map((p) => { const b = Object.keys(lerBaixas(p)).length; const pend = p.status === 'aguardando_pagamento';
-  return `<tr><td>${p.id}</td><td><strong>${esc(p.nome)}</strong><br><span class="muted">${esc(formatarDoc(p.cpf))}${p.telefone ? ` · ${esc(p.telefone)}` : ''}</span></td>
+  return `<tr><td>${p.id}</td><td><strong>${esc(p.nome)}</strong>${tagServico(p.servico)}${p.combo_de ? ` <span class="muted" style="font-size:.78rem">(do combo #${p.combo_de})</span>` : ''}<br><span class="muted">${esc(formatarDoc(p.cpf))}${p.telefone ? ` · ${esc(p.telefone)}` : ''}</span></td>
   <td>${p.parceiro_modelo === 'atacado' ? 'Atacado (você paga)' : `Cliente paga<br><span class="muted">comissão ${reais(p.parceiro_comissao_centavos)}</span>`}</td>
   <td>${reais(p.valor_centavos)}${p.forma_pagamento === 'cartao' && p.parcelas > 1 ? `<br><span class="muted">${p.parcelas}x cartão</span>` : ''}</td>
-  <td>${etiqueta(p.status)}${p.lote && !pend ? `<br><span class="muted">lote ${dataBR(p.lote)}</span>` : ''}</td>
-  <td>${p.pago_em ? `${b}/${ORGAOS_LN.length}` : '—'}</td>
+  <td>${etiqueta(p.status, p.servico)}${p.lote && !pend ? `<br><span class="muted">lote ${dataBR(p.lote)}</span>` : ''}</td>
+  <td>${p.pago_em && p.servico !== 'rating' ? `${b}/${ORGAOS_LN.length}` : '—'}</td>
   <td style="min-width:200px"><div style="display:flex;gap:6px;flex-wrap:wrap"><a class="btn sec" style="${btnPeq}" href="/parceiro/cliente/${p.id}">${pend && p.parceiro_modelo === 'atacado' ? 'Pagar' : 'Ver'}</a>
     ${pend && p.parceiro_modelo !== 'atacado' ? `<a class="btn" style="${btnPeq};background:#1FA855" href="${esc(wpp(p))}" target="_blank" rel="noopener">Enviar no WhatsApp</a><button class="btn sec" type="button" style="${btnPeq}" data-copiar-texto="${esc(linkCliente(p))}">Copiar link</button>` : ''}
     ${pend ? `<form method="post" action="/parceiro/cliente/${p.id}/cancelar" style="margin:0"><button class="btn sec" style="${btnPeq}" data-confirmar="Cancelar o pedido #${p.id}?">Cancelar</button></form>` : ''}
@@ -671,21 +694,25 @@ ${pedidos.map((p) => { const b = Object.keys(lerBaixas(p)).length; const pend = 
 <p class="muted" style="margin:12px 0 0;font-size:.88rem">O cliente recebe por e-mail cada etapa do processo e também acompanha pelo link dele. As comissões entram no seu saldo assim que o cliente paga.</p></div>`;
 }
 
-export function paginaParceiroNovo({ cfg, r, v = {}, erro = '' }) {
+export function paginaParceiroNovo({ cfg, regras = [], v = {}, erro = '' }) {
   const f = (k) => esc(v[k] ?? '');
+  const disp = regras.filter((x) => x.disponivel);
+  const r = disp.find((x) => x.servico === v.servico) || disp[0] || regras[0];
   const modelo = v.modelo === 'atacado' && r.atacado ? 'atacado' : 'comissao';
+  const temAtacado = disp.some((x) => x.atacado);
   return `<p><a href="/parceiro">← Área do parceiro</a></p>
-<h1 style="font-size:1.6rem">Cadastrar cliente no Limpa Nome</h1>
+<h1 style="font-size:1.6rem">Cadastrar cliente</h1>
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 <form class="cartao" method="post" action="/parceiro/novo" enctype="multipart/form-data" style="max-width:760px">
-  <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 18px"><legend style="font-weight:700;padding:0 6px">Quem paga?</legend>
+  <div class="campo"><label for="pc-servico">Serviço</label><select id="pc-servico" name="servico" style="min-height:46px">${disp.map((x) => `<option value="${x.servico}" ${x.servico === r.servico ? 'selected' : ''} data-preco="${x.preco}" data-nossa="${x.nossaParte}" data-max="${x.precoMaximo}" data-atacado="${x.atacado || ''}">${esc(x.nomeServico)} · sugerido ${reais(x.preco)}</option>`).join('')}</select></div>
+  <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 18px;min-width:0"><legend style="font-weight:700;padding:0 6px">Quem paga?</legend>
     <label style="display:flex;gap:10px;align-items:flex-start;margin:8px 0"><input type="radio" name="modelo" value="comissao" ${modelo === 'comissao' ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>O cliente paga</strong> (Pix ou até ${cfg.parcelas}x no cartão) por um link que você envia no WhatsApp. Você recebe a comissão quando ele pagar.</span></label>
     <div style="margin:4px 0 12px 30px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
       <div class="campo" style="margin:0;flex:0 1 220px"><label for="pc-venda">Valor que o cliente vai pagar (R$)</label><input id="pc-venda" type="text" name="preco_venda" inputmode="decimal" value="${esc(v.preco_venda ?? (r.preco / 100).toFixed(2).replace('.', ','))}" data-venda-nossa="${r.nossaParte}" data-venda-min="${r.preco}" data-venda-max="${r.precoMaximo}"></div>
       <p style="margin:0 0 10px;flex:1 1 240px" id="pc-comissao" aria-live="polite">Sugerido ${reais(r.preco)} · sua comissão: <strong>${reais(r.comissaoCentavos)}</strong></p>
     </div>
-    <small class="muted" style="display:block;margin:-6px 0 8px 30px">Mínimo ${reais(r.preco)}. A nossa parte é ${reais(r.nossaParte)}; tudo acima disso é comissão sua.</small>
-    ${r.atacado ? `<label style="display:flex;gap:10px;align-items:flex-start;margin:8px 0"><input type="radio" name="modelo" value="atacado" ${modelo === 'atacado' ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Eu pago o atacado de ${reais(r.atacado)}</strong> agora e cobro do cliente por fora.
+    <small class="muted" id="pc-regra" style="display:block;margin:-6px 0 8px 30px">Mínimo ${reais(r.preco)}. A nossa parte é ${reais(r.nossaParte)}; tudo acima disso é comissão sua.</small>
+    ${temAtacado ? `<label id="pc-atac-op" style="display:${r.atacado ? 'flex' : 'none'};gap:10px;align-items:flex-start;margin:8px 0"><input type="radio" name="modelo" value="atacado" ${modelo === 'atacado' ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Eu pago o atacado de <span id="pc-atac-valor">${r.atacado ? reais(r.atacado) : ''}</span></strong> agora e cobro do cliente por fora.
       <select name="forma" aria-label="Forma de pagamento do atacado" style="min-height:38px;margin-left:6px"><option value="pix">Pix</option><option value="cartao" ${v.forma === 'cartao' ? 'selected' : ''}>Cartão (à vista)</option></select></span></label>` : ''}
   </fieldset>
   <h2 style="font-size:1.15rem;margin:0 0 10px">Dados do cliente (titular)</h2>
@@ -705,7 +732,7 @@ ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
     <div class="campo" style="flex:1 1 220px"><label for="pc-verso">Foto do verso</label><input id="pc-verso" name="doc_verso" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></div>
   </div>
   <small class="muted" style="display:block;margin:-6px 0 14px">JPG, PNG ou PDF, até 5 MB cada.</small>
-  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Declaro que tenho <strong>autorização por escrito do titular</strong> para incluí-lo, como associado(a), na ação judicial coletiva${cfg.executor ? ` conduzida por ${esc(cfg.executor)}` : ''}, e para usar estes dados e documentos só neste serviço. Expliquei ao cliente que a ação retira as negativações, que a dívida continua com o credor e que o serviço não garante aprovação de crédito.</span></label>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Declaro que tenho <strong>autorização por escrito do titular</strong> para contratar o serviço em nome dele (no Limpa Nome, a inclusão como associado(a) na ação judicial coletiva${cfg.executor ? ` conduzida por ${esc(cfg.executor)}` : ''}) e para usar estes dados e documentos só neste serviço. Expliquei ao cliente que o Limpa Nome retira as negativações mas a dívida continua com o credor, e que nenhum serviço garante aprovação de crédito.</span></label>
   <button class="btn" type="submit">Cadastrar cliente</button>
 </form>`;
 }
@@ -718,12 +745,13 @@ export function paginaPagarClienteLN({ p, cfg, parceiro, erro = '' }) {
 <p class="muted" style="margin:0 0 16px">Cadastro feito por ${esc(parceiro)} · ${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(p.cpf))}</p>
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 <div class="cartao" style="margin-bottom:16px">
-  <h2 style="font-size:1.15rem;margin-top:0">O que você está contratando</h2>
-  <p style="margin:6px 0">✅ Inclusão do seu ${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} na <strong>ação judicial coletiva</strong> que pede a retirada das negativações (Serasa, SPC, Boa Vista e protestos).</p>
+  <h2 style="font-size:1.15rem;margin-top:0">O que você está contratando: ${esc(SERVICOS[p.servico] || 'Limpa Nome')}</h2>
+  ${p.servico !== 'rating' ? `<p style="margin:6px 0">✅ Inclusão do seu ${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} na <strong>ação judicial coletiva</strong> que pede a retirada das negativações (Serasa, SPC, Boa Vista e protestos).</p>
   ${cfg.prazo ? `<p style="margin:6px 0">⏱️ ${esc(cfg.prazo)}</p>` : ''}
-  ${cfg.blindagem ? `<p style="margin:6px 0">🛡️ Blindagem de ${cfg.blindagem} meses depois de concluído.</p>` : ''}
+  ${cfg.blindagem ? `<p style="margin:6px 0">🛡️ Blindagem de ${cfg.blindagem} meses depois de concluído.</p>` : ''}` : ''}
+  ${p.servico !== 'limpa_nome' ? `<p style="margin:6px 0">🏦 <strong>Rating Bancário</strong>${p.servico === 'combo' ? ' (começa depois que o nome estiver limpo)' : ''}: análise do seu histórico no Banco Central (Registrato/SCR), score e Cadastro Positivo, ajustes cadastrais e estratégia de relacionamento com os bancos.</p>` : ''}
   <p style="margin:6px 0">📩 Você acompanha cada etapa por e-mail e por este link.</p>
-  <p class="muted" style="margin:10px 0 0;font-size:.88rem">A ação retira as negativações; a dívida continua com o credor. O serviço não garante aprovação de crédito.</p>
+  <p class="muted" style="margin:10px 0 0;font-size:.88rem">${p.servico !== 'rating' ? 'A ação retira as negativações; a dívida continua com o credor. ' : ''}Nenhum serviço garante aprovação de crédito: a decisão é sempre de cada instituição.</p>
 </div>
 <form class="cartao" method="post" action="/ln/${esc(p.token)}/pagar">
   <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 16px;min-width:0"><legend style="font-weight:700;padding:0 6px">Forma de pagamento</legend>
@@ -731,7 +759,7 @@ ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
     <label style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap"><input type="radio" name="forma" value="cartao" style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong> em</span>
       <select name="parcelas" aria-label="Número de parcelas" style="min-height:40px;max-width:100%">${cfg.tabela.map((t) => `<option value="${t.n}" ${t.n === cfg.parcelas ? 'selected' : ''}>${t.n}x de ${reais(t.parcela)}${t.n > 1 && cfg.juros > 0 ? ` (total ${reais(t.total)})` : ' sem juros'}</option>`).join('')}</select></label>
   </fieldset>
-  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Sou o titular (ou responsável pela empresa), confirmo os dados acima e autorizo a minha inclusão, como associado(a), na ação judicial coletiva${cfg.executor ? ` conduzida por ${esc(cfg.executor)}` : ''}, conforme os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a>.</span></label>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Sou o titular (ou responsável pela empresa), confirmo os dados acima e autorizo ${p.servico === 'rating' ? 'a análise do meu histórico de crédito para o Rating Bancário' : `a minha inclusão, como associado(a), na ação judicial coletiva${cfg.executor ? ` conduzida por ${esc(cfg.executor)}` : ''}${p.servico === 'combo' ? ' e a análise do meu histórico de crédito para o Rating Bancário' : ''}`}, conforme os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a>.</span></label>
   <button class="btn largo" type="submit">Continuar para o pagamento</button>
 </form></div>`;
 }
@@ -743,6 +771,7 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
 <form class="cartao" method="post" action="/admin/parceiros/padrao" style="flex:1 1 320px">
   <h2 style="font-size:1.15rem;margin-top:0">Regra padrão</h2>
   <p class="muted" style="margin-top:0">Vale para quem não tiver regra própria. A comissão em % é calculada sobre o preço de venda ao cliente.</p>
+  <h3 style="font-size:1rem;margin:0 0 8px">Limpa Nome</h3>
   <div class="campo"><label for="pp-preco">Preço de venda ao cliente final (R$) · vazio = igual ao do site</label><input id="pp-preco" type="text" name="preco" inputmode="decimal" value="${rs(padrao.preco)}"></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 140px"><label for="pp-tipo">Comissão</label><select id="pp-tipo" name="tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${padrao.comissaoTipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option></select></div>
@@ -752,6 +781,13 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
     <div class="campo" style="flex:1 1 160px"><label for="pp-atac">Atacado (R$) · vazio = sem atacado</label><input id="pp-atac" type="text" name="atacado" inputmode="decimal" value="${rs(padrao.atacado || null)}"></div>
     <div class="campo" style="flex:1 1 160px"><label for="pp-mens">Mensalidade (R$) · 0 = grátis</label><input id="pp-mens" type="text" name="mensalidade" inputmode="decimal" value="${rs(padrao.mensalidade || 0)}"></div>
   </div>
+  ${['rating', 'combo'].map((sv) => { const d = padrao[sv] || {}; return `<details style="margin:4px 0 14px;border:1.5px solid #EEE7F4;border-radius:12px;padding:8px 12px"><summary style="cursor:pointer;font-weight:700">${esc(SERVICOS[sv])}</summary>
+    <div class="campo" style="margin-top:10px"><label for="pp-${sv}-preco">Preço ao cliente (R$) · vazio = do site (${reais(d.precoSite || 0)})</label><input id="pp-${sv}-preco" type="text" name="${sv}_preco" inputmode="decimal" value="${rs(d.preco)}"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div class="campo" style="flex:1 1 130px"><label for="pp-${sv}-tipo">Comissão</label><select id="pp-${sv}-tipo" name="${sv}_tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${d.comissaoTipo === 'fixo' ? 'selected' : ''}>R$ fixo</option></select></div>
+      <div class="campo" style="flex:1 1 100px"><label for="pp-${sv}-valor">Valor</label><input id="pp-${sv}-valor" type="text" name="${sv}_valor" inputmode="decimal" value="${d.comissaoTipo === 'fixo' ? rs(d.comissaoValor) : (d.comissaoValor ?? '')}"></div>
+      <div class="campo" style="flex:1 1 130px"><label for="pp-${sv}-atac">Atacado (R$)</label><input id="pp-${sv}-atac" type="text" name="${sv}_atacado" inputmode="decimal" value="${rs(d.atacado)}"></div>
+    </div></details>`; }).join('')}
   <button class="btn">Salvar regra padrão</button>
 </form>
 <form class="cartao" method="post" action="/admin/parceiros/novo" style="flex:1 1 380px">
@@ -768,7 +804,7 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
 ${parceiros.map((x) => `<tr><td><strong>${esc(x.nome)}</strong>${x.ativo ? '' : ' <span class="tag">inativo</span>'}<br><span class="muted">${esc(x.email)}${x.telefone ? ` · ${esc(x.telefone)}` : ''}</span><br><span class="muted" style="font-size:.8rem">desde ${dataBR(x.criado_em)}</span></td>
   <td>${x.mens.isento ? '<span class="muted">isento</span>' : x.mens.emDia ? `<strong style="color:var(--ok)">em dia</strong><br><span class="muted">até ${dataBR(x.mens.pagoAte)}</span>` : `<strong style="color:var(--erro)">${x.mens.assinatura ? 'aguardando pagamento' : 'não ativou'}</strong>`}<br><span class="muted">${x.mens.isento ? '' : reais(x.mens.valor)}${x.mens.forma ? ` · ${x.mens.forma}` : ''}</span></td>
   <td>${x.clientes}</td><td>${x.pagos}</td><td>${reais(x.receita)}</td><td>${reais(x.comissoes)}</td><td>${reais(x.saldo)}</td>
-  <td style="min-width:220px"><span style="font-size:.88rem">Cliente paga <strong>${reais(x.regra.preco)}</strong> · comissão <strong>${esc(textoComissao(x.regra))}</strong><br>${x.regra.atacado ? `atacado ${reais(x.regra.atacado)}` : 'sem atacado'}${[x.preco_centavos, x.comissao_tipo, x.atacado_centavos, x.mensalidade_centavos].some((v) => v != null) || x.isento ? ' · <span class="tag">valores próprios</span>' : ' · <span class="muted">padrão</span>'}</span>
+  <td style="min-width:240px"><span style="font-size:.85rem">${(x.regras || [x.regra]).filter((g) => g.disponivel).map((g) => `${esc(g.nomeServico || 'Limpa Nome')}: <strong>${reais(g.preco)}</strong> · comissão <strong>${reais(g.comissaoCentavos)}</strong>${g.atacado ? ` · atacado ${reais(g.atacado)}` : ''}`).join('<br>')}<br>${[x.preco_centavos, x.comissao_tipo, x.atacado_centavos, x.mensalidade_centavos].some((v) => v != null) || x.isento || Object.values(x.proprios || {}).some((o) => Object.values(o).some((v) => v != null)) ? ' · <span class="tag">valores próprios</span>' : ' · <span class="muted">padrão</span>'}</span>
     <div style="margin-top:6px"><a class="btn sec" style="${btnPeq}" href="/admin/parceiros/${x.usuario_id}">Editar valores</a></div></td></tr>`).join('') || '<tr><td colspan="8" class="vazio">Nenhum parceiro ainda.</td></tr>'}
 </table></div><p class="muted" style="margin:10px 0 0;font-size:.88rem">Os pedidos dos parceiros aparecem também em Limpa Nome (serviço), com o nome do parceiro. Os saques das comissões seguem em "Saques de comissão".</p></div>`;
 }
@@ -802,14 +838,21 @@ export function adminParceiroEditar({ menu, x, padrao, cfg, pedidos, ok, erro })
   <input type="hidden" name="id" value="${x.usuario_id}">
   <p class="muted" style="margin-top:0">${esc(x.email)}${x.telefone ? ` · ${esc(x.telefone)}` : ''} · parceiro desde ${dataBR(x.criado_em)}. Deixe um campo vazio para usar a regra padrão. Mudanças valem para os próximos clientes cadastrados.</p>
   <label style="display:flex;gap:10px;align-items:center;margin-bottom:16px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${x.ativo ? 'checked' : ''} style="width:22px;height:22px"> Parceiro ativo</label>
-  <h2 style="font-size:1.1rem;margin:0 0 10px">Venda (o cliente paga pelo link)</h2>
+  <h2 style="font-size:1.1rem;margin:0 0 10px">Limpa Nome · venda (o cliente paga pelo link)</h2>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 200px"><label for="pe-preco">Preço ao cliente final (R$)</label><input id="pe-preco" type="text" name="preco" inputmode="decimal" placeholder="${rs(padrao.preco || cfg.preco)}" value="${rs(x.preco_centavos)}">${pad(reais(padrao.preco || cfg.preco))}</div>
     <div class="campo" style="flex:1 1 160px"><label for="pe-tipo">Comissão</label><select id="pe-tipo" name="tipo" style="min-height:46px"><option value="">Padrão (${esc(comPad)})</option><option value="percentual" ${x.comissao_tipo === 'percentual' ? 'selected' : ''}>% do preço</option><option value="fixo" ${x.comissao_tipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option></select></div>
     <div class="campo" style="flex:1 1 140px"><label for="pe-valor">Valor da comissão</label><input id="pe-valor" type="text" name="valor" inputmode="decimal" placeholder="ex.: 20 ou 300,00" value="${x.comissao_tipo === 'fixo' ? rs(x.comissao_valor) : (x.comissao_valor ?? '')}"></div>
   </div>
-  <h2 style="font-size:1.1rem;margin:6px 0 10px">Atacado (o parceiro paga)</h2>
+  <h2 style="font-size:1.1rem;margin:6px 0 10px">Limpa Nome · atacado (o parceiro paga)</h2>
   <div class="campo" style="max-width:260px"><label for="pe-atac">Preço de atacado (R$)</label><input id="pe-atac" type="text" name="atacado" inputmode="decimal" value="${rs(x.atacado_centavos)}">${pad(padrao.atacado ? reais(padrao.atacado) : 'sem atacado')}</div>
+  ${['rating', 'combo'].map((sv) => { const d = padrao[sv] || {}, o = x.proprios?.[sv] || {}; const cp = d.comissaoTipo === 'fixo' ? reais(d.comissaoValor) : `${d.comissaoValor}%`; return `<h2 style="font-size:1.1rem;margin:6px 0 10px">${esc(SERVICOS[sv])}</h2>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 170px"><label for="pe-${sv}-p">Preço ao cliente (R$)</label><input id="pe-${sv}-p" type="text" name="${sv}_preco" inputmode="decimal" value="${rs(o.preco)}">${pad(reais(d.preco || d.precoSite || 0))}</div>
+    <div class="campo" style="flex:1 1 150px"><label for="pe-${sv}-t">Comissão</label><select id="pe-${sv}-t" name="${sv}_tipo" style="min-height:46px"><option value="">Padrão (${esc(cp)})</option><option value="percentual" ${o.comissao_tipo === 'percentual' ? 'selected' : ''}>% do preço</option><option value="fixo" ${o.comissao_tipo === 'fixo' ? 'selected' : ''}>R$ fixo</option></select></div>
+    <div class="campo" style="flex:1 1 120px"><label for="pe-${sv}-v">Valor</label><input id="pe-${sv}-v" type="text" name="${sv}_valor" inputmode="decimal" value="${o.comissao_tipo === 'fixo' ? rs(o.comissao_valor) : (o.comissao_valor ?? '')}"></div>
+    <div class="campo" style="flex:1 1 140px"><label for="pe-${sv}-a">Atacado (R$)</label><input id="pe-${sv}-a" type="text" name="${sv}_atacado" inputmode="decimal" value="${rs(o.atacado)}">${pad(d.atacado ? reais(d.atacado) : 'sem')}</div>
+  </div>`; }).join('')}
   <h2 style="font-size:1.1rem;margin:6px 0 10px">Mensalidade</h2>
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
     <div class="campo" style="flex:1 1 180px"><label for="pe-mens">Mensalidade (R$)</label><input id="pe-mens" type="text" name="mensalidade" inputmode="decimal" value="${rs(x.mensalidade_centavos)}">${pad(reais(padrao.mensalidade))}</div>
@@ -817,10 +860,105 @@ export function adminParceiroEditar({ menu, x, padrao, cfg, pedidos, ok, erro })
     <label style="display:flex;gap:10px;align-items:center;margin-top:34px"><input type="checkbox" name="isento" value="1" ${x.isento ? 'checked' : ''} style="width:20px;height:20px"> Isento de mensalidade</label>
   </div>
   <div class="campo"><label for="pe-obs">Observações internas</label><textarea id="pe-obs" name="obs" rows="2" maxlength="500" style="width:100%;font:inherit;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px">${esc(x.obs || '')}</textarea></div>
-  <p class="muted" style="margin:0 0 12px">Em uso agora: cliente paga <strong>${reais(x.regra.preco)}</strong> · comissão <strong>${esc(textoComissao(x.regra))}</strong> · ${x.regra.atacado ? `atacado <strong>${reais(x.regra.atacado)}</strong>` : 'sem atacado'} · mensalidade <strong>${x.mens.isento ? 'isento' : reais(x.mens.valor)}</strong></p>
+  <div class="muted" style="margin:0 0 12px">Em uso agora:<br>${(x.regras || [x.regra]).map((g) => `${esc(g.nomeServico || 'Limpa Nome')}: cliente paga <strong>${reais(g.preco)}</strong> · comissão <strong>${reais(g.comissaoCentavos)}</strong> · ${g.atacado ? `atacado <strong>${reais(g.atacado)}</strong>` : 'sem atacado'}${g.disponivel === false ? ' <em>(serviço desligado)</em>' : ''}`).join('<br>')}<br>Mensalidade <strong>${x.mens.isento ? 'isento' : reais(x.mens.valor)}</strong></div>
   <button class="btn">Salvar valores do parceiro</button>
 </form>
 <div class="cartao"><h2 style="font-size:1.1rem;margin-top:0">Clientes deste parceiro</h2><div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Cliente</th><th>Modelo</th><th>Valor</th><th>Comissão</th><th>Status</th></tr>
-${pedidos.map((p) => `<tr><td>${p.id}</td><td>${dt(p.criado_em)}</td><td>${esc(p.nome)}<br><span class="muted">${esc(formatarDoc(p.cpf))}</span></td><td>${p.parceiro_modelo === 'atacado' ? 'atacado' : 'cliente paga'}</td><td>${reais(p.valor_centavos)}</td><td>${p.parceiro_modelo === 'atacado' ? '—' : reais(p.parceiro_comissao_centavos)}</td><td>${etiqueta(p.status)}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhum cliente ainda.</td></tr>'}
+${pedidos.map((p) => `<tr><td>${p.id}</td><td>${dt(p.criado_em)}</td><td>${esc(p.nome)}${tagServico(p.servico)}<br><span class="muted">${esc(formatarDoc(p.cpf))}</span></td><td>${p.parceiro_modelo === 'atacado' ? 'atacado' : 'cliente paga'}</td><td>${reais(p.valor_centavos)}</td><td>${p.parceiro_modelo === 'atacado' ? '—' : reais(p.parceiro_comissao_centavos)}</td><td>${etiqueta(p.status, p.servico)}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhum cliente ainda.</td></tr>'}
 </table></div></div>`;
+}
+
+// ======================= RATING BANCÁRIO =======================
+export function paginaServicoRating({ cfg, combo = null, pedidos = [], usuario, erro = '', v = {} }) {
+  const p = (t) => esc(t || '');
+  const ult = cfg.tabela?.at(-1);
+  const form = usuario ? `<form id="pedido" class="cartao" method="post" action="/rating" enctype="multipart/form-data" style="max-width:720px">
+  <h2 style="font-size:1.2rem;margin-top:0">Contratar o Rating Bancário</h2>
+  ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+  <div class="campo"><label for="rt-nome">Nome completo do titular (ou razão social)</label><input id="rt-nome" type="text" name="nome" required maxlength="120" value="${p(v.nome ?? usuario.nome)}"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="rt-cpf">CPF ou CNPJ</label><input id="rt-cpf" type="text" name="cpf" required inputmode="numeric" maxlength="18" value="${p(v.cpf ?? (usuario.documento || ''))}"></div>
+    <div class="campo" style="flex:1 1 180px"><label for="rt-nasc">Data de nascimento (titular ou sócio)</label><input id="rt-nasc" name="nascimento" type="date" required value="${p(v.nascimento)}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="rt-tel">WhatsApp</label><input id="rt-tel" type="tel" name="telefone" required inputmode="tel" maxlength="20" value="${p(v.telefone ?? usuario.telefone)}"></div>
+    <div class="campo" style="flex:1 1 240px"><label for="rt-email">E-mail</label><input id="rt-email" name="email" type="email" required maxlength="120" value="${p(v.email ?? usuario.email)}"></div>
+  </div>
+  <div class="campo"><label for="rt-tipo">Documento com foto (do titular ou do sócio, se CNPJ)</label>
+    <select id="rt-tipo" name="doc_tipo" required style="min-height:46px"><option value="RG">RG</option><option value="CNH" ${v.doc_tipo === 'CNH' ? 'selected' : ''}>CNH</option></select></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 220px"><label for="rt-frente">Foto da frente</label><input id="rt-frente" name="doc_frente" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required></div>
+    <div class="campo" style="flex:1 1 220px"><label for="rt-verso">Foto do verso</label><input id="rt-verso" name="doc_verso" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></div>
+  </div>
+  <small class="muted" style="display:block;margin:-6px 0 14px">JPG, PNG ou PDF, até 5 MB cada.</small>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><input type="checkbox" name="proprio" value="1" ${v.proprio === '0' ? '' : 'checked'} style="width:20px;height:20px;margin-top:3px"> <span>O pedido é para o <strong>meu próprio CPF/CNPJ</strong>. Se desmarcar, você declara ter autorização por escrito do titular.</span></label>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Autorizo a análise do meu histórico de crédito e o uso destes dados e documentos exclusivamente para o serviço de Rating Bancário. Entendo que o serviço trabalha o meu perfil junto às instituições, mas <strong>não garante aprovação de crédito</strong>: a decisão final é de cada banco.</span></label>
+  ${combo?.ativo ? blocoCombo(combo, v) : ''}
+  <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 16px;min-width:0"><legend style="font-weight:700;padding:0 6px">Forma de pagamento</legend>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" ${v.forma === 'cartao' ? '' : 'checked'} style="width:20px;height:20px"> <span><strong>Pix</strong> · ${reais(cfg.preco)} à vista${combo?.ativo ? ` <span class="muted">(combo: ${reais(combo.preco)})</span>` : ''}</span></label>
+    ${cfg.parcelas >= 1 ? `<label style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap"><input type="radio" name="forma" value="cartao" ${v.forma === 'cartao' ? 'checked' : ''} style="width:20px;height:20px"> <span><strong>Cartão de crédito</strong> em</span>
+      <select name="parcelas" aria-label="Número de parcelas" style="min-height:40px;max-width:100%">${cfg.tabela.map((t) => `<option value="${t.n}" ${Number(v.parcelas || cfg.parcelas) === t.n ? 'selected' : ''}>${t.n}x de ${reais(t.parcela)}${t.n > 1 && cfg.juros > 0 ? ` (total ${reais(t.total)})` : ' sem juros'}</option>`).join('')}</select></label>
+      ${combo?.ativo ? '<small class="muted" style="display:block;margin:2px 0 0 30px">Marcou o combo? As parcelas são recalculadas sobre o valor do combo na página de pagamento.</small>' : ''}` : ''}
+  </fieldset>
+  <button class="btn" type="submit">Continuar para o pagamento</button>
+</form>` : `<div id="pedido" class="cartao" style="max-width:720px;text-align:center"><h2 style="font-size:1.2rem;margin-top:0">Pronto para melhorar o seu perfil nos bancos?</h2><p class="muted">Crie a sua conta grátis (ou entre) para contratar e acompanhar cada etapa.</p><p><a class="btn" href="/rating/contratar">Contratar o Rating Bancário</a></p></div>`;
+  return `<div style="background:#0F0C14;color:#fff;border-radius:24px;padding:30px;margin-bottom:22px;background-image:radial-gradient(600px 400px at 90% 0%,#5B2D8E 0%,transparent 70%)">
+  <span class="tag" style="background:#2A2233;color:#D9B8F0">SERVIÇO · RATING BANCÁRIO</span>
+  <h1 style="font-size:2.1rem;line-height:1.12;margin:14px 0 10px;color:#fff;max-width:760px">Nome limpo e crédito negado? <span style="color:#C98BEB">O problema pode ser o seu rating no banco.</span></h1>
+  <p style="color:#E2D3EE;font-size:1.08rem;margin:0 0 16px;max-width:720px">${p(cfg.resumo) || 'Cada banco dá uma nota interna para você, o rating, usando o seu histórico no Banco Central, o score, o Cadastro Positivo e os seus dados. Nós analisamos tudo isso e trabalhamos o seu perfil para os bancos enxergarem você melhor.'}</p>
+  <p style="margin:0"><span style="font-family:Montserrat,sans-serif;font-size:2rem;font-weight:800">${reais(cfg.preco)}</span> <span style="color:#C9BFD4">no Pix${cfg.parcelas > 1 && ult ? ` ou até ${cfg.parcelas}x de ${reais(ult.parcela)} no cartão` : ''}${cfg.prazo ? ` · ${p(cfg.prazo)}` : ''}</span></p>
+  <p style="margin:14px 0 0"><a class="btn" href="#pedido">Quero melhorar meu rating</a></p>
+</div>
+${pedidos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.2rem;margin-top:0">Seus pedidos</h2><div class="rolar"><table class="tabela"><tr><th>#</th><th>Titular</th><th>Status</th><th></th></tr>
+  ${pedidos.map((x) => `<tr><td>${x.id}</td><td>${esc(x.nome)}<br><span class="muted">${esc(formatarDoc(x.cpf))}</span></td><td>${etiqueta(x.status, 'rating')}</td><td><a href="/rating/${x.id}">Ver</a></td></tr>`).join('')}
+</table></div></div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div style="font-size:1.7rem">🏦</div><h3 style="margin:6px 0">Análise no Banco Central</h3><p class="muted" style="margin:0">Levantamos o seu Registrato (SCR): empréstimos, limites, atrasos e prejuízos que os bancos enxergam.</p></div>
+  <div class="cartao"><div style="font-size:1.7rem">📊</div><h3 style="margin:6px 0">Score e Cadastro Positivo</h3><p class="muted" style="margin:0">Conferimos score, consultas e o Cadastro Positivo nos birôs, e corrigimos o que está desligado ou desatualizado.</p></div>
+  <div class="cartao"><div style="font-size:1.7rem">🗂️</div><h3 style="margin:6px 0">Cadastro em ordem</h3><p class="muted" style="margin:0">Renda, endereço e dados divergentes derrubam o rating. Orientamos e acompanhamos a atualização.</p></div>
+  <div class="cartao"><div style="font-size:1.7rem">🤝</div><h3 style="margin:6px 0">Estratégia com os bancos</h3><p class="muted" style="margin:0">Plano de relacionamento: onde concentrar a movimentação, como usar o limite e quando pedir crédito.</p></div>
+</div>
+<div class="cartao" style="margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">Como funciona</h2>
+  <p style="margin:8px 0"><strong>1. Você contrata.</strong> Preenche os dados, envia o documento e paga no Pix ou no cartão.</p>
+  <p style="margin:8px 0"><strong>2. Análise do perfil.</strong> Levantamos o seu histórico de crédito e identificamos o que está pesando contra você.</p>
+  <p style="margin:8px 0"><strong>3. Trabalho no rating.</strong> Atualizações cadastrais, Cadastro Positivo e ajustes de relacionamento, com orientações para você seguir.</p>
+  <p style="margin:8px 0"><strong>4. Reavaliação.</strong> Medimos a evolução e indicamos o melhor momento e o melhor lugar para pedir crédito.</p>
+  <p style="margin:8px 0"><strong>5. Acompanhe por aqui.</strong> Cada etapa aparece na sua área e chega no seu e-mail.</p>
+  <p class="muted" style="margin:12px 0 0;font-size:.9rem">Importante: o rating é calculado por cada instituição. O serviço trabalha os fatores que pesam na nota, mas não garante aprovação de crédito.</p>
+</div>
+${combo?.ativo ? `<div class="cartao" style="margin-bottom:18px;border:2px solid #9F31D3"><h2 style="font-size:1.2rem;margin-top:0">Ainda tem restrições no nome?</h2><p style="margin:0">Leve o <strong>combo Limpa Nome + Rating Bancário por ${reais(combo.preco)}</strong>${combo.precoSeparado > combo.preco ? ` e economize ${reais(combo.precoSeparado - combo.preco)}` : ''}: primeiro tiramos as negativações, depois trabalhamos o seu perfil nos bancos. É só marcar o combo no formulário.</p></div>` : ''}
+${form}`;
+}
+
+export function adminRating({ menu, cfg, combo, ln, pedidos, k, ok, erro }) {
+  const rs = (c) => (c ? (c / 100).toFixed(2).replace('.', ',') : '');
+  const ops = ['pago', 'em_analise', 'em_andamento', 'decisao', 'concluido', 'cancelado', 'reembolsado'];
+  return `<h1 style="font-size:1.7rem">Rating Bancário</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  ${kpiP('Aguardando início', k.aguardandoInicio, 'pagos (e combos esperando o Limpa Nome)')}${kpiP('Em andamento', k.andamento)}${kpiP('Concluídos', k.concluidos)}
+  ${kpiP('Receita (Rating avulso)', reais(k.receita))}${kpiP('Combos vendidos', k.combos.n, reais(k.combos.s))}
+</div>
+<form class="cartao" method="post" action="/admin/rating/config" style="max-width:760px;margin-bottom:18px">
+  <h2 style="font-size:1.15rem;margin-top:0">Configuração</h2>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${cfg.ativoFlag ? 'checked' : ''} style="width:22px;height:22px"> À venda</label>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 180px"><label for="rg-p">Preço do Rating (R$)</label><input id="rg-p" type="text" name="preco" inputmode="decimal" value="${rs(cfg.preco)}"></div>
+    <div class="campo" style="flex:1 1 220px"><label for="rg-c">Preço do combo Limpa Nome + Rating (R$)</label><input id="rg-c" type="text" name="combo" inputmode="decimal" value="${rs(combo.preco)}"><small class="muted">separados: ${reais(ln.preco + cfg.preco)} · vazio = sem combo</small></div>
+  </div>
+  <div class="campo"><label for="rg-z">Prazo / chamada (aparece na página)</label><input id="rg-z" type="text" name="prazo" maxlength="150" value="${esc(cfg.prazo)}"></div>
+  <div class="campo"><label for="rg-r">Resumo (opcional, substitui o texto do topo da página)</label><textarea id="rg-r" name="resumo" rows="2" maxlength="300" style="width:100%;font:inherit;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px">${esc(cfg.resumo)}</textarea></div>
+  <p class="muted" style="margin:0 0 12px">Parcelamento, juros e WhatsApp de atendimento seguem a configuração do Limpa Nome. O combo só aparece com os dois serviços à venda e preço do combo preenchido.</p>
+  <button class="btn">Salvar</button> <a class="btn sec" href="/rating" target="_blank" rel="noopener">Ver página</a>
+</form>
+<div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Pedidos</h2><div class="rolar"><table class="tabela"><tr><th>#</th><th>Cliente</th><th>Origem</th><th>Valor</th><th>Status</th><th>Atualizar</th></tr>
+${pedidos.map((x) => `<tr><td>${x.id}</td><td><strong>${esc(x.nome)}</strong><br>${esc(formatarDoc(x.cpf))}<br><span class="muted">${esc(x.telefone)} · ${esc(x.email)}</span></td>
+  <td>${x.combo_de ? `combo #${x.combo_de}` : 'avulso'}${x.parceiro_id ? `<br><strong style="color:#5B2D8E">parceiro: ${esc(x.parceiro_nome || '')}</strong>` : ''}${x.doc_frente ? `<br><a href="/admin/limpa-nome/doc/${x.id}/frente" target="_blank" rel="noopener">doc frente</a>${x.doc_verso ? ` · <a href="/admin/limpa-nome/doc/${x.id}/verso" target="_blank" rel="noopener">verso</a>` : ''}` : x.combo_de ? `<br><a href="/admin/limpa-nome/doc/${x.combo_de}/frente" target="_blank" rel="noopener">doc (do combo)</a>` : ''}</td>
+  <td>${reais(x.valor_centavos)}${x.pago_em ? `<br><span class="muted">pago ${dt(x.pago_em)}</span>` : ''}</td>
+  <td>${etiqueta(x.status, 'rating')}${x.obs_admin ? `<br><span class="muted" style="font-size:.8rem">${esc(x.obs_admin)}</span>` : ''}</td>
+  <td>${x.pago_em ? `<form method="post" action="/admin/limpa-nome/status" style="display:flex;gap:6px;flex-wrap:wrap;margin:0"><input type="hidden" name="id" value="${x.id}"><input type="hidden" name="volta" value="/admin/rating">
+    <select name="status" aria-label="Status" style="min-height:34px">${ops.map((o) => `<option value="${o}" ${o === x.status ? 'selected' : ''}>${esc(STATUS_RTG[o] || STATUS_LN[o].t)}</option>`).join('')}</select>
+    <input type="text" name="obs" aria-label="Mensagem ao cliente" placeholder="mensagem ao cliente (opcional)" maxlength="300" style="min-width:180px;min-height:34px;padding:4px 8px" value="${esc(x.obs_admin || '')}">
+    <button class="btn sec" style="${btnPeq}">Salvar</button></form>` : '<span class="muted">aguardando pagamento</span>'}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum pedido ainda.</td></tr>'}
+</table></div><p class="muted" style="margin:10px 0 0;font-size:.88rem">Ao mudar a etapa, o cliente recebe um e-mail (e o parceiro, se for cliente dele). Nos combos, o Rating começa sozinho quando o Limpa Nome é marcado como concluído.</p></div>`;
 }

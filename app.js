@@ -94,6 +94,22 @@ document.addEventListener('DOMContentLoaded', () => {
       saida.innerHTML = `Cliente paga ${fmt(c)} · sua comissão: <strong>${fmt(c - nossa)}</strong>`;
     };
     venda.addEventListener('input', calc);
+    // Troca de serviço: atualiza preço sugerido, nossa parte e atacado
+    const sel = document.getElementById('pc-servico');
+    if (sel) sel.addEventListener('change', () => {
+      const o = sel.selectedOptions[0];
+      venda.dataset.vendaNossa = o.dataset.nossa; venda.dataset.vendaMin = o.dataset.preco; venda.dataset.vendaMax = o.dataset.max;
+      venda.value = (Number(o.dataset.preco) / 100).toFixed(2).replace('.', ',');
+      const regra = document.getElementById('pc-regra');
+      if (regra) regra.textContent = `Mínimo ${fmt(Number(o.dataset.preco))}. A nossa parte é ${fmt(Number(o.dataset.nossa))}; tudo acima disso é comissão sua.`;
+      const op = document.getElementById('pc-atac-op');
+      if (op) {
+        op.style.display = o.dataset.atacado ? 'flex' : 'none';
+        const val = document.getElementById('pc-atac-valor'); if (val && o.dataset.atacado) val.textContent = fmt(Number(o.dataset.atacado));
+        if (!o.dataset.atacado) { const c = document.querySelector('input[name=modelo][value=comissao]'); if (c) c.checked = true; }
+      }
+      calc();
+    });
   }
 
   // Copiar código Pix
