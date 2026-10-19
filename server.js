@@ -2098,10 +2098,10 @@ const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 1
 // Valores próprios do parceiro por serviço (Limpa Nome usa as colunas antigas; Rating e combo ficam em valores_servicos)
 function valoresProprios(x, svc) {
   if (!x) return {};
-  if (svc === 'limpa_nome') return { preco: x.preco_centavos ?? null, comissao_tipo: x.comissao_tipo || null, comissao_valor: x.comissao_valor ?? null, atacado: x.atacado_centavos ?? null };
+  if (svc === 'limpa_nome') return { preco: x.preco_centavos ?? null, minimo: x.preco_minimo_centavos ?? null, comissao_tipo: x.comissao_tipo || null, comissao_valor: x.comissao_valor ?? null, atacado: x.atacado_centavos ?? null };
   let j = {}; try { j = JSON.parse(x.valores_servicos || '{}') || {}; } catch {}
   const v = j[svc] || {};
-  return { preco: v.preco ?? null, comissao_tipo: v.comissao_tipo || null, comissao_valor: v.comissao_valor ?? null, atacado: v.atacado ?? null };
+  return { preco: v.preco ?? null, minimo: v.minimo ?? null, comissao_tipo: v.comissao_tipo || null, comissao_valor: v.comissao_valor ?? null, atacado: v.atacado ?? null };
 }
 const tipoComissao = (t) => (['fixo', 'nossa_parte'].includes(t) ? t : 'percentual');
 const tipoComissaoOuNulo = (t) => (['fixo', 'nossa_parte', 'percentual'].includes(t) ? t : null);
@@ -2124,14 +2124,16 @@ function regraParceiro(uid, x = parceiroRow(uid) || {}, svc = 'limpa_nome') {
   // "nossa_parte": a Soft Consultas fica com um valor fixo e todo o resto é do parceiro
   const comissao = Math.min(cfg.preco, tipo === 'nossa_parte' ? Math.max(0, cfg.preco - valor) : tipo === 'fixo' ? valor : Math.round((cfg.preco * Math.min(100, valor)) / 100));
   const atac = vp.atacado ?? (Number(lerConfig(`${k}atacado_centavos`) || 0) || null);
+  // Preço mínimo: o parceiro pode dar desconto até esse valor (nunca abaixo da nossa parte)
+  const minCfg = vp.minimo ?? (Number(lerConfig(`${k}preco_minimo_centavos`) || 0) || null);
   // Com preço de atacado definido, ele é a nossa parte: tudo o que o parceiro cobrar acima disso é comissão dele (sem %)
   if (atac && atac >= 500) {
-    const com = Math.max(0, cfg.preco - atac);
-    return { servico: svc, nomeServico: SERVICOS[svc], disponivel: cfg.ativo && cfg.preco >= 500, comissaoTipo: 'nossa_parte', comissaoValor: atac, comissaoCentavos: com,
-      atacado: atac, preco: Math.max(cfg.preco, atac), nossaParte: atac, precoMaximo: Math.max(cfg.preco, atac) * 3, porAtacado: true };
+    const preco = Math.max(cfg.preco, atac);
+    return { servico: svc, nomeServico: SERVICOS[svc], disponivel: cfg.ativo && cfg.preco >= 500, comissaoTipo: 'nossa_parte', comissaoValor: atac, comissaoCentavos: preco - atac,
+      atacado: atac, preco, nossaParte: atac, precoMinimo: Math.min(preco, Math.max(atac, minCfg || preco)), precoMaximo: preco * 3, porAtacado: true };
   }
   return { servico: svc, nomeServico: SERVICOS[svc], disponivel: cfg.ativo && cfg.preco >= 500, comissaoTipo: tipo, comissaoValor: valor, comissaoCentavos: comissao,
-    atacado: atac && atac >= 500 ? atac : null, preco: cfg.preco, nossaParte: cfg.preco - comissao, precoMaximo: cfg.preco * 3 };
+    atacado: atac && atac >= 500 ? atac : null, preco: cfg.preco, nossaParte: cfg.preco - comissao, precoMinimo: Math.min(cfg.preco, Math.max(cfg.preco - comissao, minCfg || cfg.preco)), precoMaximo: cfg.preco * 3 };
 }
 const regrasParceiro = (uid, x = parceiroRow(uid) || {}) => Object.keys(SERVICOS).map((svc) => regraParceiro(uid, x, svc));
 function mensalidadeParceiro(x) {
@@ -2270,7 +2272,7 @@ rota('POST', '/parceiro/novo', exigeParceiro(async ({ req, res, usuario, parc })
   if (modelo === 'comissao' && String(v.preco_venda || '').trim()) {
     venda = centavos(v.preco_venda);
     if (!Number.isFinite(venda)) return erro('Valor de venda inválido. Use, por exemplo, 1.800,00.');
-    if (venda < r.preco) return erro(`O valor mínimo para o cliente é ${P.reais(r.preco)} (preço sugerido).`);
+    if (venda < r.precoMinimo) return erro(`O valor mínimo para o cliente é ${P.reais(r.precoMinimo)}.`);
     if (venda > r.precoMaximo) return erro(`O valor máximo é ${P.reais(r.precoMaximo)}. Confira se digitou certo.`);
   }
   const comissaoPedido = modelo === 'comissao' ? Math.max(0, venda - r.nossaParte) : 0;
@@ -2456,9 +2458,9 @@ function listaParceirosAdmin() {
     FROM parceiros x JOIN usuarios u ON u.id = x.usuario_id ORDER BY x.ativo DESC, x.criado_em DESC`).all()
     .map((x) => ({ ...x, saldo: saldoComissao(x.usuario_id), regra: regraParceiro(x.usuario_id, x), regras: regrasParceiro(x.usuario_id, x), proprios: { rating: valoresProprios(x, 'rating'), combo: valoresProprios(x, 'combo') }, mens: mensalidadeParceiro(x) }));
 }
-const padraoServico = (sv) => ({ comissaoTipo: tipoComissao(lerConfig(`parceiro_${sv}_comissao_tipo`)), comissaoValor: Number(lerConfig(`parceiro_${sv}_comissao_valor`) || 0),
+const padraoServico = (sv) => ({ minimo: Number(lerConfig(`parceiro_${sv}_preco_minimo_centavos`) || 0) || null, comissaoTipo: tipoComissao(lerConfig(`parceiro_${sv}_comissao_tipo`)), comissaoValor: Number(lerConfig(`parceiro_${sv}_comissao_valor`) || 0),
   preco: Number(lerConfig(`parceiro_${sv}_preco_centavos`) || 0) || null, atacado: Number(lerConfig(`parceiro_${sv}_atacado_centavos`) || 0) || null, precoSite: cfgServico(sv).preco });
-const padraoParceiro = () => ({ rating: padraoServico('rating'), combo: padraoServico('combo'), comissaoTipo: tipoComissao(lerConfig('parceiro_comissao_tipo')), comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
+const padraoParceiro = () => ({ rating: padraoServico('rating'), combo: padraoServico('combo'), minimo: Number(lerConfig('parceiro_preco_minimo_centavos') || 0) || null, comissaoTipo: tipoComissao(lerConfig('parceiro_comissao_tipo')), comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
   atacado: Number(lerConfig('parceiro_atacado_centavos') || 0) || null, mensalidade: Number(lerConfig('parceiro_mensalidade_centavos') || 0), preco: Number(lerConfig('parceiro_preco_centavos') || 0) || null });
 rota('GET', '/admin/parceiros', exigeAdmin(({ res, usuario, url }) => {
   pagina(res, 'Admin · Parceiros', SV.adminParceiros({ menu: PD.menu('/admin/parceiros'), padrao: padraoParceiro(), parceiros: listaParceirosAdmin(), cfg: lnCfgParceiro(),
@@ -2481,13 +2483,17 @@ rota('POST', '/admin/parceiros/padrao', exigeAdmin(async ({ req, res, usuario })
   if (valor === null || Number.isNaN(valor)) return voltaParc(res, tipo === 'percentual' ? 'Informe a comissão entre 0 e 100%.' : 'Informe o valor em reais.');
   if (Number.isNaN(atac) || (atac !== null && atac < 500)) return voltaParc(res, 'Preço de atacado inválido (mínimo R$ 5,00, ou deixe vazio).');
   if (Number.isNaN(mens)) return voltaParc(res, 'Mensalidade inválida.');
-  const precoP = lerReais(f.preco);
+  const precoP = lerReais(f.preco), minP = lerReais(f.minimo);
+  if (Number.isNaN(minP)) return voltaParc(res, 'Preço mínimo inválido.');
+  gravarConfig('parceiro_preco_minimo_centavos', minP ? String(minP) : '');
   if (Number.isNaN(precoP) || (precoP !== null && precoP < 500)) return voltaParc(res, 'Preço de venda inválido.');
   gravarConfig('parceiro_preco_centavos', precoP ? String(precoP) : '');
   // Rating e combo: mesmos campos com prefixo (rating_..., combo_...)
   const extra = [];
   for (const sv of ['rating', 'combo']) {
-    const t2 = tipoComissao(f[`${sv}_tipo`]), v2 = lerComissao(t2, f[`${sv}_valor`]), p2 = lerReais(f[`${sv}_preco`]), a2 = lerReais(f[`${sv}_atacado`]);
+    const t2 = tipoComissao(f[`${sv}_tipo`]), v2 = lerComissao(t2, f[`${sv}_valor`]), p2 = lerReais(f[`${sv}_preco`]), a2 = lerReais(f[`${sv}_atacado`]), m2 = lerReais(f[`${sv}_minimo`]);
+    if (Number.isNaN(m2)) return voltaParc(res, `Preço mínimo inválido em ${SERVICOS[sv]}.`);
+    gravarConfig(`parceiro_${sv}_preco_minimo_centavos`, m2 ? String(m2) : '');
     if (Number.isNaN(v2) || Number.isNaN(p2) || Number.isNaN(a2) || (p2 !== null && p2 < 500) || (a2 !== null && a2 < 500)) return voltaParc(res, `Valores inválidos em ${SERVICOS[sv]}.`);
     gravarConfig(`parceiro_${sv}_comissao_tipo`, t2); gravarConfig(`parceiro_${sv}_comissao_valor`, String(v2 ?? 0));
     gravarConfig(`parceiro_${sv}_preco_centavos`, p2 ? String(p2) : ''); gravarConfig(`parceiro_${sv}_atacado_centavos`, a2 ? String(a2) : '');
@@ -2541,7 +2547,8 @@ rota('POST', '/admin/parceiros/salvar', exigeAdmin(async ({ req, res, usuario })
   if (!x) return voltaParc(res, 'Parceiro não encontrado.');
   const voltaP = (r, m, ok) => redirecionar(r, `/admin/parceiros/${x.usuario_id}?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
   const tipo = tipoComissaoOuNulo(f.tipo);
-  const valor = tipo ? lerComissao(tipo, f.valor) : null, atac = lerReais(f.atacado), mens = lerReais(f.mensalidade), preco = lerReais(f.preco);
+  const valor = tipo ? lerComissao(tipo, f.valor) : null, atac = lerReais(f.atacado), mens = lerReais(f.mensalidade), preco = lerReais(f.preco), minimo = lerReais(f.minimo);
+  if (Number.isNaN(minimo)) return voltaP(res, 'Preço mínimo inválido.');
   if (Number.isNaN(preco) || (preco !== null && preco < 500)) return voltaP(res, 'Preço de venda inválido (mínimo R$ 5,00, ou deixe vazio para usar o padrão).');
   if (tipo && (valor === null || Number.isNaN(valor))) return voltaP(res, 'Informe o valor da comissão própria (ou escolha "padrão").');
   if (Number.isNaN(atac) || (atac !== null && atac > 0 && atac < 500)) return voltaP(res, 'Preço de atacado inválido (use 0 para desligar o atacado deste parceiro).');
@@ -2555,12 +2562,13 @@ rota('POST', '/admin/parceiros/salvar', exigeAdmin(async ({ req, res, usuario })
   const vs = {};
   for (const sv of ['rating', 'combo']) {
     const t2 = tipoComissaoOuNulo(f[`${sv}_tipo`]);
-    const v2 = t2 ? lerComissao(t2, f[`${sv}_valor`]) : null, p2 = lerReais(f[`${sv}_preco`]), a2 = lerReais(f[`${sv}_atacado`]);
+    const v2 = t2 ? lerComissao(t2, f[`${sv}_valor`]) : null, p2 = lerReais(f[`${sv}_preco`]), a2 = lerReais(f[`${sv}_atacado`]), m2 = lerReais(f[`${sv}_minimo`]);
+    if (Number.isNaN(m2)) return voltaP(res, `Preço mínimo inválido em ${SERVICOS[sv]}.`);
     if ((t2 && (v2 === null || Number.isNaN(v2))) || Number.isNaN(p2) || Number.isNaN(a2) || (p2 !== null && p2 < 500) || (a2 !== null && a2 > 0 && a2 < 500)) return voltaP(res, `Valores inválidos em ${SERVICOS[sv]}.`);
-    vs[sv] = { preco: p2, comissao_tipo: t2, comissao_valor: t2 ? v2 : null, atacado: a2 };
+    vs[sv] = { preco: p2, minimo: m2, comissao_tipo: t2, comissao_valor: t2 ? v2 : null, atacado: a2 };
   }
-  db.prepare("UPDATE parceiros SET ativo = ?, comissao_tipo = ?, comissao_valor = ?, atacado_centavos = ?, mensalidade_centavos = ?, isento = ?, pago_ate = ?, preco_centavos = ?, obs = ?, valores_servicos = ?, repasse_auto = ?, repasse_pix = ?, atualizado_em = datetime('now') WHERE usuario_id = ?")
-    .run(ativo, tipo, tipo ? valor : null, atac, mens, isento, pagoAte, preco, obs || null, JSON.stringify(vs), repAuto, repPix || null, x.usuario_id);
+  db.prepare("UPDATE parceiros SET ativo = ?, comissao_tipo = ?, comissao_valor = ?, atacado_centavos = ?, mensalidade_centavos = ?, isento = ?, pago_ate = ?, preco_centavos = ?, obs = ?, valores_servicos = ?, repasse_auto = ?, repasse_pix = ?, preco_minimo_centavos = ?, atualizado_em = datetime('now') WHERE usuario_id = ?")
+    .run(ativo, tipo, tipo ? valor : null, atac, mens, isento, pagoAte, preco, obs || null, JSON.stringify(vs), repAuto, repPix || null, minimo, x.usuario_id);
   if (repAuto && repPix) db.prepare('UPDATE usuarios SET chave_pix = ? WHERE id = ?').run(repPix, x.usuario_id);
   db.prepare('UPDATE usuarios SET parceiro = ? WHERE id = ?').run(ativo, x.usuario_id);
   if (!ativo && x.assinatura_id) { await AS.cancelarAssinatura(x.assinatura_id).catch(() => {}); db.prepare('UPDATE parceiros SET assinatura_id = NULL, assinatura_link = NULL WHERE usuario_id = ?').run(x.usuario_id); }

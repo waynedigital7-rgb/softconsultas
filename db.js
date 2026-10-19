@@ -436,7 +436,7 @@ db.exec(`
   );
 `);
 // Mensalidade do parceiro (assinatura no Asaas)
-for (const [c, def] of [['repasse_auto', 'INTEGER NOT NULL DEFAULT 0'], ['repasse_pix', 'TEXT'], ['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
+for (const [c, def] of [['repasse_auto', 'INTEGER NOT NULL DEFAULT 0'], ['repasse_pix', 'TEXT'], ['preco_minimo_centavos', 'INTEGER'], ['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
 // Ficha cadastral do Rating Bancário (dados do cliente; a senha do Serasa fica criptografada)
@@ -499,6 +499,7 @@ const padrao = {
   parceiro_atacado_centavos: '',
   parceiro_mensalidade_centavos: '9900',
   parceiro_preco_centavos: '150000',
+  parceiro_preco_minimo_centavos: '100000',
   // Rating bancário (venda direta) e combo Limpa Nome + Rating
   rtg_ativo: '0',
   rtg_preco_centavos: '0',

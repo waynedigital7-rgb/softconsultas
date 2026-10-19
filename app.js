@@ -98,10 +98,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const sel = document.getElementById('pc-servico');
     if (sel) sel.addEventListener('change', () => {
       const o = sel.selectedOptions[0];
-      venda.dataset.vendaNossa = o.dataset.nossa; venda.dataset.vendaMin = o.dataset.preco; venda.dataset.vendaMax = o.dataset.max;
+      venda.dataset.vendaNossa = o.dataset.nossa; venda.dataset.vendaMin = o.dataset.min || o.dataset.preco; venda.dataset.vendaMax = o.dataset.max;
       venda.value = (Number(o.dataset.preco) / 100).toFixed(2).replace('.', ',');
       const regra = document.getElementById('pc-regra');
-      if (regra) regra.textContent = `Mínimo ${fmt(Number(o.dataset.preco))}. A nossa parte é ${fmt(Number(o.dataset.nossa))}; tudo acima disso é comissão sua.`;
+      if (regra) regra.textContent = `Sugerido ${fmt(Number(o.dataset.preco))}; você pode dar desconto até ${fmt(Number(o.dataset.min || o.dataset.preco))}. A nossa parte é ${fmt(Number(o.dataset.nossa))}: tudo acima disso é comissão sua.`;
       const op = document.getElementById('pc-atac-op');
       if (op) {
         op.style.display = o.dataset.atacado ? 'flex' : 'none';
