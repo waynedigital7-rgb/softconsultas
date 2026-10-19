@@ -18,7 +18,7 @@ import * as A from './auth.js';
 import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
 import { montarEmail, perfilDo, ETAPAS, PERFIS, CAMPANHAS, montarCampanha } from './emails-marketing.js';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, createHash } from 'node:crypto';
 import { TERMOS, PRIVACIDADE } from './textos.js';
 import { PUBLICOS, paginaLanding } from './landings.js';
 
@@ -224,7 +224,7 @@ function acharRota(metodo, caminho) {
 const exigeLogin = (fn) => async (ctx) => {
   if (ctx.usuario) return fn(ctx);
   const destino = ctx.req.method === 'GET' ? `${ctx.url.pathname}${ctx.url.search}` : '';
-  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
+  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x|parceiro)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
   return redirecionar(ctx.res, '/entrar', ok ? { 'Set-Cookie': `sc_voltar=${encodeURIComponent(destino)}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax` } : {});
 };
 const exigeAdmin = (fn) => async (ctx) => (ctx.usuario?.admin ? fn(ctx) : redirecionar(ctx.res, ctx.usuario ? '/painel' : '/entrar'));
@@ -306,7 +306,7 @@ rota('POST', '/entrar', async ({ req, res }) => {
   if (!u.ativo) return erro('Esta conta está desativada. Fale com o suporte.', 403);
   A.limparLimite(`login:${email}`);
   const voltar = String(cookies(req).sc_voltar || '');
-  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
+  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x|parceiro)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
   redirecionar(res, destinoOk, { 'Set-Cookie': [A.cookieSessao(A.criarSessao(u.id), ehHttps(req)), 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
@@ -657,6 +657,8 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
     return;
   }
   const ref = String(payment?.externalReference || '');
+  // Mensalidade dos parceiros (assinatura)
+  if (payment?.subscription || ref.startsWith(AS.PREFIXO_PARCEIRO)) { try { if (webhookParceiro(event, payment)) return; } catch (e) { console.error('webhook parceiro:', e.message); return; } }
   // Assinaturas do monitoramento (inclui PAYMENT_CREATED para avisar a renovação no Pix)
   if (payment?.subscription || ref.startsWith(AS.PREFIXO_MONITORAMENTO)) { try { if (webhookMonitoramento(event, payment)) return; } catch (e) { console.error('webhook monitoramento:', e.message); return; } }
   if (!['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) return;
@@ -704,7 +706,7 @@ async function expirarCobrancasAbertas() {
       db.prepare("UPDATE recargas SET status = 'expirada' WHERE id = ? AND status = 'pendente'").run(r.id);
     } catch (e) { console.warn('expirar recarga', r.id, e.message); }
   }
-  const peds = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status = 'aguardando_pagamento' AND criado_em < datetime('now', '-3 days') ORDER BY id LIMIT 50").all();
+  const peds = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status = 'aguardando_pagamento' AND ((parceiro_id IS NULL AND criado_em < datetime('now', '-3 days')) OR (parceiro_id IS NOT NULL AND COALESCE(atualizado_em, criado_em) < datetime('now', '-7 days'))) ORDER BY id LIMIT 50").all();
   for (const p of peds) {
     try {
       if (p.asaas_id) {
@@ -2085,6 +2087,403 @@ rota('POST', '/admin/raio-x', exigeAdmin(async ({ req, res, usuario }) => {
   volta('Salvo.', true);
 }));
 
+// ======================= ÁREA DE PARCEIROS (Limpa Nome) =======================
+// O parceiro cadastra o cliente e escolhe: o cliente paga pelo link (parceiro ganha comissão) ou o parceiro paga o atacado.
+// Mensalidade do parceiro: assinatura mensal no Asaas; sem mensalidade em dia ele não cadastra clientes novos (acompanha os antigos).
+const RODAPE_PARC = 'Você recebe este e-mail porque é parceiro do Limpa Nome da Soft Consultas.';
+const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+const parceiroRow = (uid) => db.prepare('SELECT * FROM parceiros WHERE usuario_id = ?').get(uid);
+function regraParceiro(uid, x = parceiroRow(uid) || {}) {
+  const cfg = lnCfg();
+  const proprio = !!x.comissao_tipo;
+  const tipo = (proprio ? x.comissao_tipo : lerConfig('parceiro_comissao_tipo')) === 'fixo' ? 'fixo' : 'percentual';
+  const valor = Math.max(0, Number(proprio ? x.comissao_valor : lerConfig('parceiro_comissao_valor')) || 0);
+  const comissao = Math.min(cfg.preco, tipo === 'fixo' ? valor : Math.round((cfg.preco * Math.min(100, valor)) / 100));
+  const atac = x.atacado_centavos ?? (Number(lerConfig('parceiro_atacado_centavos') || 0) || null);
+  return { comissaoTipo: tipo, comissaoValor: valor, comissaoCentavos: comissao, atacado: atac && atac >= 500 ? atac : null };
+}
+function mensalidadeParceiro(x) {
+  const valor = x.mensalidade_centavos ?? Number(lerConfig('parceiro_mensalidade_centavos') || 0);
+  const emDia = !!x.isento || valor <= 0 || (x.pago_ate && x.pago_ate >= hojeBR());
+  return { valor, isento: !!x.isento || valor <= 0, emDia, pagoAte: x.pago_ate, assinatura: x.assinatura_id, forma: x.assinatura_forma, link: x.assinatura_link };
+}
+// Credita uma mensalidade paga: estende o acesso por 1 mês a partir do maior entre hoje e o vencimento atual
+function creditarMensalidade(uid, pagamentoId) {
+  const x = parceiroRow(uid);
+  if (!x || (pagamentoId && x.ultimo_pagamento === pagamentoId)) return false;
+  const base = x.pago_ate && x.pago_ate > hojeBR() ? x.pago_ate : hojeBR();
+  const ate = db.prepare("SELECT date(?, '+1 month') d").get(base).d;
+  db.prepare("UPDATE parceiros SET pago_ate = ?, ultimo_pagamento = ?, atualizado_em = datetime('now') WHERE usuario_id = ?").run(ate, pagamentoId || null, uid);
+  const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(uid);
+  registrar(null, 'Parceiro: mensalidade paga', `${u?.email} · acesso até ${ate}`);
+  return true;
+}
+function webhookParceiro(event, payment) {
+  const ref = String(payment?.externalReference || '');
+  const x = (payment?.subscription && db.prepare('SELECT * FROM parceiros WHERE assinatura_id = ?').get(payment.subscription))
+    || (ref.startsWith(AS.PREFIXO_PARCEIRO) && parceiroRow(Number(ref.slice(AS.PREFIXO_PARCEIRO.length))));
+  if (!x) return false;
+  if (['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) creditarMensalidade(x.usuario_id, payment.id);
+  else if (event === 'PAYMENT_CREATED' && x.assinatura_forma === 'pix' && x.ativo) {
+    db.prepare('UPDATE parceiros SET assinatura_link = ? WHERE usuario_id = ?').run(payment.invoiceUrl || x.assinatura_link, x.usuario_id);
+    const u = db.prepare('SELECT email FROM usuarios WHERE id = ?').get(x.usuario_id);
+    emailServico({ para: u?.email, assunto: 'Mensalidade de parceiro disponível', titulo: 'Sua mensalidade de parceiro',
+      html: `<p>A mensalidade da sua área de parceiro (<strong>${P.reais(Math.round(Number(payment.value) * 100))}</strong>) já pode ser paga por Pix. Pagando em dia, você continua cadastrando clientes no Limpa Nome sem interrupção.</p>`,
+      botao: { href: payment.invoiceUrl || `${baseEmails()}/parceiro`, texto: 'Pagar com Pix' }, rodape: RODAPE_PARC });
+  }
+  return true;
+}
+// Quando o webhook falha: confere no Asaas se alguma mensalidade foi paga
+async function conferirMensalidade(x) {
+  if (!x?.assinatura_id || !A.limitar(`mensp:${x.usuario_id}`, 6, 10)) return;
+  try {
+    const pags = (await AS.pagamentosAssinatura(x.assinatura_id))?.data || [];
+    const pago = pags.filter((p) => AS.STATUS_PAGO.includes(p.status)).sort((a, b) => String(b.dueDate).localeCompare(String(a.dueDate)))[0];
+    if (pago && pago.id !== x.ultimo_pagamento && !(x.pago_ate && x.pago_ate >= hojeBR())) creditarMensalidade(x.usuario_id, pago.id);
+  } catch (e) { console.warn('mensalidade parceiro:', e.message); }
+}
+const exigeParceiro = (fn) => exigeLogin(async (ctx) => {
+  const x = parceiroRow(ctx.usuario.id);
+  if (!x?.ativo) return redirecionar(ctx.res, '/painel');
+  return fn({ ...ctx, parc: x });
+});
+const emailParceiroLN = (p, titulo, texto) => {
+  if (!p.parceiro_id) return;
+  const u = db.prepare('SELECT email FROM usuarios WHERE id = ?').get(p.parceiro_id);
+  emailServico({ para: u?.email, assunto: `${titulo} · cliente ${String(p.nome).split(' ')[0]} (#${p.id})`, titulo,
+    html: `<p>${texto}</p><p style="font-size:14px;color:#7A7285">Cliente: ${P.esc(p.nome)} · pedido #${p.id}</p>`, botao: { href: `${baseEmails()}/parceiro/cliente/${p.id}`, texto: 'Ver na área do parceiro' }, rodape: RODAPE_PARC });
+};
+
+rota('GET', '/parceiro', exigeParceiro(async ({ req, res, usuario, url, parc }) => {
+  if (!mensalidadeParceiro(parc).emDia && parc.assinatura_id) { await conferirMensalidade(parc); parc = parceiroRow(usuario.id); }
+  const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE parceiro_id = ? ORDER BY id DESC LIMIT 500').all(usuario.id);
+  const n = (f) => pedidos.filter(f).length;
+  const k = { total: pedidos.length, aguardando: n((p) => p.status === 'aguardando_pagamento'), pagos: n((p) => p.pago_em && p.status !== 'reembolsado'),
+    andamento: n((p) => ['pago', 'em_analise', 'em_lote', 'em_andamento', 'decisao'].includes(p.status)), concluidos: n((p) => p.status === 'concluido'),
+    comissoes: db.prepare("SELECT COALESCE(SUM(valor_centavos), 0) s FROM comissoes WHERE usuario_id = ? AND tipo = 'comissao' AND referencia LIKE 'ln_%'").get(usuario.id).s };
+  const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.' };
+  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, r: regraParceiro(usuario.id, parc), cfg: lnCfg(), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
+    ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+
+// Mensalidade: cria a assinatura mensal e leva para o primeiro pagamento
+rota('POST', '/parceiro/mensalidade', exigeParceiro(async ({ req, res, usuario, parc }) => {
+  const f = await corpoForm(req);
+  const volta = (m) => redirecionar(res, `/parceiro?erro=${encodeURIComponent(m)}`);
+  const m = mensalidadeParceiro(parc);
+  if (f.acao === 'cancelar') {
+    if (parc.assinatura_id) await AS.cancelarAssinatura(parc.assinatura_id).catch((e) => console.warn('cancelar assinatura parceiro:', e.message));
+    db.prepare("UPDATE parceiros SET assinatura_id = NULL, assinatura_link = NULL, atualizado_em = datetime('now') WHERE usuario_id = ?").run(usuario.id);
+    registrar(usuario, 'Parceiro: cancelou a mensalidade', usuario.email);
+    return redirecionar(res, '/parceiro?ok=mens');
+  }
+  if (m.isento) return volta('Sua área de parceiro não tem mensalidade.');
+  if (parc.assinatura_id && m.link && !m.emDia) return redirecionar(res, m.link);
+  if (parc.assinatura_id) return volta('Sua mensalidade já está ativa.');
+  if (!A.limitar(`assp:${usuario.id}`, 4, 60)) return volta('Muitas tentativas. Aguarde alguns minutos.');
+  const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
+  try {
+    let clienteId = db.prepare('SELECT asaas_cliente_id FROM usuarios WHERE id = ?').get(usuario.id).asaas_cliente_id;
+    if (!clienteId) {
+      if (!usuario.documento) return volta('Cadastre o seu CPF ou CNPJ em "Minha conta" para gerar a mensalidade.');
+      clienteId = (await AS.criarCliente(usuario)).id;
+      db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
+    }
+    const sub = await AS.criarAssinatura({ clienteId, valorCentavos: m.valor, ciclo: 'mensal', forma, descricao: 'Mensalidade parceiro Limpa Nome - Soft Consultas', ref: `${AS.PREFIXO_PARCEIRO}${usuario.id}` });
+    const pag = (await AS.pagamentosAssinatura(sub.id).catch(() => ({ data: [] })))?.data?.[0] || null;
+    db.prepare("UPDATE parceiros SET assinatura_id = ?, assinatura_forma = ?, assinatura_link = ?, atualizado_em = datetime('now') WHERE usuario_id = ?").run(sub.id, forma, pag?.invoiceUrl || null, usuario.id);
+    registrar(usuario, 'Parceiro: assinou a mensalidade', `${usuario.email} · ${P.reais(m.valor)} · ${forma}`);
+    if (pag?.invoiceUrl) return redirecionar(res, pag.invoiceUrl);
+    redirecionar(res, '/parceiro');
+  } catch (e) { console.error('assinatura parceiro:', e.message); volta('Não foi possível gerar a mensalidade agora. Tente de novo em instantes.'); }
+}));
+
+rota('GET', '/parceiro/novo', exigeParceiro(({ res, usuario, parc }) => {
+  const cfg = lnCfg();
+  if (!cfg.ativo) return redirecionar(res, '/parceiro');
+  if (!mensalidadeParceiro(parc).emDia) return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Ative a mensalidade para cadastrar clientes novos.')}`);
+  pagina(res, 'Cadastrar cliente', SV.paginaParceiroNovo({ cfg, r: regraParceiro(usuario.id, parc) }), usuario);
+}));
+
+rota('POST', '/parceiro/novo', exigeParceiro(async ({ req, res, usuario, parc }) => {
+  const cfg = lnCfg(), r = regraParceiro(usuario.id, parc);
+  let v = {};
+  const erro = (m) => pagina(res, 'Cadastrar cliente', SV.paginaParceiroNovo({ cfg, r, v, erro: m }), usuario, 400);
+  if (!cfg.ativo || cfg.preco < 500) return erro('O Limpa Nome não está recebendo pedidos no momento.');
+  if (!mensalidadeParceiro(parc).emDia) return erro('Ative a mensalidade de parceiro para cadastrar clientes novos.');
+  let form;
+  try { form = await corpoMultipart(req, 11 * 1024 * 1024); } catch (e) { return erro(e.message === 'arquivo grande demais' ? 'Arquivos grandes demais (até 5 MB cada).' : 'Não foi possível ler o formulário.'); }
+  v = form.campos;
+  const modelo = v.modelo === 'atacado' ? 'atacado' : 'comissao';
+  if (modelo === 'atacado' && !r.atacado) return erro('O modelo de atacado não está liberado para você.');
+  const nome = String(v.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const cpf = A.soNumeros(v.cpf);
+  const nasc = String(v.nascimento || '');
+  const tel = A.soNumeros(v.telefone);
+  const email = String(v.email || '').trim().toLowerCase().slice(0, 120);
+  const docTipo = v.doc_tipo === 'CNH' ? 'CNH' : 'RG';
+  const forma = modelo === 'atacado' && v.forma === 'cartao' ? 'cartao' : 'pix';
+  if (nome.split(' ').length < 2) return erro('Informe o nome completo do titular.');
+  if (!((cpf.length === 11 || cpf.length === 14) && A.documentoValido(cpf))) return erro('CPF ou CNPJ inválido.');
+  const anos = (Date.now() - Date.parse(nasc)) / (365.25 * 86400000);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nasc) || !(anos >= 18 && anos < 120)) return erro('Informe uma data de nascimento válida (o titular ou sócio precisa ser maior de idade).');
+  if (tel.length < 10 || tel.length > 13) return erro('Informe o WhatsApp do cliente com DDD.');
+  if (!A.emailValido(email)) return erro('Informe um e-mail válido do cliente.');
+  if (v.aceite !== '1') return erro('Confirme que você tem a autorização do titular.');
+  if (db.prepare(`SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND status IN ('pago','em_analise','em_lote','em_andamento','decisao')`).get(cpf)) return erro('Já existe um pedido em andamento para este CPF/CNPJ.');
+  if (db.prepare("SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND parceiro_id = ? AND status = 'aguardando_pagamento'").get(cpf, usuario.id)) return erro('Você já tem um pedido aguardando pagamento para este CPF/CNPJ. Reenvie o link ou cancele o anterior.');
+  const docs = {};
+  for (const lado of ['doc_frente', 'doc_verso']) {
+    const a = form.arquivos[lado];
+    if (!a) continue;
+    if (a.dados.length > 5 * 1024 * 1024) return erro('Cada arquivo pode ter até 5 MB.');
+    const t = tipoDoc(a.dados);
+    if (!t) return erro('Envie o documento em JPG, PNG, WEBP ou PDF.');
+    docs[lado] = { t, dados: a.dados };
+  }
+  if (!docs.doc_frente) return erro('Envie a foto da frente do documento.');
+  if (!A.limitar(`lnp:${usuario.id}`, 30, 60)) return erro('Muitos cadastros em pouco tempo. Aguarde alguns minutos.');
+  const valor = modelo === 'atacado' ? r.atacado : cfg.preco;
+  const token = randomBytes(16).toString('hex');
+  const id = Number(db.prepare(`INSERT INTO limpa_nome_pedidos (usuario_id, nome, cpf, nascimento, telefone, email, doc_tipo, titular_proprio, aceite_em, aceite_ip, valor_centavos, forma_pagamento, parcelas, juros_centavos,
+      parceiro_id, parceiro_modelo, parceiro_comissao_centavos, token) VALUES (?, ?, ?, ?, ?, ?, ?, 0, datetime('now'), ?, ?, ?, 1, 0, ?, ?, ?, ?)`)
+    .run(usuario.id, nome, cpf, nasc, tel, email, docTipo, ipDe(req), valor, forma, usuario.id, modelo, modelo === 'comissao' ? r.comissaoCentavos : 0, token).lastInsertRowid);
+  try {
+    const nomes = {};
+    for (const [lado, d] of Object.entries(docs)) {
+      const arq = `${id}-${lado.slice(4)}-${randomBytes(8).toString('hex')}.${d.t}`;
+      await writeFile(path.join(pastaDocsLimpaNome, arq), d.dados, { mode: 0o600 });
+      nomes[lado] = arq;
+    }
+    db.prepare('UPDATE limpa_nome_pedidos SET doc_frente = ?, doc_verso = ? WHERE id = ?').run(nomes.doc_frente || null, nomes.doc_verso || null, id);
+  } catch (e) {
+    db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Falha ao salvar os documentos', atualizado_em = datetime('now') WHERE id = ?").run(id);
+    return erro('Não foi possível salvar os documentos. Tente de novo.');
+  }
+  registrar(usuario, 'Parceiro: cliente cadastrado', `#${id} · ${nome} · ${modelo === 'atacado' ? `atacado ${P.reais(valor)}` : `cliente paga · comissão ${P.reais(r.comissaoCentavos)}`}`);
+  if (modelo === 'comissao') {
+    const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
+    emailPedidoLN(p, 'Falta só o pagamento do seu Limpa Nome', `O seu pedido de Limpa Nome foi cadastrado por <strong>${P.esc(usuario.nome)}</strong>. Para entrar no próximo lote da ação coletiva, conclua o pagamento de <strong>${P.reais(cfg.preco)}</strong> (Pix ou até ${cfg.parcelas}x no cartão) pelo botão abaixo.`);
+    return redirecionar(res, `/parceiro/cliente/${id}?novo=1`);
+  }
+  // Atacado: o parceiro paga agora
+  try {
+    let clienteId = db.prepare('SELECT asaas_cliente_id FROM usuarios WHERE id = ?').get(usuario.id).asaas_cliente_id;
+    if (!clienteId && usuario.documento) {
+      clienteId = (await AS.criarCliente(usuario)).id;
+      db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
+    }
+    if (!clienteId) clienteId = (await AS.criarCliente({ nome, documento: cpf, email: usuario.email, telefone: tel })).id;
+    const cob = await AS.criarCobrancaServico({ clienteId, valorCentavos: valor, pedidoId: id, forma, parcelas: 1, descricao: `Limpa Nome (parceiro, atacado) - ${nome} #${id}` });
+    let pix = null;
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
+    db.prepare("UPDATE limpa_nome_pedidos SET asaas_id = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ?, atualizado_em = datetime('now') WHERE id = ?")
+      .run(cob.id, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, id);
+    if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
+    redirecionar(res, `/parceiro/cliente/${id}`);
+  } catch (e) {
+    console.error('parceiro atacado:', e.message);
+    db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Falha ao gerar a cobrança', atualizado_em = datetime('now') WHERE id = ?").run(id);
+    erro('Não foi possível gerar a cobrança agora. Tente de novo em instantes.');
+  }
+}));
+
+rota('GET', '/parceiro/cliente/:id', exigeParceiro(({ req, res, usuario, url, params }) => {
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ? AND parceiro_id = ?').get(Number(params.id), usuario.id);
+  if (!p) return redirecionar(res, '/parceiro');
+  const link = `${urlBase(req)}/ln/${p.token}`;
+  const tel = String(p.telefone || '').replace(/\D/g, '');
+  const wpp = `https://wa.me/${tel.length <= 11 ? '55' + tel : tel}?text=${encodeURIComponent(`Olá, ${String(p.nome).split(' ')[0]}! Segue o link para concluir o seu Limpa Nome (pedido #${p.id}). Você paga com Pix ou cartão e acompanha cada etapa por ele: ${link}`)}`;
+  const topo = `${url.searchParams.get('novo') ? '<div class="aviso ok">Cliente cadastrado! Agora envie o link de pagamento para ele.</div>' : ''}
+<div class="cartao" style="max-width:620px;margin-bottom:18px">
+  <p style="margin:0 0 6px"><strong>${p.parceiro_modelo === 'atacado' ? `Atacado · você paga ${P.reais(p.valor_centavos)}` : `O cliente paga · sua comissão: ${P.reais(p.parceiro_comissao_centavos)}`}</strong></p>
+  <p class="muted" style="margin:0 0 10px">${P.esc(p.email)} · ${P.esc(p.telefone)}</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    ${p.status === 'aguardando_pagamento' && p.parceiro_modelo !== 'atacado' ? `<a class="btn" style="background:#1FA855" href="${P.esc(wpp)}" target="_blank" rel="noopener">Enviar link no WhatsApp</a>` : ''}
+    <button class="btn sec" type="button" data-copiar-texto="${P.esc(link)}">Copiar link do cliente</button>
+  </div></div>`;
+  pagina(res, `Cliente #${p.id}`, SV.paginaPedidoLN({ p, cfg: lnCfg(), voltar: ['/parceiro', '← Área do parceiro'], statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo !== 'atacado', topo }), usuario);
+}));
+
+rota('POST', '/parceiro/cliente/:id/cancelar', exigeParceiro(async ({ req, res, usuario, params }) => {
+  await corpoForm(req);
+  const p = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE id = ? AND parceiro_id = ? AND status = 'aguardando_pagamento'").get(Number(params.id), usuario.id);
+  if (!p) return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Este pedido não pode mais ser cancelado.')}`);
+  if (p.asaas_id) {
+    const c = await AS.buscarCobranca(p.asaas_id).catch(() => null);
+    if (c && AS.STATUS_PAGO.includes(c.status)) { confirmarPedidoLN(p.id); return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Este pedido já foi pago, não dá para cancelar.')}`); }
+    if (c && !c.deleted) await AS.cancelarCobranca(p.asaas_id).catch(() => {});
+  }
+  db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Cancelado pelo parceiro', atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(p.id);
+  registrar(usuario, 'Parceiro: cancelou pedido', `#${p.id} · ${p.nome}`);
+  redirecionar(res, '/parceiro?ok=cancel');
+}));
+
+// ---------- Link do cliente (sem login) ----------
+const pedidoToken = (t) => (/^[a-f0-9]{32}$/.test(String(t)) ? db.prepare('SELECT * FROM limpa_nome_pedidos WHERE token = ?').get(t) : null);
+const cfgPublicoLN = (p) => ({ ...lnCfgComTabela(), ajudaUrl: `/ln/${p.token}/ajuda` });
+rota('GET', '/ln/:token', ({ res, usuario, params, url }) => {
+  const p = pedidoToken(params.token);
+  if (!p) return pagina(res, 'Pedido não encontrado', P.paginaEmBreve('Link inválido', 'Este link de pedido não existe. Confira com quem te enviou.'), usuario, 404);
+  const cfg = cfgPublicoLN(p);
+  const parceiro = db.prepare('SELECT nome FROM usuarios WHERE id = ?').get(p.parceiro_id)?.nome || 'nosso parceiro';
+  if (p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && !p.asaas_id)
+    return pagina(res, 'Limpa Nome · pagamento', SV.paginaPagarClienteLN({ p, cfg, parceiro, erro: url.searchParams.get('erro') || '' }), usuario);
+  const trocar = p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && p.asaas_id
+    ? `<form method="post" action="/ln/${p.token}/trocar" style="max-width:520px;text-align:center;margin:0 auto 18px"><button class="btn sec" style="min-height:34px;padding:4px 14px;font-size:.85rem">Trocar a forma de pagamento</button></form>` : '';
+  pagina(res, `Limpa Nome · pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg, voltar: null, statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo === 'atacado', topo: trocar }), usuario);
+});
+
+rota('POST', '/ln/:token/pagar', async ({ req, res, params }) => {
+  const p = pedidoToken(params.token);
+  if (!p) return redirecionar(res, '/');
+  const f = await corpoForm(req);
+  const volta = (m) => redirecionar(res, `/ln/${p.token}${m ? `?erro=${encodeURIComponent(m)}` : ''}`);
+  if (p.status !== 'aguardando_pagamento' || p.parceiro_modelo !== 'comissao' || p.asaas_id) return volta();
+  const cfg = lnCfgComTabela();
+  if (f.aceite !== '1') return volta('Confirme a autorização para continuar.');
+  if (!A.limitar(`lnt:${p.id}`, 8, 60)) return volta('Muitas tentativas. Aguarde alguns minutos.');
+  const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
+  const parcelas = forma === 'cartao' ? Math.min(cfg.parcelas, Math.max(1, Math.floor(Number(f.parcelas) || 1))) : 1;
+  const total = forma === 'cartao' ? cfg.tabela[parcelas - 1].total : cfg.preco;
+  try {
+    const clienteId = (await AS.criarCliente({ nome: p.nome, documento: p.cpf, email: p.email, telefone: p.telefone })).id;
+    const cob = await AS.criarCobrancaServico({ clienteId, valorCentavos: total, pedidoId: p.id, forma, parcelas });
+    let pix = null;
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
+    db.prepare(`UPDATE limpa_nome_pedidos SET valor_centavos = ?, forma_pagamento = ?, parcelas = ?, juros_centavos = ?, asaas_id = ?, asaas_parcelamento = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ?,
+      cliente_aceite_em = datetime('now'), cliente_aceite_ip = ?, atualizado_em = datetime('now') WHERE id = ? AND asaas_id IS NULL`)
+      .run(total, forma, parcelas, total - cfg.preco, cob.id, cob.installment || null, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, ipDe(req), p.id);
+    if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
+    volta();
+  } catch (e) { console.error('link cliente LN:', e.message); volta('Não foi possível gerar o pagamento agora. Tente de novo em instantes.'); }
+});
+
+rota('POST', '/ln/:token/trocar', async ({ req, res, params }) => {
+  const p = pedidoToken(params.token);
+  if (!p) return redirecionar(res, '/');
+  await corpoForm(req);
+  if (p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && p.asaas_id && A.limitar(`lnx:${p.id}`, 5, 60)) {
+    const c = await AS.buscarCobranca(p.asaas_id).catch(() => null);
+    if (c && AS.STATUS_PAGO.includes(c.status)) confirmarPedidoLN(p.id);
+    else {
+      if (c && !c.deleted) await AS.cancelarCobranca(p.asaas_id).catch(() => {});
+      db.prepare("UPDATE limpa_nome_pedidos SET asaas_id = NULL, asaas_parcelamento = NULL, pix_codigo = NULL, pix_imagem = NULL, link_pagamento = NULL, valor_centavos = ?, juros_centavos = 0, atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(lnCfg().preco, p.id);
+    }
+  }
+  redirecionar(res, `/ln/${p.token}`);
+});
+
+rota('GET', '/api/ln/:token/status', async ({ res, params }) => {
+  const p = pedidoToken(params.token);
+  if (!p) return json(res, { pago: false }, 404);
+  if (p.status !== 'aguardando_pagamento') return json(res, { pago: true, valor: p.valor_centavos / 100 });
+  if (p.asaas_id && A.limitar(`stln:${p.id}`, 30, 5)) {
+    try {
+      const c = await AS.buscarCobranca(p.asaas_id);
+      if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) { confirmarPedidoLN(p.id); return json(res, { pago: true, valor: p.valor_centavos / 100 }); }
+    } catch (e) { console.warn('status LN token:', e.message); }
+  }
+  json(res, { pago: false });
+});
+
+rota('GET', '/ln/:token/ajuda', ({ res, params, url }) => {
+  const p = pedidoToken(params.token), cfg = lnCfg();
+  if (!p || !cfg.whatsapp) return redirecionar(res, p ? `/ln/${p.token}` : '/');
+  const etapa = String(url.searchParams.get('e') || '').replace(/[^\w-]/g, '').slice(0, 30);
+  registrar(null, 'Limpa Nome: cliente chamou o atendimento', `link do parceiro · pedido #${p.id} (${p.status})${etapa ? ` · na etapa: ${etapa}` : ''}`);
+  redirecionar(res, `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(`Olá! Preciso de ajuda com o Limpa Nome da Soft Consultas. Meu pedido é o #${p.id}.`)}`);
+});
+
+// ---------- Admin ----------
+function listaParceirosAdmin() {
+  return db.prepare(`SELECT x.*, u.nome, u.email, u.telefone,
+      (SELECT COUNT(*) FROM limpa_nome_pedidos p WHERE p.parceiro_id = x.usuario_id) clientes,
+      (SELECT COUNT(*) FROM limpa_nome_pedidos p WHERE p.parceiro_id = x.usuario_id AND p.pago_em IS NOT NULL AND p.status <> 'reembolsado') pagos,
+      (SELECT COALESCE(SUM(valor_centavos), 0) FROM limpa_nome_pedidos p WHERE p.parceiro_id = x.usuario_id AND p.pago_em IS NOT NULL AND p.status <> 'reembolsado') receita,
+      (SELECT COALESCE(SUM(valor_centavos), 0) FROM comissoes k WHERE k.usuario_id = x.usuario_id AND k.tipo = 'comissao' AND k.referencia LIKE 'ln_%') comissoes
+    FROM parceiros x JOIN usuarios u ON u.id = x.usuario_id ORDER BY x.ativo DESC, x.criado_em DESC`).all()
+    .map((x) => ({ ...x, saldo: saldoComissao(x.usuario_id), regra: regraParceiro(x.usuario_id, x), mens: mensalidadeParceiro(x) }));
+}
+const padraoParceiro = () => ({ comissaoTipo: lerConfig('parceiro_comissao_tipo') === 'fixo' ? 'fixo' : 'percentual', comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
+  atacado: Number(lerConfig('parceiro_atacado_centavos') || 0) || null, mensalidade: Number(lerConfig('parceiro_mensalidade_centavos') || 0) });
+rota('GET', '/admin/parceiros', exigeAdmin(({ res, usuario, url }) => {
+  pagina(res, 'Admin · Parceiros', SV.adminParceiros({ menu: PD.menu('/admin/parceiros'), padrao: padraoParceiro(), parceiros: listaParceirosAdmin(), cfg: lnCfg(),
+    ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+const voltaParc = (res, m, ok) => redirecionar(res, `/admin/parceiros?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+// "20" = 20% ; "300" ou "300,00" = R$ 300 (fixo) ; vazio = null
+const lerComissao = (tipo, txt) => {
+  const t = String(txt ?? '').trim();
+  if (!t) return null;
+  if (tipo === 'fixo') { const c = centavos(t); return Number.isFinite(c) && c >= 0 ? c : NaN; }
+  const n = Number(t.replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : NaN;
+};
+const lerReais = (txt) => { const t = String(txt ?? '').trim(); if (!t) return null; const c = centavos(t); return Number.isFinite(c) && c >= 0 ? c : NaN; };
+rota('POST', '/admin/parceiros/padrao', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const tipo = f.tipo === 'fixo' ? 'fixo' : 'percentual';
+  const valor = lerComissao(tipo, f.valor), atac = lerReais(f.atacado), mens = lerReais(f.mensalidade);
+  if (valor === null || Number.isNaN(valor)) return voltaParc(res, tipo === 'fixo' ? 'Informe o valor da comissão em reais.' : 'Informe a comissão entre 0 e 100%.');
+  if (Number.isNaN(atac) || (atac !== null && atac < 500)) return voltaParc(res, 'Preço de atacado inválido (mínimo R$ 5,00, ou deixe vazio).');
+  if (Number.isNaN(mens)) return voltaParc(res, 'Mensalidade inválida.');
+  gravarConfig('parceiro_comissao_tipo', tipo); gravarConfig('parceiro_comissao_valor', String(valor));
+  gravarConfig('parceiro_atacado_centavos', atac ? String(atac) : ''); gravarConfig('parceiro_mensalidade_centavos', String(mens || 0));
+  registrar(usuario, 'Parceiros: regra padrão', `comissão ${tipo === 'fixo' ? P.reais(valor) : `${valor}%`} · atacado ${atac ? P.reais(atac) : 'desligado'} · mensalidade ${P.reais(mens || 0)}`);
+  voltaParc(res, 'Regra padrão salva.', true);
+}));
+rota('POST', '/admin/parceiros/novo', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const email = String(f.email || '').trim().toLowerCase().slice(0, 120);
+  if (!A.emailValido(email)) return voltaParc(res, 'Informe um e-mail válido.');
+  let u = db.prepare('SELECT id, nome, email FROM usuarios WHERE email = ?').get(email);
+  let criado = false;
+  if (!u) {
+    const nome = String(f.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+    if (nome.split(' ').length < 2) return voltaParc(res, 'Para criar a conta, informe o nome completo do parceiro.');
+    const id = Number(db.prepare(`INSERT INTO usuarios (nome, email, documento, telefone, senha_hash, aceite_termos, codigo_indicacao, origem) VALUES (?, ?, '', ?, ?, datetime('now'), ?, 'parceiro')`)
+      .run(nome, email, A.soNumeros(f.telefone).slice(0, 13), A.gerarHashSenha(randomBytes(24).toString('hex')), codigoUnico()).lastInsertRowid);
+    u = { id, nome, email }; criado = true;
+  }
+  if (parceiroRow(u.id)) db.prepare("UPDATE parceiros SET ativo = 1, atualizado_em = datetime('now') WHERE usuario_id = ?").run(u.id);
+  else db.prepare('INSERT INTO parceiros (usuario_id) VALUES (?)').run(u.id);
+  db.prepare('UPDATE usuarios SET parceiro = 1 WHERE id = ?').run(u.id);
+  // Convite: link para definir a senha (vale 7 dias) ou para entrar
+  let link = `${baseEmails()}/entrar`;
+  if (criado) {
+    const t = randomBytes(32).toString('hex');
+    db.prepare("INSERT INTO redefinicoes_senha (token_hash, usuario_id, expira_em) VALUES (?, ?, datetime('now', '+7 days'))").run(createHash('sha256').update(t).digest('hex'), u.id);
+    link = `${baseEmails()}/redefinir-senha?token=${t}`;
+  }
+  const mens = mensalidadeParceiro(parceiroRow(u.id));
+  emailServico({ para: u.email, assunto: 'Você agora é parceiro do Limpa Nome · Soft Consultas', titulo: 'Bem-vindo à área de parceiros',
+    html: `<p>Olá, ${P.esc(String(u.nome).split(' ')[0])}! A sua área de parceiro do <strong>Limpa Nome</strong> está liberada. Lá você cadastra os seus clientes, envia o link de pagamento pelo WhatsApp e acompanha cada etapa do processo.</p>${mens.isento ? '' : `<p>Para começar a cadastrar clientes, ative a mensalidade de <strong>${P.reais(mens.valor)}</strong> dentro da área.</p>`}${criado ? '<p>Primeiro, crie a sua senha pelo botão abaixo (o link vale 7 dias). Depois é só entrar e clicar em <strong>Parceiro</strong> no menu.</p>' : '<p>Entre com o seu e-mail e senha de sempre e clique em <strong>Parceiro</strong> no menu.</p>'}`,
+    botao: { href: link, texto: criado ? 'Criar minha senha' : 'Entrar' }, rodape: RODAPE_PARC });
+  registrar(usuario, 'Parceiros: parceiro cadastrado', `${u.email}${criado ? ' (conta nova, convite enviado)' : ''}`);
+  voltaParc(res, `${u.email} agora é parceiro.${criado ? ' Enviamos o convite para ele criar a senha.' : ' Avisamos por e-mail.'}`, true);
+}));
+rota('POST', '/admin/parceiros/salvar', exigeAdmin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const x = parceiroRow(Number(f.id));
+  if (!x) return voltaParc(res, 'Parceiro não encontrado.');
+  const tipo = f.tipo === 'fixo' ? 'fixo' : f.tipo === 'percentual' ? 'percentual' : null;
+  const valor = tipo ? lerComissao(tipo, f.valor) : null, atac = lerReais(f.atacado), mens = lerReais(f.mensalidade);
+  if (tipo && (valor === null || Number.isNaN(valor))) return voltaParc(res, 'Informe o valor da comissão própria (ou escolha "padrão").');
+  if (Number.isNaN(atac) || (atac !== null && atac < 500)) return voltaParc(res, 'Preço de atacado inválido.');
+  if (Number.isNaN(mens)) return voltaParc(res, 'Mensalidade inválida.');
+  const ativo = f.ativo === '1' ? 1 : 0, isento = f.isento === '1' ? 1 : 0;
+  let pagoAte = x.pago_ate;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(f.pago_ate || ''))) pagoAte = f.pago_ate; else if (f.pago_ate === '') pagoAte = x.pago_ate;
+  db.prepare("UPDATE parceiros SET ativo = ?, comissao_tipo = ?, comissao_valor = ?, atacado_centavos = ?, mensalidade_centavos = ?, isento = ?, pago_ate = ?, atualizado_em = datetime('now') WHERE usuario_id = ?")
+    .run(ativo, tipo, tipo ? valor : null, atac, mens, isento, pagoAte, x.usuario_id);
+  db.prepare('UPDATE usuarios SET parceiro = ? WHERE id = ?').run(ativo, x.usuario_id);
+  if (!ativo && x.assinatura_id) { await AS.cancelarAssinatura(x.assinatura_id).catch(() => {}); db.prepare('UPDATE parceiros SET assinatura_id = NULL, assinatura_link = NULL WHERE usuario_id = ?').run(x.usuario_id); }
+  const em = db.prepare('SELECT email FROM usuarios WHERE id = ?').get(x.usuario_id)?.email;
+  registrar(usuario, 'Parceiros: regra do parceiro', `${em} · ${ativo ? 'ativo' : 'inativo'} · comissão ${tipo ? (tipo === 'fixo' ? P.reais(valor) : `${valor}%`) : 'padrão'} · atacado ${atac ? P.reais(atac) : 'padrão'} · mensalidade ${isento ? 'isento' : mens != null ? P.reais(mens) : 'padrão'}${pagoAte !== x.pago_ate ? ` · pago até ${pagoAte}` : ''}`);
+  voltaParc(res, 'Parceiro atualizado.', true);
+}));
+
 // ======================= MONITORAMENTO DE CPF/CNPJ (assinatura) =======================
 const monCfg = () => ({
   ativo: lerConfig('mon_ativo') === '1',
@@ -2103,7 +2502,7 @@ const somarPeriodo = (base, plano) => {
 };
 
 // E-mail de serviço (transacional: o cliente contratou)
-function emailServico({ para, assunto, titulo, html, botao }) {
+function emailServico({ para, assunto, titulo, html, botao, rodape }) {
   if (!process.env.RESEND_API_KEY || !para) return Promise.resolve();
   const base = baseEmails();
   const corpo = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#F4F1F7;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
@@ -2112,7 +2511,7 @@ function emailServico({ para, assunto, titulo, html, botao }) {
 <tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px"><img src="${base}/icone-branco.png" width="26" height="26" alt="" style="vertical-align:middle"> Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span></td></tr>
 <tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">${titulo}</h1>${html}
 ${botao ? `<p style="margin:24px 0"><a href="${botao.href.startsWith('http') ? botao.href : base + botao.href}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">${P.esc(botao.texto)}</a></p>` : ''}
-<p style="font-size:12px;color:#7A7285;margin-top:24px">Você recebe este e-mail porque contratou o Monitoramento de CPF/CNPJ da Soft Consultas.</p></td></tr></table></td></tr></table></body></html>`;
+<p style="font-size:12px;color:#7A7285;margin-top:24px">${rodape || 'Você recebe este e-mail porque contratou o Monitoramento de CPF/CNPJ da Soft Consultas.'}</p></td></tr></table></td></tr></table></body></html>`;
   return enviarEmail({ para, assunto, html: corpo }).catch((e) => console.error('e-mail monitoramento:', e.message));
 }
 const docFmt = (d) => (String(d).length === 14 ? 'CNPJ' : 'CPF') + ' final ' + String(d).slice(-4);
@@ -2418,8 +2817,8 @@ function emailPedidoLN(p, titulo, texto) {
 <tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span> · Limpa Nome</td></tr>
 <tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">${P.esc(titulo)}</h1>
 <p>Olá, ${P.esc(String(p.nome).split(/\s+/)[0])}! ${texto}</p>
-<p style="margin:24px 0"><a href="${base}/limpa-nome/servico/${p.id}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">Acompanhar meu pedido</a></p>
-<p style="font-size:14px">Dúvidas? <a href="${base}/limpa-nome/ajuda?p=${p.id}&e=email" style="color:#1FA855;font-weight:bold">Fale com a gente no WhatsApp</a></p>
+<p style="margin:24px 0"><a href="${p.token ? `${base}/ln/${p.token}` : `${base}/limpa-nome/servico/${p.id}`}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">${p.token && p.status === 'aguardando_pagamento' ? 'Pagar e acompanhar meu pedido' : 'Acompanhar meu pedido'}</a></p>
+<p style="font-size:14px">Dúvidas? <a href="${p.token ? `${base}/ln/${p.token}/ajuda?e=email` : `${base}/limpa-nome/ajuda?p=${p.id}&e=email`}" style="color:#1FA855;font-weight:bold">Fale com a gente no WhatsApp</a></p>
 <p style="font-size:13px;color:#7A7285">Pedido #${p.id} · documento final ${P.esc(String(p.cpf).slice(-4))}</p></td></tr></table></td></tr></table></body></html>`;
   enviarEmail({ para: p.email, assunto: `${titulo} · Pedido #${p.id}`, html }).catch((e) => console.error('e-mail limpa nome:', e.message));
 }
@@ -2438,6 +2837,7 @@ function avisarStatusLN(p) {
   if (!f) return;
   const [t, x] = f(p);
   emailPedidoLN(p, t, x + (p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''));
+  if (p.parceiro_id) emailParceiroLN(p, t, `Atualização do seu cliente: <strong>${P.esc(SV.STATUS_LN[p.status]?.t || p.status)}</strong>.${p.status === 'pago' && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos ? ` A sua comissão de <strong>${P.reais(p.parceiro_comissao_centavos)}</strong> já está no seu saldo.` : ''}${p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''}`);
 }
 // Confirma o pagamento (webhook ou consulta de status). Retorna true só na primeira vez.
 function confirmarPedidoLN(id) {
@@ -2447,6 +2847,12 @@ function confirmarPedidoLN(id) {
     const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
     registrar(null, 'Limpa Nome: pedido pago', `#${id} · ${p.nome} · ${P.reais(p.valor_centavos)}${p.forma_pagamento === 'cartao' ? ` (cartão ${p.parcelas}x)` : ''} · lote ${lote}`);
     avisarStatusLN(p);
+    // Parceiro: comissão quando o cliente paga (uma vez por pedido)
+    if (p.parceiro_id && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos > 0) {
+      const ins = db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'comissao', ?, ?, ?)")
+        .run(p.parceiro_id, p.parceiro_comissao_centavos, `Limpa Nome #${p.id} · ${String(p.nome).slice(0, 60)}`, `ln_${p.id}`);
+      if (ins.changes) registrar(null, 'Parceiro: comissão creditada', `#${p.id} · ${P.reais(p.parceiro_comissao_centavos)}`);
+    }
     if (p.forma_pagamento === 'cartao' && lnCfg().antecipar) anteciparPedidoLN(p.id).catch((e) => console.error('antecipação:', e.message));
   }
   return ok;
@@ -2503,7 +2909,7 @@ rota('POST', '/admin/limpa-nome/antecipar', exigeAdmin(async ({ req, res, usuari
 
 rota('GET', '/limpa-nome/servico', exigeLogin(({ res, usuario }) => {
   const cfg = lnCfgComTabela();
-  const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE usuario_id = ? ORDER BY id DESC').all(usuario.id);
+  const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE usuario_id = ? AND parceiro_id IS NULL ORDER BY id DESC').all(usuario.id);
   if (!cfg.ativo && !usuario.admin && !pedidos.length) return pagina(res, 'Limpa Nome', P.paginaEmBreve('Limpa Nome', 'O serviço de Limpa Nome estará disponível em breve.'), usuario);
   pagina(res, 'Serviço Limpa Nome', (!cfg.ativo ? '<div class="aviso">Serviço desligado para novos pedidos' + (usuario.admin ? ' (você vê esta página por ser admin).' : '.') + '</div>' : '') +
     SV.paginaServicoLN({ cfg, proximoLote: proximoLoteLN(cfg.dia), pedidos, usuario }), usuario);
@@ -2511,7 +2917,7 @@ rota('GET', '/limpa-nome/servico', exigeLogin(({ res, usuario }) => {
 
 rota('POST', '/limpa-nome/servico', exigeLogin(async ({ req, res, usuario }) => {
   const cfg = lnCfgComTabela();
-  const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE usuario_id = ? ORDER BY id DESC').all(usuario.id);
+  const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE usuario_id = ? AND parceiro_id IS NULL ORDER BY id DESC').all(usuario.id);
   let v = {};
   const erro = (m) => pagina(res, 'Serviço Limpa Nome', SV.paginaServicoLN({ cfg, proximoLote: proximoLoteLN(cfg.dia), pedidos, usuario, erro: m, v }), usuario, 400);
   if (!cfg.ativo && !usuario.admin) return erro('O serviço não está recebendo pedidos no momento.');
@@ -2548,7 +2954,7 @@ rota('POST', '/limpa-nome/servico', exigeLogin(async ({ req, res, usuario }) => 
   if (!docs.doc_frente) return erro('Envie a foto da frente do documento.');
   if (!A.limitar(`ln:${usuario.id}`, 5, 60)) return erro('Muitos pedidos em pouco tempo. Aguarde alguns minutos.');
   // Pedido para o mesmo CPF ainda não pago: reaproveita (não cria cobranças duplicadas)
-  const antigo = db.prepare("SELECT id FROM limpa_nome_pedidos WHERE usuario_id = ? AND cpf = ? AND status = 'aguardando_pagamento'").get(usuario.id, cpf);
+  const antigo = db.prepare("SELECT id FROM limpa_nome_pedidos WHERE usuario_id = ? AND cpf = ? AND status = 'aguardando_pagamento' AND parceiro_id IS NULL").get(usuario.id, cpf);
   if (antigo) db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Substituído por um novo pedido', atualizado_em = datetime('now') WHERE id = ?").run(antigo.id);
   const id = Number(db.prepare(`INSERT INTO limpa_nome_pedidos (usuario_id, nome, cpf, nascimento, telefone, email, doc_tipo, titular_proprio, aceite_em, aceite_ip, valor_centavos, forma_pagamento, parcelas, juros_centavos)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?)`).run(usuario.id, nome, cpf, nasc, tel, email, docTipo, v.proprio === '1' ? 1 : 0, ipDe(req), totalCobrado, forma, parcelas, totalCobrado - cfg.preco).lastInsertRowid);
@@ -2620,7 +3026,7 @@ rota('GET', '/admin/limpa-nome', exigeAdmin(({ res, usuario, url }) => {
   const cfg = lnCfg(), lote = proximoLoteLN(cfg.dia);
   const f = ['lote', 'ativos', 'aguardando', 'todos'].includes(url.searchParams.get('f')) ? url.searchParams.get('f') : 'lote';
   const onde = { lote: "p.status IN ('pago','em_analise')", ativos: "p.status IN ('pago','em_analise','em_lote','em_andamento','decisao')", aguardando: "p.status = 'aguardando_pagamento'", todos: '1=1' }[f];
-  const pedidos = db.prepare(`SELECT p.*, u.email AS cliente FROM limpa_nome_pedidos p JOIN usuarios u ON u.id = p.usuario_id WHERE ${onde} ORDER BY p.id DESC LIMIT 500`).all();
+  const pedidos = db.prepare(`SELECT p.*, u.email AS cliente, pu.nome AS parceiro_nome FROM limpa_nome_pedidos p JOIN usuarios u ON u.id = p.usuario_id LEFT JOIN usuarios pu ON pu.id = p.parceiro_id WHERE ${onde} ORDER BY p.id DESC LIMIT 500`).all();
   const lotes = {
     proximo: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE status IN ('pago','em_analise')").get().n,
     pagos: db.prepare("SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE pago_em IS NOT NULL AND status <> 'reembolsado'").get().n,
@@ -2671,6 +3077,12 @@ rota('POST', '/admin/limpa-nome/status', exigeAdmin(async ({ req, res, usuario }
     db.prepare("UPDATE limpa_nome_pedidos SET concluido_em = datetime('now'), blindagem_ate = ? WHERE id = ?").run(blindagemAte, p.id);
   }
   registrar(usuario, 'Limpa Nome: status', `#${p.id} · ${p.nome} · ${p.status} → ${f.status}${obs ? ` · "${obs}"` : ''}`);
+  // Reembolso/cancelamento de pedido pago de parceiro: estorna a comissão (fica registrado no extrato dele)
+  if (['reembolsado', 'cancelado'].includes(f.status) && p.parceiro_id && db.prepare("SELECT 1 FROM comissoes WHERE tipo = 'comissao' AND referencia = ?").get(`ln_${p.id}`)) {
+    const c = db.prepare("SELECT valor_centavos FROM comissoes WHERE tipo = 'comissao' AND referencia = ?").get(`ln_${p.id}`).valor_centavos;
+    if (db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'comissao', ?, ?, ?)").run(p.parceiro_id, -c, `Estorno: Limpa Nome #${p.id} ${f.status}`, `ln_estorno_${p.id}`).changes)
+      registrar(usuario, 'Parceiro: comissão estornada', `#${p.id} · ${P.reais(c)}`);
+  }
   if (f.status !== p.status || (obs && obs !== (p.obs_admin || ''))) avisarStatusLN({ ...p, status: f.status, obs_admin: obs, lote, blindagem_ate: blindagemAte });
   volta(`Pedido #${p.id} atualizado.`, true);
 }));

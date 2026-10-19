@@ -73,6 +73,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const b = e.submitter || f.querySelector('button[type=submit], button:not([type])');
     if (b) setTimeout(() => b.classList.add('carregando'), 0);
   }));
+  // Copiar um texto pronto (ex.: link do cliente na área do parceiro)
+  document.querySelectorAll('[data-copiar-texto]').forEach((b) => b.addEventListener('click', async () => {
+    const t = b.getAttribute('data-copiar-texto'), antes = b.textContent;
+    try { await navigator.clipboard.writeText(t); b.textContent = 'Copiado!'; } catch { window.prompt('Copie o link:', t); return; }
+    setTimeout(() => { b.textContent = antes; }, 2000);
+  }));
   // Copiar código Pix
   const copiar = document.getElementById('copiar');
   if (copiar) copiar.addEventListener('click', async () => {
@@ -147,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const id = ln.getAttribute('data-pedido-ln');
     const ver = async () => {
       try {
-        const j = await (await fetch(`/api/limpa-nome/${id}/status`, { headers: { Accept: 'application/json' } })).json();
+        const j = await (await fetch(ln.getAttribute('data-status-url') || `/api/limpa-nome/${id}/status`, { headers: { Accept: 'application/json' } })).json();
         if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.reload(); }
       } catch {}
       setTimeout(ver, 5000);

@@ -412,6 +412,29 @@ db.exec(`
 for (const [c, def] of [['forma_pagamento', "TEXT NOT NULL DEFAULT 'pix'"], ['parcelas', 'INTEGER NOT NULL DEFAULT 1'], ['asaas_parcelamento', 'TEXT'], ['juros_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['antecipacao_id', 'TEXT'], ['antecipacao_status', 'TEXT'], ['antecipacao_erro', 'TEXT'], ['antecipacao_liquido_centavos', 'INTEGER'], ['antecipacao_tentativas', 'INTEGER NOT NULL DEFAULT 0'], ['baixas', "TEXT NOT NULL DEFAULT '{}'"], ['blindagem_ate', 'TEXT'], ['concluido_em', 'TEXT']]) {
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
 }
+// Área de parceiros (Limpa Nome): o parceiro cadastra clientes e ganha comissão (cliente paga) ou paga o preço de atacado
+for (const [c, def] of [['parceiro_id', 'INTEGER'], ['parceiro_modelo', 'TEXT'], ['parceiro_comissao_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['token', 'TEXT'], ['cliente_aceite_em', 'TEXT'], ['cliente_aceite_ip', 'TEXT']]) {
+  if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
+}
+if (!colunas('usuarios').includes('parceiro')) db.exec('ALTER TABLE usuarios ADD COLUMN parceiro INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_lnp_parceiro ON limpa_nome_pedidos(parceiro_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_lnp_token ON limpa_nome_pedidos(token) WHERE token IS NOT NULL;
+  CREATE TABLE IF NOT EXISTS parceiros (
+    usuario_id INTEGER PRIMARY KEY REFERENCES usuarios(id),
+    ativo INTEGER NOT NULL DEFAULT 1,
+    comissao_tipo TEXT,
+    comissao_valor INTEGER,
+    atacado_centavos INTEGER,
+    obs TEXT,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    atualizado_em TEXT
+  );
+`);
+// Mensalidade do parceiro (assinatura no Asaas)
+for (const [c, def] of [['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
+  if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
+}
 export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
 try { mkdirSync(pastaDocsLimpaNome, { recursive: true }); } catch {}
 export const registrar = (usuario, acao, detalhe = '') =>
@@ -453,6 +476,10 @@ const padrao = {
   anuncio_max_simultaneos: '4',
   anuncio_mostrar_numeros: '0',
   raiox_ativo: '0',
+  parceiro_comissao_tipo: 'percentual',
+  parceiro_comissao_valor: '20',
+  parceiro_atacado_centavos: '',
+  parceiro_mensalidade_centavos: '9900',
   raiox_preco: '3790',
   raiox_preco_de: '',
   raiox_produto: 'cred-completa-plus',

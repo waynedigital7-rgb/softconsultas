@@ -94,12 +94,13 @@ export const cancelarCobranca = (id) => asaas(`/payments/${id}`, { method: 'DELE
 
 // ---------- Assinaturas (Monitoramento de CPF/CNPJ) ----------
 export const PREFIXO_MONITORAMENTO = 'scmon_';
-export function criarAssinatura({ clienteId, valorCentavos, ciclo, forma, monId, descricao }) {
+export const PREFIXO_PARCEIRO = 'scpar_';
+export function criarAssinatura({ clienteId, valorCentavos, ciclo, forma, monId, descricao, ref }) {
   const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
   return asaas('/subscriptions', {
     method: 'POST',
     body: JSON.stringify({ customer: clienteId, billingType: forma === 'cartao' ? 'CREDIT_CARD' : 'PIX', value: valorCentavos / 100,
-      nextDueDate: hoje, cycle: ciclo === 'anual' ? 'YEARLY' : 'MONTHLY', description: descricao, externalReference: `${PREFIXO_MONITORAMENTO}${monId}` }),
+      nextDueDate: hoje, cycle: ciclo === 'anual' ? 'YEARLY' : 'MONTHLY', description: descricao, externalReference: ref || `${PREFIXO_MONITORAMENTO}${monId}` }),
   });
 }
 export const pagamentosAssinatura = (id) => asaas(`/subscriptions/${id}/payments`);
