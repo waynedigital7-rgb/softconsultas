@@ -650,12 +650,9 @@ ${pedidos.map((p) => { let r = {}; try { r = JSON.parse(p.resumo || '{}'); } cat
 // ======================= ÁREA DE PARCEIROS (Limpa Nome) =======================
 const kpiP = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
 const btnPeq = 'min-height:32px;padding:4px 12px;font-size:.8rem';
-export const textoComissao = (r) => (r.comissaoTipo === 'nossa_parte' ? `${reais(r.comissaoCentavos)} (nossa parte fixa ${reais(r.comissaoValor)})` : r.comissaoTipo === 'fixo' ? reais(r.comissaoValor) : `${r.comissaoValor}% (${reais(r.comissaoCentavos)})`);
-const ehReais = (t) => t === 'fixo' || t === 'nossa_parte';
-const optNossa = (sel) => `<option value="nossa_parte" ${sel === 'nossa_parte' ? 'selected' : ''}>Nossa parte fixa (R$): o resto é do parceiro</option>`;
-const txtTipo = (t, v) => (t === 'nossa_parte' ? `nossa parte ${reais(v)}` : t === 'fixo' ? reais(v) : `${v}%`);
+export const textoComissao = (r) => (r.comissaoTipo === 'fixo' ? reais(r.comissaoValor) : `${r.comissaoValor}% (${reais(r.comissaoCentavos)})`);
 
-export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro, repasse = null }) {
+export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro }) {
   const disp = regras.filter((x) => x.disponivel);
   const linkCliente = (p) => `${base}/ln/${p.token}`;
   const wpp = (p) => {
@@ -671,14 +668,14 @@ ${!disp.length ? '<div class="aviso">Os serviços estão pausados para novos ped
   ${kpiP('Clientes cadastrados', k.total, `${k.aguardando} aguardando pagamento`)}
   ${kpiP('Pagos', k.pagos, `${k.andamento} em andamento · ${k.concluidos} concluído(s)`)}
   ${kpiP('Comissões geradas', reais(k.comissoes), 'nas vendas em que o cliente paga')}
-  ${repasse ? kpiP('Repasse automático', 'Ligado', `cai no Pix ${esc(repasse)} quando o cliente paga`) : kpiP('Saldo para sacar', reais(saldo), '<a href="/indicacoes#saque">Sacar pelo Pix</a>')}
+  ${kpiP('Saldo para sacar', reais(saldo), '<a href="/indicacoes#saque">Sacar pelo Pix</a>')}
 </div>
 <div class="cartao" style="margin-bottom:18px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;justify-content:space-between">
   <div style="flex:1 1 420px">
     <h2 style="font-size:1.15rem;margin:0 0 8px">Como você ganha</h2>
     <p class="muted" style="margin:0 0 8px">O cliente paga pelo link que você envia (Pix ou até ${cfg.parcelas}x no cartão). Você pode cobrar o preço sugerido ou mais: a nossa parte é fixa e <strong>tudo o que passar dela é seu</strong>.</p>
-    <div class="rolar"><table class="tabela" style="font-size:.92rem"><tr><th>Serviço</th><th>Nossa parte</th><th>Preço sugerido</th><th>Sua comissão no sugerido</th></tr>
-    ${disp.map((x) => `<tr><td><strong>${esc(x.nomeServico)}</strong></td><td>${reais(x.nossaParte)}</td><td>${reais(x.preco)}</td><td><strong>${reais(x.comissaoCentavos)}</strong></td></tr>`).join('')}</table></div>
+    <div class="rolar"><table class="tabela" style="font-size:.92rem"><tr><th>Serviço</th><th>Preço sugerido</th><th>Sua comissão</th><th>Nossa parte</th><th>Atacado</th></tr>
+    ${disp.map((x) => `<tr><td><strong>${esc(x.nomeServico)}</strong></td><td>${reais(x.preco)}</td><td><strong>${reais(x.comissaoCentavos)}</strong></td><td>${reais(x.nossaParte)}</td><td>${x.atacado ? reais(x.atacado) : '—'}</td></tr>`).join('')}</table></div>
   </div>
   ${disp.length ? '<a class="btn" href="/parceiro/novo" style="flex:none">+ Cadastrar cliente</a>' : ''}
 </div>
@@ -702,7 +699,7 @@ export function paginaParceiroNovo({ cfg, regras = [], v = {}, erro = '' }) {
   const disp = regras.filter((x) => x.disponivel);
   const r = disp.find((x) => x.servico === v.servico) || disp[0] || regras[0];
   const modelo = v.modelo === 'atacado' && r.atacado ? 'atacado' : 'comissao';
-  const temAtacado = false; // o cliente sempre paga o valor cheio para a Soft Consultas; o atacado é a nossa parte
+  const temAtacado = disp.some((x) => x.atacado);
   return `<p><a href="/parceiro">← Área do parceiro</a></p>
 <h1 style="font-size:1.6rem">Cadastrar cliente</h1>
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
@@ -777,19 +774,19 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
   <h3 style="font-size:1rem;margin:0 0 8px">Limpa Nome</h3>
   <div class="campo"><label for="pp-preco">Preço de venda ao cliente final (R$) · vazio = igual ao do site</label><input id="pp-preco" type="text" name="preco" inputmode="decimal" value="${rs(padrao.preco)}"></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <div class="campo" style="flex:1 1 140px"><label for="pp-tipo">Comissão</label><select id="pp-tipo" name="tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${padrao.comissaoTipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option>${optNossa(padrao.comissaoTipo)}</select></div>
-    <div class="campo" style="flex:1 1 120px"><label for="pp-valor">Valor</label><input id="pp-valor" type="text" name="valor" inputmode="decimal" value="${ehReais(padrao.comissaoTipo) ? rs(padrao.comissaoValor) : padrao.comissaoValor}"></div>
+    <div class="campo" style="flex:1 1 140px"><label for="pp-tipo">Comissão</label><select id="pp-tipo" name="tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${padrao.comissaoTipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option></select></div>
+    <div class="campo" style="flex:1 1 120px"><label for="pp-valor">Valor</label><input id="pp-valor" type="text" name="valor" inputmode="decimal" value="${padrao.comissaoTipo === 'fixo' ? rs(padrao.comissaoValor) : padrao.comissaoValor}"></div>
   </div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
-    <div class="campo" style="flex:1 1 160px"><label for="pp-atac">Atacado = nossa parte (R$) · vazio = usa a comissão</label><input id="pp-atac" type="text" name="atacado" inputmode="decimal" value="${rs(padrao.atacado || null)}"></div>
+    <div class="campo" style="flex:1 1 160px"><label for="pp-atac">Atacado (R$) · vazio = sem atacado</label><input id="pp-atac" type="text" name="atacado" inputmode="decimal" value="${rs(padrao.atacado || null)}"></div>
     <div class="campo" style="flex:1 1 160px"><label for="pp-mens">Mensalidade (R$) · 0 = grátis</label><input id="pp-mens" type="text" name="mensalidade" inputmode="decimal" value="${rs(padrao.mensalidade || 0)}"></div>
   </div>
   ${['rating', 'combo'].map((sv) => { const d = padrao[sv] || {}; return `<details style="margin:4px 0 14px;border:1.5px solid #EEE7F4;border-radius:12px;padding:8px 12px"><summary style="cursor:pointer;font-weight:700">${esc(SERVICOS[sv])}</summary>
     <div class="campo" style="margin-top:10px"><label for="pp-${sv}-preco">Preço ao cliente (R$) · vazio = do site (${reais(d.precoSite || 0)})</label><input id="pp-${sv}-preco" type="text" name="${sv}_preco" inputmode="decimal" value="${rs(d.preco)}"></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <div class="campo" style="flex:1 1 130px"><label for="pp-${sv}-tipo">Comissão</label><select id="pp-${sv}-tipo" name="${sv}_tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${d.comissaoTipo === 'fixo' ? 'selected' : ''}>R$ fixo</option>${optNossa(d.comissaoTipo)}</select></div>
-      <div class="campo" style="flex:1 1 100px"><label for="pp-${sv}-valor">Valor</label><input id="pp-${sv}-valor" type="text" name="${sv}_valor" inputmode="decimal" value="${ehReais(d.comissaoTipo) ? rs(d.comissaoValor) : (d.comissaoValor ?? '')}"></div>
-      <div class="campo" style="flex:1 1 130px"><label for="pp-${sv}-atac">Atacado = nossa parte (R$)</label><input id="pp-${sv}-atac" type="text" name="${sv}_atacado" inputmode="decimal" value="${rs(d.atacado)}"></div>
+      <div class="campo" style="flex:1 1 130px"><label for="pp-${sv}-tipo">Comissão</label><select id="pp-${sv}-tipo" name="${sv}_tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${d.comissaoTipo === 'fixo' ? 'selected' : ''}>R$ fixo</option></select></div>
+      <div class="campo" style="flex:1 1 100px"><label for="pp-${sv}-valor">Valor</label><input id="pp-${sv}-valor" type="text" name="${sv}_valor" inputmode="decimal" value="${d.comissaoTipo === 'fixo' ? rs(d.comissaoValor) : (d.comissaoValor ?? '')}"></div>
+      <div class="campo" style="flex:1 1 130px"><label for="pp-${sv}-atac">Atacado (R$)</label><input id="pp-${sv}-atac" type="text" name="${sv}_atacado" inputmode="decimal" value="${rs(d.atacado)}"></div>
     </div></details>`; }).join('')}
   <button class="btn">Salvar regra padrão</button>
 </form>
@@ -805,7 +802,7 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
   <button class="btn">Cadastrar parceiro</button>
 </form></div>
 <div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Parceiros (${parceiros.length})</h2><div class="rolar"><table class="tabela"><tr><th>Parceiro</th><th>Mensalidade</th><th>Clientes</th><th>Pagos</th><th>Receita</th><th>Comissões</th><th>Saldo</th><th>Valores</th></tr>
-${parceiros.map((x) => `<tr><td><strong>${esc(x.nome)}</strong>${x.ativo ? '' : ' <span class="tag">inativo</span>'}${x.repasse_auto ? ' <span class="tag" style="font-size:.7rem">repasse automático</span>' : ''}<br><span class="muted">${esc(x.email)}${x.telefone ? ` · ${esc(x.telefone)}` : ''}</span><br><span class="muted" style="font-size:.8rem">desde ${dataBR(x.criado_em)}</span></td>
+${parceiros.map((x) => `<tr><td><strong>${esc(x.nome)}</strong>${x.ativo ? '' : ' <span class="tag">inativo</span>'}<br><span class="muted">${esc(x.email)}${x.telefone ? ` · ${esc(x.telefone)}` : ''}</span><br><span class="muted" style="font-size:.8rem">desde ${dataBR(x.criado_em)}</span></td>
   <td>${x.isento ? '<strong style="color:var(--ok)">isento</strong>' : x.mens.isento ? '<span class="muted">grátis</span>' : x.mens.emDia ? `<strong style="color:var(--ok)">em dia</strong><br><span class="muted">até ${dataBR(x.mens.pagoAte)}</span>` : `<strong style="color:var(--erro)">${x.mens.assinatura ? 'aguardando pagamento' : 'não ativou'}</strong>`}<br><span class="muted">${x.mens.isento ? '' : reais(x.mens.valor)}${x.mens.forma ? ` · ${x.mens.forma}` : ''}</span></td>
   <td>${x.clientes}</td><td>${x.pagos}</td><td>${reais(x.receita)}</td><td>${reais(x.comissoes)}</td><td>${reais(x.saldo)}</td>
   <td style="min-width:240px"><span style="font-size:.85rem">${(x.regras || [x.regra]).filter((g) => g.disponivel).map((g) => `${esc(g.nomeServico || 'Limpa Nome')}: <strong>${reais(g.preco)}</strong> · comissão <strong>${reais(g.comissaoCentavos)}</strong>${g.atacado ? ` · atacado ${reais(g.atacado)}` : ''}`).join('<br>')}<br>${[x.preco_centavos, x.comissao_tipo, x.atacado_centavos, x.mensalidade_centavos].some((v) => v != null) || x.isento || Object.values(x.proprios || {}).some((o) => Object.values(o).some((v) => v != null)) ? ' · <span class="tag">valores próprios</span>' : ' · <span class="muted">padrão</span>'}</span>
@@ -831,7 +828,7 @@ export function blocoMensalidadeParceiro({ m }) {
 export function adminParceiroEditar({ menu, x, padrao, cfg, pedidos, ok, erro }) {
   const rs = (c) => (c == null ? '' : (c / 100).toFixed(2).replace('.', ','));
   const pad = (t) => `<small class="muted">vazio = padrão (${t})</small>`;
-  const comPad = txtTipo(padrao.comissaoTipo, padrao.comissaoValor);
+  const comPad = padrao.comissaoTipo === 'fixo' ? reais(padrao.comissaoValor) : `${padrao.comissaoValor}%`;
   return `<h1 style="font-size:1.7rem">Parceiro · ${esc(x.nome)}</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
 <p><a href="/admin/parceiros">← Todos os parceiros</a></p>
 <div class="grade" style="margin-bottom:18px">
@@ -845,22 +842,18 @@ export function adminParceiroEditar({ menu, x, padrao, cfg, pedidos, ok, erro })
   <h2 style="font-size:1.1rem;margin:0 0 10px">Limpa Nome · venda (o cliente paga pelo link)</h2>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 200px"><label for="pe-preco">Preço ao cliente final (R$)</label><input id="pe-preco" type="text" name="preco" inputmode="decimal" placeholder="${rs(padrao.preco || cfg.preco)}" value="${rs(x.preco_centavos)}">${pad(reais(padrao.preco || cfg.preco))}</div>
-    <div class="campo" style="flex:1 1 160px"><label for="pe-tipo">Comissão</label><select id="pe-tipo" name="tipo" style="min-height:46px"><option value="">Padrão (${esc(comPad)})</option><option value="percentual" ${x.comissao_tipo === 'percentual' ? 'selected' : ''}>% do preço</option><option value="fixo" ${x.comissao_tipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option>${optNossa(x.comissao_tipo)}</select></div>
-    <div class="campo" style="flex:1 1 140px"><label for="pe-valor">Valor da comissão</label><input id="pe-valor" type="text" name="valor" inputmode="decimal" placeholder="ex.: 20 ou 300,00" value="${ehReais(x.comissao_tipo) ? rs(x.comissao_valor) : (x.comissao_valor ?? '')}"></div>
+    <div class="campo" style="flex:1 1 160px"><label for="pe-tipo">Comissão</label><select id="pe-tipo" name="tipo" style="min-height:46px"><option value="">Padrão (${esc(comPad)})</option><option value="percentual" ${x.comissao_tipo === 'percentual' ? 'selected' : ''}>% do preço</option><option value="fixo" ${x.comissao_tipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option></select></div>
+    <div class="campo" style="flex:1 1 140px"><label for="pe-valor">Valor da comissão</label><input id="pe-valor" type="text" name="valor" inputmode="decimal" placeholder="ex.: 20 ou 300,00" value="${x.comissao_tipo === 'fixo' ? rs(x.comissao_valor) : (x.comissao_valor ?? '')}"></div>
   </div>
-  <h2 style="font-size:1.1rem;margin:6px 0 10px">Limpa Nome · preço de atacado (nossa parte)</h2>
-  <div class="campo" style="max-width:260px"><label for="pe-atac">Preço de atacado = nossa parte (R$)</label><input id="pe-atac" type="text" name="atacado" inputmode="decimal" value="${rs(x.atacado_centavos)}"><small class="muted">Com atacado, a comissão é tudo o que o parceiro cobrar acima dele (a % é ignorada). Vazio = padrão (${padrao.atacado ? reais(padrao.atacado) : 'sem atacado'}) · 0 = sem atacado</small></div>
-  ${['rating', 'combo'].map((sv) => { const d = padrao[sv] || {}, o = x.proprios?.[sv] || {}; const cp = txtTipo(d.comissaoTipo, d.comissaoValor); return `<h2 style="font-size:1.1rem;margin:6px 0 10px">${esc(SERVICOS[sv])}</h2>
+  <h2 style="font-size:1.1rem;margin:6px 0 10px">Limpa Nome · atacado (o parceiro paga)</h2>
+  <div class="campo" style="max-width:260px"><label for="pe-atac">Preço de atacado (R$)</label><input id="pe-atac" type="text" name="atacado" inputmode="decimal" value="${rs(x.atacado_centavos)}">${pad(padrao.atacado ? reais(padrao.atacado) : 'sem atacado')}</div>
+  ${['rating', 'combo'].map((sv) => { const d = padrao[sv] || {}, o = x.proprios?.[sv] || {}; const cp = d.comissaoTipo === 'fixo' ? reais(d.comissaoValor) : `${d.comissaoValor}%`; return `<h2 style="font-size:1.1rem;margin:6px 0 10px">${esc(SERVICOS[sv])}</h2>
   <div style="display:flex;gap:12px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 170px"><label for="pe-${sv}-p">Preço ao cliente (R$)</label><input id="pe-${sv}-p" type="text" name="${sv}_preco" inputmode="decimal" value="${rs(o.preco)}">${pad(reais(d.preco || d.precoSite || 0))}</div>
-    <div class="campo" style="flex:1 1 150px"><label for="pe-${sv}-t">Comissão</label><select id="pe-${sv}-t" name="${sv}_tipo" style="min-height:46px"><option value="">Padrão (${esc(cp)})</option><option value="percentual" ${o.comissao_tipo === 'percentual' ? 'selected' : ''}>% do preço</option><option value="fixo" ${o.comissao_tipo === 'fixo' ? 'selected' : ''}>R$ fixo</option>${optNossa(o.comissao_tipo)}</select></div>
-    <div class="campo" style="flex:1 1 120px"><label for="pe-${sv}-v">Valor</label><input id="pe-${sv}-v" type="text" name="${sv}_valor" inputmode="decimal" value="${ehReais(o.comissao_tipo) ? rs(o.comissao_valor) : (o.comissao_valor ?? '')}"></div>
-    <div class="campo" style="flex:1 1 140px"><label for="pe-${sv}-a">Atacado = nossa parte (R$)</label><input id="pe-${sv}-a" type="text" name="${sv}_atacado" inputmode="decimal" value="${rs(o.atacado)}">${pad(d.atacado ? reais(d.atacado) : 'sem')}</div>
+    <div class="campo" style="flex:1 1 150px"><label for="pe-${sv}-t">Comissão</label><select id="pe-${sv}-t" name="${sv}_tipo" style="min-height:46px"><option value="">Padrão (${esc(cp)})</option><option value="percentual" ${o.comissao_tipo === 'percentual' ? 'selected' : ''}>% do preço</option><option value="fixo" ${o.comissao_tipo === 'fixo' ? 'selected' : ''}>R$ fixo</option></select></div>
+    <div class="campo" style="flex:1 1 120px"><label for="pe-${sv}-v">Valor</label><input id="pe-${sv}-v" type="text" name="${sv}_valor" inputmode="decimal" value="${o.comissao_tipo === 'fixo' ? rs(o.comissao_valor) : (o.comissao_valor ?? '')}"></div>
+    <div class="campo" style="flex:1 1 140px"><label for="pe-${sv}-a">Atacado (R$)</label><input id="pe-${sv}-a" type="text" name="${sv}_atacado" inputmode="decimal" value="${rs(o.atacado)}">${pad(d.atacado ? reais(d.atacado) : 'sem')}</div>
   </div>`; }).join('')}
-  <h2 style="font-size:1.1rem;margin:6px 0 10px">Repasse automático da comissão</h2>
-  <label style="display:flex;gap:10px;align-items:center;margin-bottom:10px"><input type="checkbox" name="repasse_auto" value="1" ${x.repasse_auto ? 'checked' : ''} style="width:20px;height:20px"> Enviar a comissão sozinha para o Pix do parceiro quando o cliente pagar</label>
-  <div class="campo" style="max-width:420px"><label for="pe-pix">Chave Pix do parceiro</label><input id="pe-pix" type="text" name="repasse_pix" maxlength="140" value="${esc(x.repasse_pix || '')}" placeholder="CPF, CNPJ, e-mail, celular ou chave aleatória">
-    <small class="muted">Pix: o repasse sai na hora. Cartão: sai quando o dinheiro do cartão cair (antecipação). Sem taxa de saque. Aparece em "Saques de comissão".</small></div>
   <h2 style="font-size:1.1rem;margin:6px 0 10px">Mensalidade</h2>
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
     <div class="campo" style="flex:1 1 180px"><label for="pe-mens">Mensalidade (R$)</label><input id="pe-mens" type="text" name="mensalidade" inputmode="decimal" value="${rs(x.mensalidade_centavos)}">${pad(reais(padrao.mensalidade))}</div>
