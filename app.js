@@ -79,6 +79,23 @@ document.addEventListener('DOMContentLoaded', () => {
     try { await navigator.clipboard.writeText(t); b.textContent = 'Copiado!'; } catch { window.prompt('Copie o link:', t); return; }
     setTimeout(() => { b.textContent = antes; }, 2000);
   }));
+  // Área do parceiro: calcula a comissão conforme o valor de venda digitado
+  const venda = document.querySelector('[data-venda-nossa]');
+  if (venda) {
+    const saida = document.getElementById('pc-comissao');
+    const fmt = (c) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const calc = () => {
+      const t = venda.value.replace(/[^\d,.]/g, '');
+      const n = /,\d{1,2}$/.test(t) ? Number(t.replace(/\./g, '').replace(',', '.')) : Number(t.replace(/\./g, ''));
+      const c = Math.round(n * 100), nossa = Number(venda.dataset.vendaNossa), min = Number(venda.dataset.vendaMin), max = Number(venda.dataset.vendaMax);
+      if (!Number.isFinite(c) || !c) { saida.textContent = ''; return; }
+      if (c < min) { saida.textContent = `O mínimo é ${fmt(min)}.`; return; }
+      if (c > max) { saida.textContent = `O máximo é ${fmt(max)}.`; return; }
+      saida.innerHTML = `Cliente paga ${fmt(c)} · sua comissão: <strong>${fmt(c - nossa)}</strong>`;
+    };
+    venda.addEventListener('input', calc);
+  }
+
   // Copiar código Pix
   const copiar = document.getElementById('copiar');
   if (copiar) copiar.addEventListener('click', async () => {

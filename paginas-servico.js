@@ -651,7 +651,7 @@ ${!cfg.ativo ? '<div class="aviso">O serviço de Limpa Nome está pausado para n
 <div class="cartao" style="margin-bottom:18px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;justify-content:space-between">
   <div style="flex:1 1 320px">
     <h2 style="font-size:1.15rem;margin:0 0 8px">Como você ganha</h2>
-    <p style="margin:4px 0">💸 <strong>O cliente paga</strong> ${reais(cfg.preco)} (Pix ou até ${cfg.parcelas}x no cartão) pelo link que você envia: você ganha <strong>${textoComissao(r)}</strong> por cliente pago.</p>
+    <p style="margin:4px 0">💸 <strong>O cliente paga</strong> pelo link que você envia (Pix ou até ${cfg.parcelas}x no cartão). Preço sugerido: <strong>${reais(r.preco)}</strong>, e você ganha <strong>${reais(r.comissaoCentavos)}</strong>. Quer cobrar mais? A nossa parte é fixa em ${reais(r.nossaParte)}: <strong>tudo o que passar disso é seu</strong>.</p>
     ${r.atacado ? `<p style="margin:4px 0">🏷️ <strong>Você paga o atacado</strong> de <strong>${reais(r.atacado)}</strong> por cliente e cobra dele o valor que quiser.</p>` : ''}
   </div>
   ${cfg.ativo ? '<a class="btn" href="/parceiro/novo" style="flex:none">+ Cadastrar cliente</a>' : ''}
@@ -679,7 +679,12 @@ export function paginaParceiroNovo({ cfg, r, v = {}, erro = '' }) {
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 <form class="cartao" method="post" action="/parceiro/novo" enctype="multipart/form-data" style="max-width:760px">
   <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 18px"><legend style="font-weight:700;padding:0 6px">Quem paga?</legend>
-    <label style="display:flex;gap:10px;align-items:flex-start;margin:8px 0"><input type="radio" name="modelo" value="comissao" ${modelo === 'comissao' ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>O cliente paga ${reais(cfg.preco)}</strong> (Pix ou até ${cfg.parcelas}x no cartão) por um link que você envia no WhatsApp. Você ganha <strong>${textoComissao(r)}</strong> quando ele pagar.</span></label>
+    <label style="display:flex;gap:10px;align-items:flex-start;margin:8px 0"><input type="radio" name="modelo" value="comissao" ${modelo === 'comissao' ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>O cliente paga</strong> (Pix ou até ${cfg.parcelas}x no cartão) por um link que você envia no WhatsApp. Você recebe a comissão quando ele pagar.</span></label>
+    <div style="margin:4px 0 12px 30px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+      <div class="campo" style="margin:0;flex:0 1 220px"><label for="pc-venda">Valor que o cliente vai pagar (R$)</label><input id="pc-venda" type="text" name="preco_venda" inputmode="decimal" value="${esc(v.preco_venda ?? (r.preco / 100).toFixed(2).replace('.', ','))}" data-venda-nossa="${r.nossaParte}" data-venda-min="${r.preco}" data-venda-max="${r.precoMaximo}"></div>
+      <p style="margin:0 0 10px;flex:1 1 240px" id="pc-comissao" aria-live="polite">Sugerido ${reais(r.preco)} · sua comissão: <strong>${reais(r.comissaoCentavos)}</strong></p>
+    </div>
+    <small class="muted" style="display:block;margin:-6px 0 8px 30px">Mínimo ${reais(r.preco)}. A nossa parte é ${reais(r.nossaParte)}; tudo acima disso é comissão sua.</small>
     ${r.atacado ? `<label style="display:flex;gap:10px;align-items:flex-start;margin:8px 0"><input type="radio" name="modelo" value="atacado" ${modelo === 'atacado' ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Eu pago o atacado de ${reais(r.atacado)}</strong> agora e cobro do cliente por fora.
       <select name="forma" aria-label="Forma de pagamento do atacado" style="min-height:38px;margin-left:6px"><option value="pix">Pix</option><option value="cartao" ${v.forma === 'cartao' ? 'selected' : ''}>Cartão (à vista)</option></select></span></label>` : ''}
   </fieldset>
@@ -759,20 +764,12 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
   </div>
   <button class="btn">Cadastrar parceiro</button>
 </form></div>
-<div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Parceiros (${parceiros.length})</h2><div class="rolar"><table class="tabela"><tr><th>Parceiro</th><th>Mensalidade</th><th>Clientes</th><th>Pagos</th><th>Receita</th><th>Comissões</th><th>Saldo</th><th>Regra própria</th></tr>
+<div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Parceiros (${parceiros.length})</h2><div class="rolar"><table class="tabela"><tr><th>Parceiro</th><th>Mensalidade</th><th>Clientes</th><th>Pagos</th><th>Receita</th><th>Comissões</th><th>Saldo</th><th>Valores</th></tr>
 ${parceiros.map((x) => `<tr><td><strong>${esc(x.nome)}</strong>${x.ativo ? '' : ' <span class="tag">inativo</span>'}<br><span class="muted">${esc(x.email)}${x.telefone ? ` · ${esc(x.telefone)}` : ''}</span><br><span class="muted" style="font-size:.8rem">desde ${dataBR(x.criado_em)}</span></td>
   <td>${x.mens.isento ? '<span class="muted">isento</span>' : x.mens.emDia ? `<strong style="color:var(--ok)">em dia</strong><br><span class="muted">até ${dataBR(x.mens.pagoAte)}</span>` : `<strong style="color:var(--erro)">${x.mens.assinatura ? 'aguardando pagamento' : 'não ativou'}</strong>`}<br><span class="muted">${x.mens.isento ? '' : reais(x.mens.valor)}${x.mens.forma ? ` · ${x.mens.forma}` : ''}</span></td>
   <td>${x.clientes}</td><td>${x.pagos}</td><td>${reais(x.receita)}</td><td>${reais(x.comissoes)}</td><td>${reais(x.saldo)}</td>
-  <td><form method="post" action="/admin/parceiros/salvar" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0"><input type="hidden" name="id" value="${x.usuario_id}">
-    <label style="display:flex;gap:4px;align-items:center;font-size:.85rem"><input type="checkbox" name="ativo" value="1" ${x.ativo ? 'checked' : ''}> ativo</label>
-    <select name="tipo" aria-label="Tipo de comissão" style="min-height:34px"><option value="">padrão</option><option value="percentual" ${x.comissao_tipo === 'percentual' ? 'selected' : ''}>%</option><option value="fixo" ${x.comissao_tipo === 'fixo' ? 'selected' : ''}>R$ fixo</option></select>
-    <input type="text" name="valor" aria-label="Valor da comissão" placeholder="comissão" inputmode="decimal" style="width:90px;min-height:34px;padding:4px 8px" value="${x.comissao_tipo === 'fixo' ? rs(x.comissao_valor) : (x.comissao_valor ?? '')}">
-    <input type="text" name="atacado" aria-label="Preço de atacado" placeholder="atacado R$" inputmode="decimal" style="width:100px;min-height:34px;padding:4px 8px" value="${rs(x.atacado_centavos)}">
-    <input type="text" name="mensalidade" aria-label="Mensalidade própria" placeholder="mensal. R$" inputmode="decimal" style="width:100px;min-height:34px;padding:4px 8px" value="${rs(x.mensalidade_centavos)}">
-    <label style="display:flex;gap:4px;align-items:center;font-size:.85rem"><input type="checkbox" name="isento" value="1" ${x.isento ? 'checked' : ''}> isento</label>
-    <label style="display:flex;gap:4px;align-items:center;font-size:.85rem">pago até <input type="date" name="pago_ate" value="${esc(x.pago_ate || '')}" style="min-height:34px;padding:2px 6px;font:inherit;font-size:.85rem"></label>
-    <button class="btn sec" style="${btnPeq}">Salvar</button></form>
-    <span class="muted" style="font-size:.8rem">em uso: ${esc(textoComissao(x.regra))}${x.regra.atacado ? ` · atacado ${reais(x.regra.atacado)}` : ' · sem atacado'}</span></td></tr>`).join('') || '<tr><td colspan="8" class="vazio">Nenhum parceiro ainda.</td></tr>'}
+  <td style="min-width:220px"><span style="font-size:.88rem">Cliente paga <strong>${reais(x.regra.preco)}</strong> · comissão <strong>${esc(textoComissao(x.regra))}</strong><br>${x.regra.atacado ? `atacado ${reais(x.regra.atacado)}` : 'sem atacado'}${[x.preco_centavos, x.comissao_tipo, x.atacado_centavos, x.mensalidade_centavos].some((v) => v != null) || x.isento ? ' · <span class="tag">valores próprios</span>' : ' · <span class="muted">padrão</span>'}</span>
+    <div style="margin-top:6px"><a class="btn sec" style="${btnPeq}" href="/admin/parceiros/${x.usuario_id}">Editar valores</a></div></td></tr>`).join('') || '<tr><td colspan="8" class="vazio">Nenhum parceiro ainda.</td></tr>'}
 </table></div><p class="muted" style="margin:10px 0 0;font-size:.88rem">Os pedidos dos parceiros aparecem também em Limpa Nome (serviço), com o nome do parceiro. Os saques das comissões seguem em "Saques de comissão".</p></div>`;
 }
 
@@ -789,4 +786,41 @@ export function blocoMensalidadeParceiro({ m }) {
     <label style="display:flex;gap:8px;align-items:center"><input type="radio" name="forma" value="cartao" style="width:20px;height:20px"> Cartão (renova sozinho)</label>
     <button class="btn">Ativar por ${reais(m.valor)}/mês</button></form>`}
 </div>`;
+}
+
+export function adminParceiroEditar({ menu, x, padrao, cfg, pedidos, ok, erro }) {
+  const rs = (c) => (c == null ? '' : (c / 100).toFixed(2).replace('.', ','));
+  const pad = (t) => `<small class="muted">vazio = padrão (${t})</small>`;
+  const comPad = padrao.comissaoTipo === 'fixo' ? reais(padrao.comissaoValor) : `${padrao.comissaoValor}%`;
+  return `<h1 style="font-size:1.7rem">Parceiro · ${esc(x.nome)}</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
+<p><a href="/admin/parceiros">← Todos os parceiros</a></p>
+<div class="grade" style="margin-bottom:18px">
+  ${kpiP('Clientes', x.clientes, `${x.pagos} pago(s)`)}${kpiP('Receita', reais(x.receita))}${kpiP('Comissões', reais(x.comissoes), `saldo ${reais(x.saldo)}`)}
+  ${kpiP('Mensalidade', x.mens.isento ? 'Isento' : x.mens.emDia ? 'Em dia' : 'Pendente', x.mens.pagoAte ? `até ${dataBR(x.mens.pagoAte)}` : '')}
+</div>
+<form class="cartao" method="post" action="/admin/parceiros/salvar" style="max-width:820px;margin-bottom:18px">
+  <input type="hidden" name="id" value="${x.usuario_id}">
+  <p class="muted" style="margin-top:0">${esc(x.email)}${x.telefone ? ` · ${esc(x.telefone)}` : ''} · parceiro desde ${dataBR(x.criado_em)}. Deixe um campo vazio para usar a regra padrão. Mudanças valem para os próximos clientes cadastrados.</p>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:16px;font-weight:700"><input type="checkbox" name="ativo" value="1" ${x.ativo ? 'checked' : ''} style="width:22px;height:22px"> Parceiro ativo</label>
+  <h2 style="font-size:1.1rem;margin:0 0 10px">Venda (o cliente paga pelo link)</h2>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="pe-preco">Preço ao cliente final (R$)</label><input id="pe-preco" type="text" name="preco" inputmode="decimal" placeholder="${rs(padrao.preco || cfg.preco)}" value="${rs(x.preco_centavos)}">${pad(reais(padrao.preco || cfg.preco))}</div>
+    <div class="campo" style="flex:1 1 160px"><label for="pe-tipo">Comissão</label><select id="pe-tipo" name="tipo" style="min-height:46px"><option value="">Padrão (${esc(comPad)})</option><option value="percentual" ${x.comissao_tipo === 'percentual' ? 'selected' : ''}>% do preço</option><option value="fixo" ${x.comissao_tipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option></select></div>
+    <div class="campo" style="flex:1 1 140px"><label for="pe-valor">Valor da comissão</label><input id="pe-valor" type="text" name="valor" inputmode="decimal" placeholder="ex.: 20 ou 300,00" value="${x.comissao_tipo === 'fixo' ? rs(x.comissao_valor) : (x.comissao_valor ?? '')}"></div>
+  </div>
+  <h2 style="font-size:1.1rem;margin:6px 0 10px">Atacado (o parceiro paga)</h2>
+  <div class="campo" style="max-width:260px"><label for="pe-atac">Preço de atacado (R$)</label><input id="pe-atac" type="text" name="atacado" inputmode="decimal" value="${rs(x.atacado_centavos)}">${pad(padrao.atacado ? reais(padrao.atacado) : 'sem atacado')}</div>
+  <h2 style="font-size:1.1rem;margin:6px 0 10px">Mensalidade</h2>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+    <div class="campo" style="flex:1 1 180px"><label for="pe-mens">Mensalidade (R$)</label><input id="pe-mens" type="text" name="mensalidade" inputmode="decimal" value="${rs(x.mensalidade_centavos)}">${pad(reais(padrao.mensalidade))}</div>
+    <div class="campo" style="flex:1 1 180px"><label for="pe-ate">Acesso pago até</label><input id="pe-ate" type="date" name="pago_ate" value="${esc(x.pago_ate || '')}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"><small class="muted">use para liberar manualmente</small></div>
+    <label style="display:flex;gap:10px;align-items:center;margin-top:34px"><input type="checkbox" name="isento" value="1" ${x.isento ? 'checked' : ''} style="width:20px;height:20px"> Isento de mensalidade</label>
+  </div>
+  <div class="campo"><label for="pe-obs">Observações internas</label><textarea id="pe-obs" name="obs" rows="2" maxlength="500" style="width:100%;font:inherit;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px">${esc(x.obs || '')}</textarea></div>
+  <p class="muted" style="margin:0 0 12px">Em uso agora: cliente paga <strong>${reais(x.regra.preco)}</strong> · comissão <strong>${esc(textoComissao(x.regra))}</strong> · ${x.regra.atacado ? `atacado <strong>${reais(x.regra.atacado)}</strong>` : 'sem atacado'} · mensalidade <strong>${x.mens.isento ? 'isento' : reais(x.mens.valor)}</strong></p>
+  <button class="btn">Salvar valores do parceiro</button>
+</form>
+<div class="cartao"><h2 style="font-size:1.1rem;margin-top:0">Clientes deste parceiro</h2><div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Cliente</th><th>Modelo</th><th>Valor</th><th>Comissão</th><th>Status</th></tr>
+${pedidos.map((p) => `<tr><td>${p.id}</td><td>${dt(p.criado_em)}</td><td>${esc(p.nome)}<br><span class="muted">${esc(formatarDoc(p.cpf))}</span></td><td>${p.parceiro_modelo === 'atacado' ? 'atacado' : 'cliente paga'}</td><td>${reais(p.valor_centavos)}</td><td>${p.parceiro_modelo === 'atacado' ? '—' : reais(p.parceiro_comissao_centavos)}</td><td>${etiqueta(p.status)}</td></tr>`).join('') || '<tr><td colspan="7" class="vazio">Nenhum cliente ainda.</td></tr>'}
+</table></div></div>`;
 }

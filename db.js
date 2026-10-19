@@ -413,7 +413,7 @@ for (const [c, def] of [['forma_pagamento', "TEXT NOT NULL DEFAULT 'pix'"], ['pa
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
 }
 // Área de parceiros (Limpa Nome): o parceiro cadastra clientes e ganha comissão (cliente paga) ou paga o preço de atacado
-for (const [c, def] of [['parceiro_id', 'INTEGER'], ['parceiro_modelo', 'TEXT'], ['parceiro_comissao_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['token', 'TEXT'], ['cliente_aceite_em', 'TEXT'], ['cliente_aceite_ip', 'TEXT']]) {
+for (const [c, def] of [['parceiro_id', 'INTEGER'], ['parceiro_modelo', 'TEXT'], ['parceiro_comissao_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['token', 'TEXT'], ['preco_venda_centavos', 'INTEGER'], ['cliente_aceite_em', 'TEXT'], ['cliente_aceite_ip', 'TEXT']]) {
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
 }
 if (!colunas('usuarios').includes('parceiro')) db.exec('ALTER TABLE usuarios ADD COLUMN parceiro INTEGER NOT NULL DEFAULT 0');
@@ -432,7 +432,7 @@ db.exec(`
   );
 `);
 // Mensalidade do parceiro (assinatura no Asaas)
-for (const [c, def] of [['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
+for (const [c, def] of [['preco_centavos', 'INTEGER'], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
 export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
