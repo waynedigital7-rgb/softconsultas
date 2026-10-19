@@ -1918,6 +1918,7 @@ async function entregarRaioX(id, { reenviar = false } = {}) {
 <p style="font-size:14px">Comece pelo item 1 do plano ainda hoje. Quanto antes, melhor.</p>
 <p style="font-size:12px;color:#7A7285">Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01</p></td></tr></table></td></tr></table></body></html>`,
       anexos: [{ filename: 'raio-x-soft-consultas.pdf', content: pdf.toString('base64') }] });
+    db.prepare('UPDATE raiox_pedidos SET erro = NULL WHERE id = ?').run(p.id);
     if (reenviar) registrar(null, 'Raio-X: e-mail reenviado', `#${p.id}`);
   } catch (e) {
     console.error('raio-x', id, e.message);
@@ -2006,15 +2007,61 @@ rota('GET', '/raio-x/r/:token/pdf', async ({ res, params }) => {
 
 // ---------- Admin ----------
 rota('GET', '/admin/raio-x', exigeAdmin(({ res, usuario, url }) => {
-  const pedidos = db.prepare('SELECT * FROM raiox_pedidos ORDER BY id DESC LIMIT 300').all();
-  const pagos = pedidos.filter((p) => p.status === 'paga');
-  pagina(res, 'Admin · Raio-X', SV.adminRaioX({ menu: PD.menu('/admin/raio-x'), cfg: raioxCfg(), pedidos, vendas: pagos.length, receita: pagos.reduce((s, p) => s + p.valor_centavos, 0),
+  const t = db.prepare("SELECT COUNT(*) n, COALESCE(SUM(valor_centavos), 0) r FROM raiox_pedidos WHERE status = 'paga'").get();
+  pagina(res, 'Admin · Raio-X', SV.adminRaioX({ menu: PD.menu('/admin/raio-x'), cfg: raioxCfg(), vendas: t.n, receita: t.r,
     produto: produtoRaioX(), produtos: db.prepare("SELECT slug, nome, custo_centavos FROM produtos WHERE endpoint <> '' AND documento IN ('cpf','cnpj','cpf_cnpj') ORDER BY nome").all(),
     ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
 }));
+// Vendas do Raio-X: filtros por período (horário de Brasília), status e busca
+function filtroVendasRX(url) {
+  const f = { periodo: url.searchParams.get('periodo') || '30', status: url.searchParams.get('status') || '', q: String(url.searchParams.get('q') || '').trim().slice(0, 80) };
+  const dia = "date(criado_em, '-3 hours')", hoje = "date('now', '-3 hours')";
+  const per = { hoje: `${dia} = ${hoje}`, ontem: `${dia} = date(${hoje}, '-1 day')`, 7: `${dia} >= date(${hoje}, '-6 days')`, 30: `${dia} >= date(${hoje}, '-29 days')`,
+    mes: `${dia} >= date(${hoje}, 'start of month')`, mes_ant: `${dia} >= date(${hoje}, 'start of month', '-1 month') AND ${dia} < date(${hoje}, 'start of month')`, tudo: '1=1' };
+  if (!per[f.periodo]) f.periodo = '30';
+  const onde = [per[f.periodo]], args = [];
+  if (f.status === 'nao_entregue') onde.push("status = 'paga' AND entregue_em IS NULL");
+  else if (['paga', 'pendente', 'expirada'].includes(f.status)) { onde.push('status = ?'); args.push(f.status); } else f.status = '';
+  if (f.q) {
+    const n = f.q.replace(/\D/g, '');
+    const c = ['nome LIKE ?', 'email LIKE ?']; args.push(`%${f.q}%`, `%${f.q}%`);
+    if (n) { c.push('documento LIKE ?', 'whatsapp LIKE ?'); args.push(`%${n}%`, `%${n}%`); if (n.length <= 7) { c.push('id = ?'); args.push(Number(n)); } }
+    onde.push(`(${c.join(' OR ')})`);
+  }
+  return { f, where: onde.join(' AND '), args };
+}
+rota('GET', '/admin/raio-x/vendas', exigeAdmin(({ res, usuario, url }) => {
+  const { f, where, args } = filtroVendasRX(url);
+  const pedidos = db.prepare(`SELECT * FROM raiox_pedidos WHERE ${where} ORDER BY id DESC LIMIT 500`).all(...args);
+  const todos = db.prepare(`SELECT status, forma, valor_centavos, entregue_em, resumo FROM raiox_pedidos WHERE ${where}`).all(...args);
+  const pagos = todos.filter((p) => p.status === 'paga');
+  const custoPadrao = produtoRaioX()?.custo_centavos || 0;
+  const custo = pagos.reduce((s, p) => { if (!p.entregue_em) return s; let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {} return s + (Number(r.custo) || custoPadrao); }, 0);
+  const receita = pagos.reduce((s, p) => s + p.valor_centavos, 0);
+  const k = { pedidos: todos.length, pagos: pagos.length, receita, custo, ticket: pagos.length ? Math.round(receita / pagos.length) : 0,
+    conversao: todos.length ? Math.round((pagos.length / todos.length) * 100) : 0,
+    pix: pagos.filter((p) => p.forma !== 'cartao').length, cartao: pagos.filter((p) => p.forma === 'cartao').length,
+    naoEntregues: pagos.filter((p) => !p.entregue_em).length };
+  const dias = db.prepare(`SELECT date(COALESCE(pago_em, criado_em), '-3 hours') dia, COUNT(*) vendas, SUM(valor_centavos) receita FROM raiox_pedidos WHERE ${where} AND status = 'paga' GROUP BY dia ORDER BY dia DESC LIMIT 60`).all(...args);
+  pagina(res, 'Admin · Vendas Raio-X', SV.adminVendasRaioX({ menu: PD.menu('/admin/raio-x/vendas'), pedidos, f, k, dias,
+    ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+rota('GET', '/admin/raio-x/vendas.csv', exigeAdmin(({ res, usuario, url }) => {
+  const { f, where, args } = filtroVendasRX(url);
+  const linhas = db.prepare(`SELECT * FROM raiox_pedidos WHERE ${where} ORDER BY id DESC`).all(...args);
+  const c = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = ['Pedido;Criado em;Pago em;Entregue em;Nome;E-mail;WhatsApp;Documento;Valor;Forma;Status;Resultado;Score;Restrições;Erro;Origem;Cobrança Asaas'].concat(linhas.map((p) => {
+    let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {}
+    return [p.id, p.criado_em, p.pago_em, p.entregue_em, p.nome, p.email, p.whatsapp, p.documento, (p.valor_centavos / 100).toFixed(2).replace('.', ','), p.forma, p.status, r.titulo, r.score, r.qtd, p.erro, p.origem, p.asaas_id].map(c).join(';');
+  })).join('\r\n');
+  registrar(usuario, 'Raio-X: planilha de vendas baixada', `${linhas.length} linha(s) · período ${f.periodo}`);
+  res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="vendas-raio-x-${f.periodo}.csv"`, 'Cache-Control': 'no-store' });
+  res.end('﻿' + csv);
+}));
 rota('POST', '/admin/raio-x', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
-  const volta = (m, ok) => redirecionar(res, `/admin/raio-x?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
+  const destino = /^\/admin\/raio-x\/vendas(\?[^\s]*)?$/.test(String(f.volta || '')) ? String(f.volta) : '/admin/raio-x';
+  const volta = (m, ok) => redirecionar(res, `${destino}${destino.includes('?') ? '&' : '?'}${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
   if (f.acao === 'refazer' || f.acao === 'reenviar' || f.acao === 'conferir') {
     const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(Number(f.id));
     if (!p) return volta('Pedido não encontrado.');

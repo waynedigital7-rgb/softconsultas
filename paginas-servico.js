@@ -565,11 +565,11 @@ export function paginaPedidoRaioX({ p }) {
 </div>`;
 }
 
-export function adminRaioX({ menu, cfg, pedidos, vendas, receita, produto, produtos, ok, erro }) {
-  return `<h1 style="font-size:1.7rem">Raio-X do CPF</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
+export function adminRaioX({ menu, cfg, vendas, receita, produto, produtos, ok, erro }) {
+  return `<h1 style="font-size:1.7rem">Raio-X do CPF · Configuração</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
 <div class="grade" style="margin-bottom:18px">
-  <div class="cartao"><div class="muted">Vendas</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${vendas}</div></div>
-  <div class="cartao"><div class="muted">Receita</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${reais(receita)}</div></div>
+  <div class="cartao"><div class="muted">Vendas (total)</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${vendas}</div><a href="/admin/raio-x/vendas">Ver vendas</a></div>
+  <div class="cartao"><div class="muted">Receita (total)</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${reais(receita)}</div></div>
   <div class="cartao"><div class="muted">Custo por Raio-X</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${produto ? reais(produto.custo_centavos) : '—'}</div><div class="muted">${produto ? esc(produto.nome) : 'configure a consulta'}</div></div>
 </div>
 <form class="cartao" method="post" action="/admin/raio-x" style="max-width:720px;margin-bottom:18px">
@@ -583,13 +583,43 @@ export function adminRaioX({ menu, cfg, pedidos, vendas, receita, produto, produ
     <small class="muted">Use uma consulta Boa Vista com score e restrições (ex.: Cred Completa Plus).</small></div>
   <button class="btn">Salvar</button>
   <p class="muted" style="margin:10px 0 0">Página de vendas: <a href="/raio-x" target="_blank" rel="noopener">/raio-x</a> · também abre por raiox.softconsultas.com depois de apontar o subdomínio.</p>
+</form>`;
+}
+
+const ST_RX = { paga: ['Pago', '#1E7B4D'], pendente: ['Aguardando pagamento', '#B26A00'], expirada: ['Expirado', '#6B6475'], cancelada: ['Cancelado', '#6B6475'] };
+export function adminVendasRaioX({ menu, pedidos, f, k, dias, ok, erro }) {
+  const kpi = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat,sans-serif;font-size:1.6rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
+  const opt = (v, t, cur) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`;
+  const qs = new URLSearchParams({ periodo: f.periodo, status: f.status, q: f.q }).toString();
+  const btnP = 'min-height:30px;padding:2px 10px;font-size:.78rem';
+  const max = Math.max(1, ...dias.map((d) => d.receita));
+  return `<h1 style="font-size:1.7rem">Vendas do Raio-X</h1>${menu}${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro">${esc(erro)}</div>` : ''}
+<form class="cartao" method="get" action="/admin/raio-x/vendas" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px">
+  <div class="campo" style="flex:1 1 160px;margin:0"><label for="vf-p">Período</label><select id="vf-p" name="periodo" style="min-height:46px">${opt('hoje', 'Hoje', f.periodo)}${opt('ontem', 'Ontem', f.periodo)}${opt('7', 'Últimos 7 dias', f.periodo)}${opt('30', 'Últimos 30 dias', f.periodo)}${opt('mes', 'Este mês', f.periodo)}${opt('mes_ant', 'Mês passado', f.periodo)}${opt('tudo', 'Tudo', f.periodo)}</select></div>
+  <div class="campo" style="flex:1 1 160px;margin:0"><label for="vf-s">Status</label><select id="vf-s" name="status" style="min-height:46px">${opt('', 'Todos', f.status)}${opt('paga', 'Pagos', f.status)}${opt('nao_entregue', 'Pagos, não entregues', f.status)}${opt('pendente', 'Aguardando pagamento', f.status)}${opt('expirada', 'Expirados', f.status)}</select></div>
+  <div class="campo" style="flex:2 1 220px;margin:0"><label for="vf-q">Buscar</label><input id="vf-q" type="text" name="q" placeholder="Nome, e-mail, CPF/CNPJ ou nº" value="${esc(f.q)}"></div>
+  <button class="btn">Filtrar</button>
+  <a class="btn sec" href="/admin/raio-x/vendas.csv?${esc(qs)}">Baixar planilha (CSV)</a>
 </form>
-<div class="cartao"><div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Cliente</th><th>Documento</th><th>Valor</th><th>Status</th><th>Ações</th></tr>
-${pedidos.map((p) => { let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {} return `<tr><td>${p.id}</td><td>${dt(p.criado_em)}</td><td>${esc(p.nome)}<br><span class="muted">${esc(p.email)}${p.whatsapp ? ` · ${esc(p.whatsapp)}` : ''}</span></td><td>${esc(formatarDoc(p.documento))}</td><td>${reais(p.valor_centavos)} · ${p.forma}</td>
-  <td>${p.status === 'paga' ? (p.entregue_em ? `<strong style="color:var(--ok)">Entregue</strong><br><span class="muted">${esc(r.titulo || '')}</span>` : `<strong style="color:var(--erro)">Pago, não entregue</strong>${p.erro ? `<br><span class="muted">${esc(p.erro)}</span>` : ''}`) : esc(p.status)}</td>
-  <td><form method="post" action="/admin/raio-x" style="display:flex;gap:6px;flex-wrap:wrap;margin:0"><input type="hidden" name="id" value="${p.id}">
-    ${p.status === 'pendente' && p.asaas_id ? '<button class="btn sec" name="acao" value="conferir" style="min-height:30px;padding:2px 10px;font-size:.78rem">Conferir no Asaas</button>' : ''}
-    ${p.status === 'paga' && p.entregue_em ? `<a class="btn sec" style="min-height:30px;padding:2px 10px;font-size:.78rem" href="/raio-x/r/${esc(p.token)}/pdf" target="_blank" rel="noopener">PDF</a><button class="btn sec" name="acao" value="reenviar" style="min-height:30px;padding:2px 10px;font-size:.78rem">Reenviar</button>` : ''}
-    ${p.status === 'paga' ? '<button class="btn sec" name="acao" value="refazer" style="min-height:30px;padding:2px 10px;font-size:.78rem" data-confirmar="Refazer a consulta (gasta 1 consulta na APIFull) e reenviar?">Refazer</button>' : ''}</form></td></tr>`; }).join('') || '<tr><td colspan="7" class="vazio">Nenhuma venda ainda.</td></tr>'}
-</table></div></div>`;
+<div class="grade" style="margin-bottom:18px">
+  ${kpi('Vendas pagas', k.pagos, `${k.pedidos} pedido(s) · conversão ${k.conversao}%`)}
+  ${kpi('Receita', reais(k.receita), `ticket médio ${reais(k.ticket)}`)}
+  ${kpi('Custo das consultas', reais(k.custo), 'APIFull')}
+  ${kpi('Lucro bruto', reais(k.receita - k.custo), 'antes da taxa do Asaas e anúncios')}
+  ${kpi('Pix x Cartão', `${k.pix} / ${k.cartao}`, 'vendas pagas')}
+  ${kpi('Pendências', k.naoEntregues, k.naoEntregues ? '<strong style="color:var(--erro)">pagos sem entrega: confira abaixo</strong>' : 'tudo entregue')}
+</div>
+${dias.length > 1 ? `<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.1rem;margin-top:0">Por dia</h2><div class="rolar"><table class="tabela"><tr><th>Dia</th><th>Vendas</th><th>Receita</th><th style="width:45%"></th></tr>
+${dias.map((d) => `<tr><td>${d.dia.split('-').reverse().join('/')}</td><td>${d.vendas}</td><td>${reais(d.receita)}</td><td><div style="height:10px;border-radius:5px;background:#9F31D3;width:${Math.round((d.receita / max) * 100)}%" aria-hidden="true"></div></td></tr>`).join('')}</table></div></div>` : ''}
+<div class="cartao"><div class="rolar"><table class="tabela"><tr><th>#</th><th>Data</th><th>Cliente</th><th>Documento</th><th>Valor</th><th>Status</th><th>Resultado</th><th>Ações</th></tr>
+${pedidos.map((p) => { let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {} const [st, cor] = ST_RX[p.status] || [p.status, '#555'];
+  return `<tr><td>${p.id}</td><td>${dt(p.criado_em)}${p.pago_em ? `<br><span class="muted">pago ${dt(p.pago_em)}</span>` : ''}</td><td>${esc(p.nome)}<br><span class="muted">${esc(p.email)}${p.whatsapp ? ` · <a href="https://wa.me/55${esc(String(p.whatsapp).replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, ''))}" target="_blank" rel="noopener">${esc(p.whatsapp)}</a>` : ''}</span>${p.origem ? `<br><span class="muted" style="font-size:.78rem">${esc(p.origem)}</span>` : ''}</td>
+  <td>${esc(formatarDoc(p.documento))}</td><td>${reais(p.valor_centavos)}<br><span class="muted">${p.forma === 'cartao' ? 'cartão' : 'pix'}</span></td>
+  <td><strong style="color:${cor}">${st}</strong>${p.status === 'paga' ? (p.entregue_em ? `<br><span class="muted">entregue ${dt(p.entregue_em)}${p.downloads ? ` · ${p.downloads} download(s)` : ''}</span>` : `<br><strong style="color:var(--erro)">não entregue</strong>${p.erro ? `<br><span class="muted">${esc(p.erro)}</span>` : ''}`) : ''}</td>
+  <td>${r.titulo ? `${esc(r.titulo)}<br><span class="muted">${r.score != null ? `score ${r.score} · ` : ''}${r.qtd || 0} restrição(ões)${r.total ? ` · ${reais(Math.round(r.total * 100))}` : ''}</span>` : '<span class="muted">—</span>'}</td>
+  <td><form method="post" action="/admin/raio-x" style="display:flex;gap:6px;flex-wrap:wrap;margin:0"><input type="hidden" name="id" value="${p.id}"><input type="hidden" name="volta" value="/admin/raio-x/vendas?${esc(qs)}">
+    ${p.status === 'pendente' && p.asaas_id ? `<button class="btn sec" name="acao" value="conferir" style="${btnP}">Conferir no Asaas</button>` : ''}
+    ${p.status === 'paga' && p.entregue_em ? `<a class="btn sec" style="${btnP}" href="/raio-x/r/${esc(p.token)}/pdf" target="_blank" rel="noopener">PDF</a><button class="btn sec" name="acao" value="reenviar" style="${btnP}">Reenviar</button>` : ''}
+    ${p.status === 'paga' ? `<button class="btn sec" name="acao" value="refazer" style="${btnP}" data-confirmar="Refazer a consulta (gasta 1 consulta na APIFull) e reenviar?">Refazer</button>` : ''}</form></td></tr>`; }).join('') || '<tr><td colspan="8" class="vazio">Nenhuma venda neste filtro.</td></tr>'}
+</table></div>${pedidos.length >= 500 ? '<p class="muted">Mostrando os 500 mais recentes. Use o filtro ou baixe a planilha para ver tudo.</p>' : ''}</div>`;
 }
