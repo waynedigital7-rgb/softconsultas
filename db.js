@@ -453,6 +453,25 @@ db.exec(`
     atualizado_em TEXT
   );
 `);
+// Adesão à área de parceiros (taxa única paga pelo próprio cliente)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS parceiro_adesoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    valor_centavos INTEGER NOT NULL,
+    forma TEXT NOT NULL DEFAULT 'pix',
+    parcelas INTEGER NOT NULL DEFAULT 1,
+    asaas_id TEXT,
+    asaas_parcelamento TEXT,
+    pix_codigo TEXT,
+    pix_imagem TEXT,
+    link_pagamento TEXT,
+    status TEXT NOT NULL DEFAULT 'pendente',
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    pago_em TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_adesao_usuario ON parceiro_adesoes(usuario_id);
+`);
 export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
 try { mkdirSync(pastaDocsLimpaNome, { recursive: true }); } catch {}
 export const registrar = (usuario, acao, detalhe = '') =>
@@ -498,6 +517,7 @@ const padrao = {
   parceiro_comissao_valor: '20',
   parceiro_atacado_centavos: '',
   parceiro_mensalidade_centavos: '9900',
+  parceiro_adesao_centavos: '99900',
   parceiro_preco_centavos: '150000',
   parceiro_preco_minimo_centavos: '100000',
   // Rating bancário (venda direta) e combo Limpa Nome + Rating

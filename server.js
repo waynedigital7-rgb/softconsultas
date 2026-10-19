@@ -664,6 +664,12 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
   // Assinaturas do monitoramento (inclui PAYMENT_CREATED para avisar a renovação no Pix)
   if (payment?.subscription || ref.startsWith(AS.PREFIXO_MONITORAMENTO)) { try { if (webhookMonitoramento(event, payment)) return; } catch (e) { console.error('webhook monitoramento:', e.message); return; } }
   if (!['PAYMENT_RECEIVED', 'PAYMENT_CONFIRMED'].includes(event)) return;
+  if (ref.startsWith(AS.PREFIXO_ADESAO)) {
+    const a = db.prepare('SELECT * FROM parceiro_adesoes WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_ADESAO.length)));
+    const confere = a && (a.asaas_parcelamento ? (payment.installment === a.asaas_parcelamento || payment.id === a.asaas_id) : (payment.id === a.asaas_id && Math.round(Number(payment.value) * 100) >= a.valor_centavos));
+    if (confere) { try { confirmarAdesao(a.id); } catch (e) { console.error('adesão:', e.message); } }
+    return;
+  }
   if (ref.startsWith(AS.PREFIXO_RAIOX)) {
     const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(Number(ref.slice(AS.PREFIXO_RAIOX.length)));
     if (p && p.asaas_id === payment.id && Math.round(Number(payment.value) * 100) >= p.valor_centavos) { try { confirmarRaioX(p.id); } catch (e) { console.error('raio-x:', e.message); } }
@@ -2178,7 +2184,7 @@ async function conferirMensalidade(x) {
 }
 const exigeParceiro = (fn) => exigeLogin(async (ctx) => {
   const x = parceiroRow(ctx.usuario.id);
-  if (!x?.ativo) return redirecionar(ctx.res, '/painel');
+  if (!x?.ativo) return redirecionar(ctx.res, '/parceiro');
   return fn({ ...ctx, parc: x });
 });
 const emailParceiroLN = (p, titulo, texto) => {
@@ -2188,7 +2194,7 @@ const emailParceiroLN = (p, titulo, texto) => {
     html: `<p>${texto}</p><p style="font-size:14px;color:#7A7285">Cliente: ${P.esc(p.nome)} · pedido #${p.id}</p>`, botao: { href: `${baseEmails()}/parceiro/cliente/${p.id}`, texto: 'Ver na área do parceiro' }, rodape: RODAPE_PARC });
 };
 
-rota('GET', '/parceiro', exigeParceiro(async ({ req, res, usuario, url, parc }) => {
+const areaParceiro = async ({ req, res, usuario, url, parc }) => {
   if (!mensalidadeParceiro(parc).emDia && parc.assinatura_id) { await conferirMensalidade(parc); parc = parceiroRow(usuario.id); }
   const pedidos = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE parceiro_id = ? ORDER BY id DESC LIMIT 500').all(usuario.id);
   const n = (f) => pedidos.filter(f).length;
@@ -2198,7 +2204,81 @@ rota('GET', '/parceiro', exigeParceiro(async ({ req, res, usuario, url, parc }) 
   const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.' };
   pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
+};
+// Quem ainda não é parceiro vê a página de adesão (taxa única); o preço de parceiro/atacado só aparece depois
+const adesaoValor = () => Number(lerConfig('parceiro_adesao_centavos') || 0);
+rota('GET', '/parceiro', exigeLogin(async (ctx) => {
+  const x = parceiroRow(ctx.usuario.id);
+  if (x?.ativo) return areaParceiro({ ...ctx, parc: x });
+  const aberta = db.prepare("SELECT * FROM parceiro_adesoes WHERE usuario_id = ? AND status = 'pendente' AND criado_em > datetime('now', '-2 days') ORDER BY id DESC").get(ctx.usuario.id);
+  pagina(ctx.res, 'Seja parceiro', SV.paginaAdesaoParceiro({ valor: adesaoValor(), cfg: lnCfgComTabela(), bloqueado: !!x && !x.ativo, aberta, erro: ctx.url.searchParams.get('erro') || '' }), ctx.usuario);
 }));
+rota('POST', '/parceiro/adesao', exigeLogin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const volta = (m) => redirecionar(res, `/parceiro?erro=${encodeURIComponent(m)}`);
+  const x = parceiroRow(usuario.id), valor = adesaoValor();
+  if (x?.ativo) return redirecionar(res, '/parceiro');
+  if (x && !x.ativo) return volta('Sua área de parceiro está suspensa. Fale com o suporte.');
+  if (valor < 500) return volta('A adesão de parceiros está fechada no momento.');
+  if (f.aceite !== '1') return volta('Aceite os termos de parceria para continuar.');
+  const aberta = db.prepare("SELECT * FROM parceiro_adesoes WHERE usuario_id = ? AND status = 'pendente' AND criado_em > datetime('now', '-2 days') ORDER BY id DESC").get(usuario.id);
+  if (aberta) return redirecionar(res, aberta.forma === 'cartao' && aberta.link_pagamento ? aberta.link_pagamento : `/parceiro/adesao/${aberta.id}`);
+  if (!A.limitar(`ades:${usuario.id}`, 5, 60)) return volta('Muitas tentativas. Aguarde alguns minutos.');
+  const cfg = lnCfgComTabela(), tabela = SV.tabelaParcelas(valor, cfg.parcelas, cfg.juros);
+  const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
+  const parcelas = forma === 'cartao' ? Math.min(cfg.parcelas, Math.max(1, Math.floor(Number(f.parcelas) || 1))) : 1;
+  const total = forma === 'cartao' ? tabela[parcelas - 1].total : valor;
+  try {
+    let clienteId = db.prepare('SELECT asaas_cliente_id FROM usuarios WHERE id = ?').get(usuario.id).asaas_cliente_id;
+    if (!clienteId) {
+      if (!usuario.documento) return volta('Cadastre o seu CPF ou CNPJ em "Minha conta" para continuar.');
+      clienteId = (await AS.criarCliente(usuario)).id;
+      db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
+    }
+    const id = Number(db.prepare('INSERT INTO parceiro_adesoes (usuario_id, valor_centavos, forma, parcelas) VALUES (?, ?, ?, ?)').run(usuario.id, total, forma, parcelas).lastInsertRowid);
+    const cob = await AS.criarCobrancaServico({ clienteId, valorCentavos: total, pedidoId: id, forma, parcelas, prefixo: AS.PREFIXO_ADESAO, descricao: `Adesão à área de parceiros - Soft Consultas #${id}` });
+    let pix = null;
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix adesão:', e.message); } }
+    db.prepare('UPDATE parceiro_adesoes SET asaas_id = ?, asaas_parcelamento = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ? WHERE id = ?')
+      .run(cob.id, cob.installment || null, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, id);
+    registrar(usuario, 'Parceiro: adesão gerada', `#${id} · ${P.reais(total)} · ${forma}${parcelas > 1 ? ` ${parcelas}x` : ''}`);
+    if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
+    redirecionar(res, `/parceiro/adesao/${id}`);
+  } catch (e) { console.error('adesão parceiro:', e.message); volta('Não foi possível gerar o pagamento agora. Tente de novo em instantes.'); }
+}));
+rota('GET', '/parceiro/adesao/:id', exigeLogin(({ res, usuario, params }) => {
+  const a = db.prepare('SELECT * FROM parceiro_adesoes WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!a || a.status === 'paga') return redirecionar(res, '/parceiro');
+  pagina(res, 'Adesão de parceiro', SV.paginaPagarAdesao({ a }), usuario);
+}));
+rota('GET', '/api/parceiro/adesao/:id/status', exigeLogin(async ({ res, usuario, params }) => {
+  const a = db.prepare('SELECT * FROM parceiro_adesoes WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
+  if (!a) return json(res, { pago: false }, 404);
+  if (a.status === 'paga') return json(res, { pago: true });
+  if (a.asaas_id && A.limitar(`stad:${a.id}`, 30, 5)) {
+    try {
+      const c = await AS.buscarCobranca(a.asaas_id);
+      if (AS.STATUS_PAGO.includes(c.status) && (a.asaas_parcelamento || Math.round(Number(c.value) * 100) >= a.valor_centavos)) { confirmarAdesao(a.id); return json(res, { pago: true }); }
+    } catch (e) { console.warn('status adesão:', e.message); }
+  }
+  json(res, { pago: false });
+}));
+// Adesão paga: vira parceiro na hora (com o 1º mês de mensalidade incluído)
+function confirmarAdesao(id) {
+  if (db.prepare("UPDATE parceiro_adesoes SET status = 'paga', pago_em = datetime('now') WHERE id = ? AND status = 'pendente'").run(id).changes !== 1) return false;
+  const a = db.prepare('SELECT * FROM parceiro_adesoes WHERE id = ?').get(id);
+  const ate = db.prepare("SELECT date('now', '-3 hours', '+1 month') d").get().d;
+  if (parceiroRow(a.usuario_id)) db.prepare("UPDATE parceiros SET ativo = 1, pago_ate = MAX(COALESCE(pago_ate, ''), ?), obs = COALESCE(obs, 'Entrou pela adesão'), atualizado_em = datetime('now') WHERE usuario_id = ?").run(ate, a.usuario_id);
+  else db.prepare("INSERT INTO parceiros (usuario_id, pago_ate, obs) VALUES (?, ?, 'Entrou pela adesão')").run(a.usuario_id, ate);
+  db.prepare('UPDATE usuarios SET parceiro = 1 WHERE id = ?').run(a.usuario_id);
+  const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(a.usuario_id);
+  registrar(null, 'Parceiro: adesão paga (novo parceiro)', `${u?.email} · ${P.reais(a.valor_centavos)}`);
+  emailServico({ para: u?.email, assunto: 'Bem-vindo à área de parceiros · Soft Consultas', titulo: 'Agora você é parceiro!',
+    html: `<p>Olá, ${P.esc(String(u?.nome || '').split(' ')[0])}! A sua adesão foi confirmada e a <strong>área de parceiro</strong> já está liberada. Lá você vê os seus preços de parceiro, cadastra clientes de Limpa Nome e Rating Bancário, envia o link de pagamento pelo WhatsApp e acompanha cada etapa.</p>`,
+    botao: { href: `${baseEmails()}/parceiro`, texto: 'Abrir minha área de parceiro' }, rodape: RODAPE_PARC });
+  return true;
+}
+
 
 // Mensalidade: cria a assinatura mensal e leva para o primeiro pagamento
 rota('POST', '/parceiro/mensalidade', exigeParceiro(async ({ req, res, usuario, parc }) => {
@@ -2461,7 +2541,7 @@ function listaParceirosAdmin() {
 }
 const padraoServico = (sv) => ({ minimo: Number(lerConfig(`parceiro_${sv}_preco_minimo_centavos`) || 0) || null, comissaoTipo: tipoComissao(lerConfig(`parceiro_${sv}_comissao_tipo`)), comissaoValor: Number(lerConfig(`parceiro_${sv}_comissao_valor`) || 0),
   preco: Number(lerConfig(`parceiro_${sv}_preco_centavos`) || 0) || null, atacado: Number(lerConfig(`parceiro_${sv}_atacado_centavos`) || 0) || null, precoSite: cfgServico(sv).preco });
-const padraoParceiro = () => ({ rating: padraoServico('rating'), combo: padraoServico('combo'), minimo: Number(lerConfig('parceiro_preco_minimo_centavos') || 0) || null, comissaoTipo: tipoComissao(lerConfig('parceiro_comissao_tipo')), comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
+const padraoParceiro = () => ({ adesao: Number(lerConfig('parceiro_adesao_centavos') || 0), rating: padraoServico('rating'), combo: padraoServico('combo'), minimo: Number(lerConfig('parceiro_preco_minimo_centavos') || 0) || null, comissaoTipo: tipoComissao(lerConfig('parceiro_comissao_tipo')), comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
   atacado: Number(lerConfig('parceiro_atacado_centavos') || 0) || null, mensalidade: Number(lerConfig('parceiro_mensalidade_centavos') || 0), preco: Number(lerConfig('parceiro_preco_centavos') || 0) || null });
 rota('GET', '/admin/parceiros', exigeAdmin(({ res, usuario, url }) => {
   pagina(res, 'Admin · Parceiros', SV.adminParceiros({ menu: PD.menu('/admin/parceiros'), padrao: padraoParceiro(), parceiros: listaParceirosAdmin(), cfg: lnCfgParceiro(),
@@ -2484,7 +2564,9 @@ rota('POST', '/admin/parceiros/padrao', exigeAdmin(async ({ req, res, usuario })
   if (valor === null || Number.isNaN(valor)) return voltaParc(res, tipo === 'percentual' ? 'Informe a comissão entre 0 e 100%.' : 'Informe o valor em reais.');
   if (Number.isNaN(atac) || (atac !== null && atac < 500)) return voltaParc(res, 'Preço de atacado inválido (mínimo R$ 5,00, ou deixe vazio).');
   if (Number.isNaN(mens)) return voltaParc(res, 'Mensalidade inválida.');
-  const precoP = lerReais(f.preco), minP = lerReais(f.minimo);
+  const precoP = lerReais(f.preco), minP = lerReais(f.minimo), adesao = lerReais(f.adesao);
+  if (Number.isNaN(adesao)) return voltaParc(res, 'Taxa de adesão inválida.');
+  gravarConfig('parceiro_adesao_centavos', String(adesao || 0));
   if (Number.isNaN(minP)) return voltaParc(res, 'Preço mínimo inválido.');
   gravarConfig('parceiro_preco_minimo_centavos', minP ? String(minP) : '');
   if (Number.isNaN(precoP) || (precoP !== null && precoP < 500)) return voltaParc(res, 'Preço de venda inválido.');

@@ -72,9 +72,10 @@ export const saldoConta = () => asaas('/finance/balance');
 
 // Cobrança Pix do serviço de Limpa Nome (referência própria, separada das recargas)
 export const PREFIXO_LIMPA_NOME = 'sclnp_';
-export function criarCobrancaServico({ clienteId, valorCentavos, pedidoId, descricao, forma = 'pix', parcelas = 1 }) {
+export const PREFIXO_ADESAO = 'scade_';
+export function criarCobrancaServico({ clienteId, valorCentavos, pedidoId, descricao, forma = 'pix', parcelas = 1, prefixo = PREFIXO_LIMPA_NOME }) {
   const venc = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
-  const base = { customer: clienteId, dueDate: venc, description: descricao || `Serviço Limpa Nome - Soft Consultas #${pedidoId}`, externalReference: `${PREFIXO_LIMPA_NOME}${pedidoId}` };
+  const base = { customer: clienteId, dueDate: venc, description: descricao || `Serviço Limpa Nome - Soft Consultas #${pedidoId}`, externalReference: `${prefixo}${pedidoId}` };
   // Cartão: o cliente digita os dados na página segura do Asaas (invoiceUrl); nada de cartão passa pelo nosso site
   const corpo = forma === 'cartao'
     ? (parcelas > 1 ? { ...base, billingType: 'CREDIT_CARD', installmentCount: parcelas, totalValue: valorCentavos / 100 } : { ...base, billingType: 'CREDIT_CARD', value: valorCentavos / 100 })

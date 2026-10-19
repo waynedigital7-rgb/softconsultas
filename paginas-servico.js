@@ -783,6 +783,7 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
     <div class="campo" style="flex:1 1 140px"><label for="pp-tipo">Comissão</label><select id="pp-tipo" name="tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${padrao.comissaoTipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option>${optNossa(padrao.comissaoTipo)}</select></div>
     <div class="campo" style="flex:1 1 120px"><label for="pp-valor">Valor</label><input id="pp-valor" type="text" name="valor" inputmode="decimal" value="${ehReais(padrao.comissaoTipo) ? rs(padrao.comissaoValor) : padrao.comissaoValor}"></div>
   </div>
+  <div class="campo"><label for="pp-ades">Taxa de adesão para virar parceiro (R$) · 0 = fechado, só você cadastra</label><input id="pp-ades" type="text" name="adesao" inputmode="decimal" value="${rs(padrao.adesao || 0)}"></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 160px"><label for="pp-atac">Atacado = nossa parte (R$) · vazio = usa a comissão</label><input id="pp-atac" type="text" name="atacado" inputmode="decimal" value="${rs(padrao.atacado || null)}"></div>
     <div class="campo" style="flex:1 1 160px"><label for="pp-mens">Mensalidade (R$) · 0 = grátis</label><input id="pp-mens" type="text" name="mensalidade" inputmode="decimal" value="${rs(padrao.mensalidade || 0)}"></div>
@@ -1051,4 +1052,48 @@ export function adminFichaRating({ menu, p, d, temSenha, senha = null, selfie, d
   <tr><th style="text-align:left">Selfie com documento</th><td>${selfie ? `<a href="/admin/limpa-nome/doc/${p.id}/selfie" target="_blank" rel="noopener">abrir</a>` : '<span class="muted">—</span>'}</td></tr>
   <tr><th style="text-align:left">Documento</th><td>${docExtra ? `<a href="/admin/limpa-nome/doc/${p.id}/ficha" target="_blank" rel="noopener">abrir</a>` : p.doc_frente ? `<a href="/admin/limpa-nome/doc/${p.id}/frente" target="_blank" rel="noopener">abrir (do pedido)</a>` : p.combo_de ? `<a href="/admin/limpa-nome/doc/${p.combo_de}/frente" target="_blank" rel="noopener">abrir (do combo)</a>` : '—'}</td></tr></table>
 </div>`;
+}
+
+// ======================= ADESÃO À ÁREA DE PARCEIROS =======================
+// Página de venda para quem ainda não é parceiro (não mostra preço de parceiro nem atacado)
+export function paginaAdesaoParceiro({ valor, cfg, bloqueado = false, aberta = null, erro = '' }) {
+  const tabela = tabelaParcelas(valor, cfg.parcelas, cfg.juros);
+  const ult = tabela.at(-1);
+  return `<div style="background:#0F0C14;color:#fff;border-radius:24px;padding:30px;margin-bottom:22px;background-image:radial-gradient(600px 400px at 90% 0%,#5B2D8E 0%,transparent 70%)">
+  <span class="tag" style="background:#2A2233;color:#D9B8F0">🔒 ÁREA DE PARCEIROS</span>
+  <h1 style="font-size:2.1rem;line-height:1.12;margin:14px 0 10px;color:#fff;max-width:760px">Venda Limpa Nome e Rating Bancário <span style="color:#C98BEB">com preço de parceiro</span></h1>
+  <p style="color:#E2D3EE;font-size:1.08rem;margin:0 0 16px;max-width:720px">Você cadastra os seus clientes, envia o link de pagamento pelo WhatsApp e ganha a diferença entre o seu preço de parceiro e o valor que cobrar. Nós cuidamos de todo o processo e você acompanha cada etapa.</p>
+  ${valor >= 500 ? `<p style="margin:0"><span style="font-family:Montserrat,sans-serif;font-size:2rem;font-weight:800">${reais(valor)}</span> <span style="color:#C9BFD4">adesão única${cfg.parcelas > 1 ? ` · ou até ${cfg.parcelas}x de ${reais(ult.parcela)} no cartão` : ''}</span></p>` : ''}
+</div>
+${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+<div class="grade" style="margin-bottom:18px">
+  <div class="cartao"><div style="font-size:1.7rem">🏷️</div><h3 style="margin:6px 0">Preço de parceiro</h3><p class="muted" style="margin:0">Acesso ao valor de atacado do Limpa Nome e do Rating Bancário, liberado só para parceiros.</p></div>
+  <div class="cartao"><div style="font-size:1.7rem">💸</div><h3 style="margin:6px 0">Você define o preço</h3><p class="muted" style="margin:0">Cobre o preço sugerido, dê desconto ou cobre mais: a diferença é toda sua.</p></div>
+  <div class="cartao"><div style="font-size:1.7rem">📲</div><h3 style="margin:6px 0">Link de pagamento</h3><p class="muted" style="margin:0">O cliente paga por Pix ou cartão em até ${cfg.parcelas}x, num link com o seu cadastro.</p></div>
+  <div class="cartao"><div style="font-size:1.7rem">📊</div><h3 style="margin:6px 0">Acompanhamento</h3><p class="muted" style="margin:0">Etapas de cada cliente, baixas por órgão e comissões em um só lugar.</p></div>
+</div>
+${bloqueado ? '<div class="cartao" style="max-width:640px"><h2 style="font-size:1.2rem;margin-top:0">Sua área de parceiro está suspensa</h2><p class="muted" style="margin:0">Fale com o suporte para reativar.</p></div>'
+  : valor < 500 ? '<div class="cartao" style="max-width:640px"><h2 style="font-size:1.2rem;margin-top:0">Inscrições fechadas no momento</h2><p class="muted" style="margin:0">Quer ser parceiro? Fale com a gente pelo WhatsApp de atendimento.</p></div>'
+  : aberta ? `<div class="cartao" style="max-width:640px"><h2 style="font-size:1.2rem;margin-top:0">Você já tem um pagamento de adesão em aberto</h2><p><a class="btn" href="${aberta.forma === 'cartao' && aberta.link_pagamento ? esc(aberta.link_pagamento) : `/parceiro/adesao/${aberta.id}`}">Continuar o pagamento</a></p></div>`
+  : `<form class="cartao" method="post" action="/parceiro/adesao" style="max-width:640px">
+  <h2 style="font-size:1.2rem;margin-top:0">Quero ser parceiro</h2>
+  <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:12px 16px;margin:0 0 16px;min-width:0"><legend style="font-weight:700;padding:0 6px">Forma de pagamento da adesão</legend>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0"><input type="radio" name="forma" value="pix" checked style="width:20px;height:20px"> <span><strong>Pix</strong> · ${reais(valor)} à vista</span></label>
+    <label style="display:flex;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap"><input type="radio" name="forma" value="cartao" style="width:20px;height:20px"> <span><strong>Cartão</strong> em</span>
+      <select name="parcelas" aria-label="Parcelas" style="min-height:40px;max-width:100%">${tabela.map((t) => `<option value="${t.n}">${t.n}x de ${reais(t.parcela)}${t.n > 1 && cfg.juros > 0 ? ` (total ${reais(t.total)})` : ' sem juros'}</option>`).join('')}</select></label>
+  </fieldset>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Li e aceito as condições da parceria: a adesão é única e libera a área de parceiro; os preços de parceiro são confidenciais; só posso cadastrar clientes com autorização deles; e a Soft Consultas pode suspender o acesso em caso de uso indevido.</span></label>
+  <button class="btn" type="submit">Pagar adesão e virar parceiro</button>
+  <p class="muted" style="margin:10px 0 0;font-size:.88rem">A liberação é automática assim que o pagamento for confirmado. Enquanto isso, você continua usando a Soft Consultas normalmente.</p>
+</form>`}`;
+}
+
+export function paginaPagarAdesao({ a }) {
+  return `<div class="cartao estreito" style="max-width:520px;text-align:center" data-pedido-ln="0" data-status-url="/api/parceiro/adesao/${a.id}/status">
+  <h1 style="font-size:1.4rem;margin-top:0">Pague ${reais(a.valor_centavos)} e vire parceiro</h1>
+  ${a.pix_imagem ? `<img src="data:image/png;base64,${esc(a.pix_imagem)}" alt="QR Code Pix" style="width:230px;height:230px;max-width:100%">
+  <textarea id="pix-codigo" readonly rows="3" aria-label="Código Pix copia e cola" style="width:100%;font:inherit;font-size:.8rem;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px;resize:none">${esc(a.pix_codigo)}</textarea>
+  <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
+  ${a.link_pagamento ? `<p><a href="${esc(a.link_pagamento)}" target="_blank" rel="noopener">${a.pix_imagem ? 'Prefiro pagar pela página do Asaas' : 'Abrir página de pagamento'}</a></p>` : ''}
+  <p class="muted pulsando" aria-live="polite">Aguardando pagamento… a área de parceiro libera sozinha.</p></div>`;
 }
