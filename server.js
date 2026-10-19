@@ -654,6 +654,7 @@ rota('POST', '/webhook/asaas', async ({ req, res }) => {
     if (p && ant.status && ant.status !== p.antecipacao_status) {
       db.prepare('UPDATE limpa_nome_pedidos SET antecipacao_status = ? WHERE id = ?').run(ant.status, p.id);
       registrar(null, 'Limpa Nome: antecipação atualizada', `#${p.id} · ${p.antecipacao_status} → ${ant.status}`);
+      if (ant.status === 'CREDITED') processarRepasses().catch((e) => console.error('repasses:', e.message));
     }
     return;
   }
@@ -2102,6 +2103,9 @@ function valoresProprios(x, svc) {
   const v = j[svc] || {};
   return { preco: v.preco ?? null, comissao_tipo: v.comissao_tipo || null, comissao_valor: v.comissao_valor ?? null, atacado: v.atacado ?? null };
 }
+const tipoComissao = (t) => (['fixo', 'nossa_parte'].includes(t) ? t : 'percentual');
+const tipoComissaoOuNulo = (t) => (['fixo', 'nossa_parte', 'percentual'].includes(t) ? t : null);
+const textoTipoComissao = (t, v) => (t === 'nossa_parte' ? `nossa parte fixa ${P.reais(v || 0)}` : t === 'fixo' ? P.reais(v || 0) : `${v || 0}%`);
 const chaveParc = (svc) => (svc === 'limpa_nome' ? 'parceiro_' : `parceiro_${svc}_`);
 const lnCfgParceiro = (uid = null, svc = 'limpa_nome') => {
   svc = svcOk(svc);
@@ -2115,10 +2119,17 @@ function regraParceiro(uid, x = parceiroRow(uid) || {}, svc = 'limpa_nome') {
   svc = svcOk(svc);
   const cfg = lnCfgParceiro(uid, svc), vp = valoresProprios(x, svc), k = chaveParc(svc);
   const proprio = !!vp.comissao_tipo;
-  const tipo = (proprio ? vp.comissao_tipo : lerConfig(`${k}comissao_tipo`)) === 'fixo' ? 'fixo' : 'percentual';
+  const tipo = tipoComissao(proprio ? vp.comissao_tipo : lerConfig(`${k}comissao_tipo`));
   const valor = Math.max(0, Number(proprio ? vp.comissao_valor : lerConfig(`${k}comissao_valor`)) || 0);
-  const comissao = Math.min(cfg.preco, tipo === 'fixo' ? valor : Math.round((cfg.preco * Math.min(100, valor)) / 100));
+  // "nossa_parte": a Soft Consultas fica com um valor fixo e todo o resto é do parceiro
+  const comissao = Math.min(cfg.preco, tipo === 'nossa_parte' ? Math.max(0, cfg.preco - valor) : tipo === 'fixo' ? valor : Math.round((cfg.preco * Math.min(100, valor)) / 100));
   const atac = vp.atacado ?? (Number(lerConfig(`${k}atacado_centavos`) || 0) || null);
+  // Com preço de atacado definido, ele é a nossa parte: tudo o que o parceiro cobrar acima disso é comissão dele (sem %)
+  if (atac && atac >= 500) {
+    const com = Math.max(0, cfg.preco - atac);
+    return { servico: svc, nomeServico: SERVICOS[svc], disponivel: cfg.ativo && cfg.preco >= 500, comissaoTipo: 'nossa_parte', comissaoValor: atac, comissaoCentavos: com,
+      atacado: atac, preco: Math.max(cfg.preco, atac), nossaParte: atac, precoMaximo: Math.max(cfg.preco, atac) * 3, porAtacado: true };
+  }
   return { servico: svc, nomeServico: SERVICOS[svc], disponivel: cfg.ativo && cfg.preco >= 500, comissaoTipo: tipo, comissaoValor: valor, comissaoCentavos: comissao,
     atacado: atac && atac >= 500 ? atac : null, preco: cfg.preco, nossaParte: cfg.preco - comissao, precoMaximo: cfg.preco * 3 };
 }
@@ -2183,7 +2194,7 @@ rota('GET', '/parceiro', exigeParceiro(async ({ req, res, usuario, url, parc }) 
     andamento: n((p) => ['pago', 'em_analise', 'em_lote', 'em_andamento', 'decisao'].includes(p.status)), concluidos: n((p) => p.status === 'concluido'),
     comissoes: db.prepare("SELECT COALESCE(SUM(valor_centavos), 0) s FROM comissoes WHERE usuario_id = ? AND tipo = 'comissao' AND referencia LIKE 'ln_%'").get(usuario.id).s };
   const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.' };
-  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
+  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
 }));
 
@@ -2238,7 +2249,7 @@ rota('POST', '/parceiro/novo', exigeParceiro(async ({ req, res, usuario, parc })
   const svc = svcOk(v.servico);
   r = regraParceiro(usuario.id, parc, svc); cfg = lnCfgParceiro(usuario.id, svc);
   if (!r.disponivel) return erro(`${r.nomeServico} não está recebendo pedidos no momento.`);
-  const modelo = v.modelo === 'atacado' ? 'atacado' : 'comissao';
+  const modelo = 'comissao'; // o cliente sempre paga o valor cheio pelo link; o atacado é a nossa parte
   if (modelo === 'atacado' && !r.atacado) return erro('O modelo de atacado não está liberado para você.');
   const nome = String(v.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
   const cpf = A.soNumeros(v.cpf);
@@ -2445,9 +2456,9 @@ function listaParceirosAdmin() {
     FROM parceiros x JOIN usuarios u ON u.id = x.usuario_id ORDER BY x.ativo DESC, x.criado_em DESC`).all()
     .map((x) => ({ ...x, saldo: saldoComissao(x.usuario_id), regra: regraParceiro(x.usuario_id, x), regras: regrasParceiro(x.usuario_id, x), proprios: { rating: valoresProprios(x, 'rating'), combo: valoresProprios(x, 'combo') }, mens: mensalidadeParceiro(x) }));
 }
-const padraoServico = (sv) => ({ comissaoTipo: lerConfig(`parceiro_${sv}_comissao_tipo`) === 'fixo' ? 'fixo' : 'percentual', comissaoValor: Number(lerConfig(`parceiro_${sv}_comissao_valor`) || 0),
+const padraoServico = (sv) => ({ comissaoTipo: tipoComissao(lerConfig(`parceiro_${sv}_comissao_tipo`)), comissaoValor: Number(lerConfig(`parceiro_${sv}_comissao_valor`) || 0),
   preco: Number(lerConfig(`parceiro_${sv}_preco_centavos`) || 0) || null, atacado: Number(lerConfig(`parceiro_${sv}_atacado_centavos`) || 0) || null, precoSite: cfgServico(sv).preco });
-const padraoParceiro = () => ({ rating: padraoServico('rating'), combo: padraoServico('combo'), comissaoTipo: lerConfig('parceiro_comissao_tipo') === 'fixo' ? 'fixo' : 'percentual', comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
+const padraoParceiro = () => ({ rating: padraoServico('rating'), combo: padraoServico('combo'), comissaoTipo: tipoComissao(lerConfig('parceiro_comissao_tipo')), comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
   atacado: Number(lerConfig('parceiro_atacado_centavos') || 0) || null, mensalidade: Number(lerConfig('parceiro_mensalidade_centavos') || 0), preco: Number(lerConfig('parceiro_preco_centavos') || 0) || null });
 rota('GET', '/admin/parceiros', exigeAdmin(({ res, usuario, url }) => {
   pagina(res, 'Admin · Parceiros', SV.adminParceiros({ menu: PD.menu('/admin/parceiros'), padrao: padraoParceiro(), parceiros: listaParceirosAdmin(), cfg: lnCfgParceiro(),
@@ -2458,16 +2469,16 @@ const voltaParc = (res, m, ok) => redirecionar(res, `/admin/parceiros?${ok ? 'ok
 const lerComissao = (tipo, txt) => {
   const t = String(txt ?? '').trim();
   if (!t) return null;
-  if (tipo === 'fixo') { const c = centavos(t); return Number.isFinite(c) && c >= 0 ? c : NaN; }
+  if (tipo === 'fixo' || tipo === 'nossa_parte') { const c = centavos(t); return Number.isFinite(c) && c >= 0 ? c : NaN; }
   const n = Number(t.replace(',', '.'));
   return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : NaN;
 };
 const lerReais = (txt) => { const t = String(txt ?? '').trim(); if (!t) return null; const c = centavos(t); return Number.isFinite(c) && c >= 0 ? c : NaN; };
 rota('POST', '/admin/parceiros/padrao', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
-  const tipo = f.tipo === 'fixo' ? 'fixo' : 'percentual';
+  const tipo = tipoComissao(f.tipo);
   const valor = lerComissao(tipo, f.valor), atac = lerReais(f.atacado), mens = lerReais(f.mensalidade);
-  if (valor === null || Number.isNaN(valor)) return voltaParc(res, tipo === 'fixo' ? 'Informe o valor da comissão em reais.' : 'Informe a comissão entre 0 e 100%.');
+  if (valor === null || Number.isNaN(valor)) return voltaParc(res, tipo === 'percentual' ? 'Informe a comissão entre 0 e 100%.' : 'Informe o valor em reais.');
   if (Number.isNaN(atac) || (atac !== null && atac < 500)) return voltaParc(res, 'Preço de atacado inválido (mínimo R$ 5,00, ou deixe vazio).');
   if (Number.isNaN(mens)) return voltaParc(res, 'Mensalidade inválida.');
   const precoP = lerReais(f.preco);
@@ -2476,15 +2487,15 @@ rota('POST', '/admin/parceiros/padrao', exigeAdmin(async ({ req, res, usuario })
   // Rating e combo: mesmos campos com prefixo (rating_..., combo_...)
   const extra = [];
   for (const sv of ['rating', 'combo']) {
-    const t2 = f[`${sv}_tipo`] === 'fixo' ? 'fixo' : 'percentual', v2 = lerComissao(t2, f[`${sv}_valor`]), p2 = lerReais(f[`${sv}_preco`]), a2 = lerReais(f[`${sv}_atacado`]);
+    const t2 = tipoComissao(f[`${sv}_tipo`]), v2 = lerComissao(t2, f[`${sv}_valor`]), p2 = lerReais(f[`${sv}_preco`]), a2 = lerReais(f[`${sv}_atacado`]);
     if (Number.isNaN(v2) || Number.isNaN(p2) || Number.isNaN(a2) || (p2 !== null && p2 < 500) || (a2 !== null && a2 < 500)) return voltaParc(res, `Valores inválidos em ${SERVICOS[sv]}.`);
     gravarConfig(`parceiro_${sv}_comissao_tipo`, t2); gravarConfig(`parceiro_${sv}_comissao_valor`, String(v2 ?? 0));
     gravarConfig(`parceiro_${sv}_preco_centavos`, p2 ? String(p2) : ''); gravarConfig(`parceiro_${sv}_atacado_centavos`, a2 ? String(a2) : '');
-    extra.push(`${sv}: preço ${p2 ? P.reais(p2) : 'do site'}, comissão ${t2 === 'fixo' ? P.reais(v2 || 0) : `${v2 || 0}%`}, atacado ${a2 ? P.reais(a2) : 'desligado'}`);
+    extra.push(`${sv}: preço ${p2 ? P.reais(p2) : 'do site'}, comissão ${textoTipoComissao(t2, v2)}, atacado ${a2 ? P.reais(a2) : 'desligado'}`);
   }
   gravarConfig('parceiro_comissao_tipo', tipo); gravarConfig('parceiro_comissao_valor', String(valor));
   gravarConfig('parceiro_atacado_centavos', atac ? String(atac) : ''); gravarConfig('parceiro_mensalidade_centavos', String(mens || 0));
-  registrar(usuario, 'Parceiros: regra padrão', `preço ao cliente ${precoP ? P.reais(precoP) : 'igual ao do site'} · comissão ${tipo === 'fixo' ? P.reais(valor) : `${valor}%`} · atacado ${atac ? P.reais(atac) : 'desligado'} · mensalidade ${P.reais(mens || 0)} · ${extra.join(' · ')}`);
+  registrar(usuario, 'Parceiros: regra padrão', `preço ao cliente ${precoP ? P.reais(precoP) : 'igual ao do site'} · comissão ${textoTipoComissao(tipo, valor)} · atacado ${atac ? P.reais(atac) : 'desligado'} · mensalidade ${P.reais(mens || 0)} · ${extra.join(' · ')}`);
   voltaParc(res, 'Regra padrão salva.', true);
 }));
 rota('POST', '/admin/parceiros/novo', exigeAdmin(async ({ req, res, usuario }) => {
@@ -2529,29 +2540,32 @@ rota('POST', '/admin/parceiros/salvar', exigeAdmin(async ({ req, res, usuario })
   const x = parceiroRow(Number(f.id));
   if (!x) return voltaParc(res, 'Parceiro não encontrado.');
   const voltaP = (r, m, ok) => redirecionar(r, `/admin/parceiros/${x.usuario_id}?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
-  const tipo = f.tipo === 'fixo' ? 'fixo' : f.tipo === 'percentual' ? 'percentual' : null;
+  const tipo = tipoComissaoOuNulo(f.tipo);
   const valor = tipo ? lerComissao(tipo, f.valor) : null, atac = lerReais(f.atacado), mens = lerReais(f.mensalidade), preco = lerReais(f.preco);
   if (Number.isNaN(preco) || (preco !== null && preco < 500)) return voltaP(res, 'Preço de venda inválido (mínimo R$ 5,00, ou deixe vazio para usar o padrão).');
   if (tipo && (valor === null || Number.isNaN(valor))) return voltaP(res, 'Informe o valor da comissão própria (ou escolha "padrão").');
-  if (Number.isNaN(atac) || (atac !== null && atac < 500)) return voltaP(res, 'Preço de atacado inválido.');
+  if (Number.isNaN(atac) || (atac !== null && atac > 0 && atac < 500)) return voltaP(res, 'Preço de atacado inválido (use 0 para desligar o atacado deste parceiro).');
   if (Number.isNaN(mens)) return voltaP(res, 'Mensalidade inválida.');
   const ativo = f.ativo === '1' ? 1 : 0, isento = f.isento === '1' ? 1 : 0;
   let pagoAte = x.pago_ate;
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(f.pago_ate || ''))) pagoAte = f.pago_ate; else if (f.pago_ate === '') pagoAte = x.pago_ate;
   const obs = String(f.obs ?? x.obs ?? '').trim().slice(0, 500);
+  const repAuto = f.repasse_auto === '1' ? 1 : 0, repPix = String(f.repasse_pix || '').trim().slice(0, 140);
+  if (repAuto && !AS.tipoChavePix(repPix)) return voltaP(res, 'Para o repasse automático, informe uma chave Pix válida (CPF, CNPJ, e-mail, celular ou chave aleatória).');
   const vs = {};
   for (const sv of ['rating', 'combo']) {
-    const t2 = f[`${sv}_tipo`] === 'fixo' ? 'fixo' : f[`${sv}_tipo`] === 'percentual' ? 'percentual' : null;
+    const t2 = tipoComissaoOuNulo(f[`${sv}_tipo`]);
     const v2 = t2 ? lerComissao(t2, f[`${sv}_valor`]) : null, p2 = lerReais(f[`${sv}_preco`]), a2 = lerReais(f[`${sv}_atacado`]);
-    if ((t2 && (v2 === null || Number.isNaN(v2))) || Number.isNaN(p2) || Number.isNaN(a2) || (p2 !== null && p2 < 500) || (a2 !== null && a2 < 500)) return voltaP(res, `Valores inválidos em ${SERVICOS[sv]}.`);
+    if ((t2 && (v2 === null || Number.isNaN(v2))) || Number.isNaN(p2) || Number.isNaN(a2) || (p2 !== null && p2 < 500) || (a2 !== null && a2 > 0 && a2 < 500)) return voltaP(res, `Valores inválidos em ${SERVICOS[sv]}.`);
     vs[sv] = { preco: p2, comissao_tipo: t2, comissao_valor: t2 ? v2 : null, atacado: a2 };
   }
-  db.prepare("UPDATE parceiros SET ativo = ?, comissao_tipo = ?, comissao_valor = ?, atacado_centavos = ?, mensalidade_centavos = ?, isento = ?, pago_ate = ?, preco_centavos = ?, obs = ?, valores_servicos = ?, atualizado_em = datetime('now') WHERE usuario_id = ?")
-    .run(ativo, tipo, tipo ? valor : null, atac, mens, isento, pagoAte, preco, obs || null, JSON.stringify(vs), x.usuario_id);
+  db.prepare("UPDATE parceiros SET ativo = ?, comissao_tipo = ?, comissao_valor = ?, atacado_centavos = ?, mensalidade_centavos = ?, isento = ?, pago_ate = ?, preco_centavos = ?, obs = ?, valores_servicos = ?, repasse_auto = ?, repasse_pix = ?, atualizado_em = datetime('now') WHERE usuario_id = ?")
+    .run(ativo, tipo, tipo ? valor : null, atac, mens, isento, pagoAte, preco, obs || null, JSON.stringify(vs), repAuto, repPix || null, x.usuario_id);
+  if (repAuto && repPix) db.prepare('UPDATE usuarios SET chave_pix = ? WHERE id = ?').run(repPix, x.usuario_id);
   db.prepare('UPDATE usuarios SET parceiro = ? WHERE id = ?').run(ativo, x.usuario_id);
   if (!ativo && x.assinatura_id) { await AS.cancelarAssinatura(x.assinatura_id).catch(() => {}); db.prepare('UPDATE parceiros SET assinatura_id = NULL, assinatura_link = NULL WHERE usuario_id = ?').run(x.usuario_id); }
   const em = db.prepare('SELECT email FROM usuarios WHERE id = ?').get(x.usuario_id)?.email;
-  registrar(usuario, 'Parceiros: regra do parceiro', `${em} · ${ativo ? 'ativo' : 'inativo'} · preço ao cliente ${preco ? P.reais(preco) : 'padrão'} · comissão ${tipo ? (tipo === 'fixo' ? P.reais(valor) : `${valor}%`) : 'padrão'} · atacado ${atac ? P.reais(atac) : 'padrão'} · mensalidade ${isento ? 'isento' : mens != null ? P.reais(mens) : 'padrão'}${pagoAte !== x.pago_ate ? ` · pago até ${pagoAte}` : ''}`);
+  registrar(usuario, 'Parceiros: regra do parceiro', `${em} · ${ativo ? 'ativo' : 'inativo'} · preço ao cliente ${preco ? P.reais(preco) : 'padrão'} · comissão ${tipo ? textoTipoComissao(tipo, valor) : 'padrão'} · atacado ${atac ? P.reais(atac) : 'padrão'} · mensalidade ${isento ? 'isento' : mens != null ? P.reais(mens) : 'padrão'}${pagoAte !== x.pago_ate ? ` · pago até ${pagoAte}` : ''} · repasse automático ${repAuto ? `ligado (${repPix})` : 'desligado'}`);
   voltaP(res, 'Parceiro atualizado. Os novos valores valem para os próximos clientes cadastrados.', true);
 }));
 
@@ -2943,6 +2957,53 @@ function avisarStatusLN(p) {
   if (p.parceiro_id) emailParceiroLN(p, t, `Atualização do seu cliente: <strong>${P.esc(SV.STATUS_LN[p.status]?.t || p.status)}</strong>.${p.status === 'pago' && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos ? ` A sua comissão de <strong>${P.reais(p.parceiro_comissao_centavos)}</strong> já está no seu saldo.` : ''}${p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''}`);
 }
 // Confirma o pagamento (webhook ou consulta de status). Retorna true só na primeira vez.
+// Repasse automático: parceiros com chave Pix cadastrada recebem a comissão sozinhos.
+// Pix: sai na hora. Cartão: só depois que a antecipação cai (ou 31 dias), para não pagarmos antes de receber.
+function agendarRepasse(p) {
+  const x = db.prepare('SELECT * FROM parceiros WHERE usuario_id = ?').get(p.parceiro_id);
+  if (!x?.repasse_auto || !x.repasse_pix || !AS.tipoChavePix(x.repasse_pix)) return;
+  if (db.prepare('SELECT 1 FROM saques WHERE automatico = 1 AND pedido_id = ?').get(p.id)) return;
+  db.exec('BEGIN IMMEDIATE');
+  let sid = null;
+  try {
+    const valor = Math.min(p.parceiro_comissao_centavos, saldoComissao(p.parceiro_id));
+    if (valor > 0) {
+      const liberar = p.forma_pagamento === 'cartao' ? null : db.prepare("SELECT datetime('now') d").get().d;
+      sid = Number(db.prepare('INSERT INTO saques (usuario_id, valor_centavos, chave_pix, taxa_centavos, automatico, pedido_id, liberar_em, observacao) VALUES (?, ?, ?, 0, 1, ?, ?, ?)')
+        .run(p.parceiro_id, valor, x.repasse_pix, p.id, liberar, p.forma_pagamento === 'cartao' ? 'Repasse automático: aguardando o cartão cair' : 'Repasse automático').lastInsertRowid);
+      db.prepare("INSERT INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'saque', ?, ?, ?)").run(p.parceiro_id, -valor, `Repasse automático via Pix · pedido #${p.id}`, `saque_${sid}`);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); console.error('repasse:', e.message); return; }
+  if (sid) { registrar(null, 'Parceiro: repasse agendado', `saque #${sid} · pedido #${p.id}`); processarRepasses().catch((e) => console.error('repasses:', e.message)); }
+}
+let repassando = false;
+async function processarRepasses() {
+  if (repassando) return;
+  repassando = true;
+  try {
+    for (const s2 of db.prepare("SELECT * FROM saques WHERE automatico = 1 AND status = 'pendente' AND tentativas < 10 ORDER BY id LIMIT 30").all()) {
+      if (!s2.liberar_em) {
+        const ped = db.prepare('SELECT pago_em, antecipacao_status, status FROM limpa_nome_pedidos WHERE id = ?').get(s2.pedido_id);
+        const caiu = ped && (ped.antecipacao_status === 'CREDITED' || db.prepare("SELECT ? < datetime('now', '-31 days') v").get(ped.pago_em).v);
+        if (!caiu) continue;
+        db.prepare("UPDATE saques SET liberar_em = datetime('now') WHERE id = ?").run(s2.id);
+      } else if (db.prepare("SELECT ? > datetime('now') v").get(s2.liberar_em).v) continue;
+      if (saquesEmAndamento.has(s2.id)) continue;
+      saquesEmAndamento.add(s2.id);
+      try {
+        const t = await AS.transferirPix({ valorCentavos: s2.valor_centavos, chave: s2.chave_pix, descricao: `Repasse Soft Consultas · pedido #${s2.pedido_id}` });
+        db.prepare("UPDATE saques SET status = 'pago', resolvido_em = datetime('now'), observacao = ?, asaas_transferencia_id = ? WHERE id = ? AND status = 'pendente'").run(`Repasse automático (${t.status || 'enviado'})`, t.id || null, s2.id);
+        registrar(null, 'Parceiro: repasse automático pago', `saque #${s2.id} · ${P.reais(s2.valor_centavos)} para ${s2.chave_pix} · pedido #${s2.pedido_id} · transferência ${t.id || '-'}`);
+      } catch (e) {
+        db.prepare('UPDATE saques SET tentativas = tentativas + 1, observacao = ? WHERE id = ?').run(`Repasse automático: falhou (${String(e.message).slice(0, 150)}). Tentamos de novo a cada 30 min.`, s2.id);
+        registrar(null, 'Parceiro: repasse automático falhou', `saque #${s2.id} · ${e.message}`);
+      } finally { saquesEmAndamento.delete(s2.id); }
+    }
+  } finally { repassando = false; }
+}
+setInterval(() => processarRepasses().catch((e) => console.error('repasses:', e.message)), 30 * 60 * 1000).unref();
+
 // Combo pago: cria o pedido do Rating Bancário (sem cobrança própria), que começa depois que o Limpa Nome terminar
 function criarRatingDoCombo(paiId) {
   if (db.prepare('SELECT 1 FROM limpa_nome_pedidos WHERE combo_de = ?').get(paiId)) return;
@@ -2967,7 +3028,7 @@ function confirmarPedidoLN(id) {
     if (p.parceiro_id && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos > 0) {
       const ins = db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'comissao', ?, ?, ?)")
         .run(p.parceiro_id, p.parceiro_comissao_centavos, `Limpa Nome #${p.id} · ${String(p.nome).slice(0, 60)}`, `ln_${p.id}`);
-      if (ins.changes) registrar(null, 'Parceiro: comissão creditada', `#${p.id} · ${P.reais(p.parceiro_comissao_centavos)}`);
+      if (ins.changes) { registrar(null, 'Parceiro: comissão creditada', `#${p.id} · ${P.reais(p.parceiro_comissao_centavos)}`); agendarRepasse(p); }
     }
     if (p.forma_pagamento === 'cartao' && lnCfg().antecipar) anteciparPedidoLN(p.id).catch((e) => console.error('antecipação:', e.message));
   }
@@ -3011,6 +3072,7 @@ async function revisarAntecipacoesLN() {
       if (a.status && a.status !== p.antecipacao_status) {
         db.prepare('UPDATE limpa_nome_pedidos SET antecipacao_status = ?, antecipacao_liquido_centavos = COALESCE(?, antecipacao_liquido_centavos) WHERE id = ?').run(a.status, Math.round(Number(a.netValue || 0) * 100) || null, p.id);
         registrar(null, 'Limpa Nome: antecipação atualizada', `#${p.id} · ${p.antecipacao_status} → ${a.status}`);
+        if (a.status === 'CREDITED') processarRepasses().catch((e) => console.error('repasses:', e.message));
       }
     } catch (e) { console.warn('antecipação status:', e.message); }
   }

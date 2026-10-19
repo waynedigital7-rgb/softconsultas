@@ -337,6 +337,10 @@ db.exec(`
 `);
 if (!colunas('saques').includes('asaas_transferencia_id')) db.exec('ALTER TABLE saques ADD COLUMN asaas_transferencia_id TEXT');
 // Taxa cobrada no saque de comissão (o Pix enviado é o valor menos a taxa)
+// Repasse automático de parceiro (Pix sai sozinho quando o cliente paga)
+for (const [c, def] of [['automatico', 'INTEGER NOT NULL DEFAULT 0'], ['pedido_id', 'INTEGER'], ['liberar_em', 'TEXT'], ['tentativas', 'INTEGER NOT NULL DEFAULT 0']]) {
+  if (!colunas('saques').includes(c)) db.exec(`ALTER TABLE saques ADD COLUMN ${c} ${def}`);
+}
 if (!colunas('saques').includes('taxa_centavos')) db.exec('ALTER TABLE saques ADD COLUMN taxa_centavos INTEGER NOT NULL DEFAULT 0');
 // Registro de alterações feitas no Admin (auditoria)
 db.exec(`
@@ -432,7 +436,7 @@ db.exec(`
   );
 `);
 // Mensalidade do parceiro (assinatura no Asaas)
-for (const [c, def] of [['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
+for (const [c, def] of [['repasse_auto', 'INTEGER NOT NULL DEFAULT 0'], ['repasse_pix', 'TEXT'], ['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
 // Ficha cadastral do Rating Bancário (dados do cliente; a senha do Serasa fica criptografada)
