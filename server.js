@@ -2092,9 +2092,15 @@ rota('POST', '/admin/raio-x', exigeAdmin(async ({ req, res, usuario }) => {
 // Mensalidade do parceiro: assinatura mensal no Asaas; sem mensalidade em dia ele não cadastra clientes novos (acompanha os antigos).
 const RODAPE_PARC = 'Você recebe este e-mail porque é parceiro do Limpa Nome da Soft Consultas.';
 const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+// Preço de venda do Limpa Nome para o cliente final dos parceiros (separado do preço do site)
+const lnCfgParceiro = () => {
+  const c = lnCfg();
+  const preco = Number(lerConfig('parceiro_preco_centavos') || 0) || c.preco;
+  return { ...c, preco, tabela: SV.tabelaParcelas(preco, c.parcelas, c.juros) };
+};
 const parceiroRow = (uid) => db.prepare('SELECT * FROM parceiros WHERE usuario_id = ?').get(uid);
 function regraParceiro(uid, x = parceiroRow(uid) || {}) {
-  const cfg = lnCfg();
+  const cfg = lnCfgParceiro();
   const proprio = !!x.comissao_tipo;
   const tipo = (proprio ? x.comissao_tipo : lerConfig('parceiro_comissao_tipo')) === 'fixo' ? 'fixo' : 'percentual';
   const valor = Math.max(0, Number(proprio ? x.comissao_valor : lerConfig('parceiro_comissao_valor')) || 0);
@@ -2162,7 +2168,7 @@ rota('GET', '/parceiro', exigeParceiro(async ({ req, res, usuario, url, parc }) 
     andamento: n((p) => ['pago', 'em_analise', 'em_lote', 'em_andamento', 'decisao'].includes(p.status)), concluidos: n((p) => p.status === 'concluido'),
     comissoes: db.prepare("SELECT COALESCE(SUM(valor_centavos), 0) s FROM comissoes WHERE usuario_id = ? AND tipo = 'comissao' AND referencia LIKE 'ln_%'").get(usuario.id).s };
   const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.' };
-  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, r: regraParceiro(usuario.id, parc), cfg: lnCfg(), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
+  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, r: regraParceiro(usuario.id, parc), cfg: lnCfgParceiro(), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
 }));
 
@@ -2199,14 +2205,14 @@ rota('POST', '/parceiro/mensalidade', exigeParceiro(async ({ req, res, usuario, 
 }));
 
 rota('GET', '/parceiro/novo', exigeParceiro(({ res, usuario, parc }) => {
-  const cfg = lnCfg();
+  const cfg = lnCfgParceiro();
   if (!cfg.ativo) return redirecionar(res, '/parceiro');
   if (!mensalidadeParceiro(parc).emDia) return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Ative a mensalidade para cadastrar clientes novos.')}`);
   pagina(res, 'Cadastrar cliente', SV.paginaParceiroNovo({ cfg, r: regraParceiro(usuario.id, parc) }), usuario);
 }));
 
 rota('POST', '/parceiro/novo', exigeParceiro(async ({ req, res, usuario, parc }) => {
-  const cfg = lnCfg(), r = regraParceiro(usuario.id, parc);
+  const cfg = lnCfgParceiro(), r = regraParceiro(usuario.id, parc);
   let v = {};
   const erro = (m) => pagina(res, 'Cadastrar cliente', SV.paginaParceiroNovo({ cfg, r, v, erro: m }), usuario, 400);
   if (!cfg.ativo || cfg.preco < 500) return erro('O Limpa Nome não está recebendo pedidos no momento.');
@@ -2321,7 +2327,7 @@ rota('POST', '/parceiro/cliente/:id/cancelar', exigeParceiro(async ({ req, res, 
 
 // ---------- Link do cliente (sem login) ----------
 const pedidoToken = (t) => (/^[a-f0-9]{32}$/.test(String(t)) ? db.prepare('SELECT * FROM limpa_nome_pedidos WHERE token = ?').get(t) : null);
-const cfgPublicoLN = (p) => ({ ...lnCfgComTabela(), ajudaUrl: `/ln/${p.token}/ajuda` });
+const cfgPublicoLN = (p) => ({ ...lnCfgParceiro(), ajudaUrl: `/ln/${p.token}/ajuda` });
 rota('GET', '/ln/:token', ({ res, usuario, params, url }) => {
   const p = pedidoToken(params.token);
   if (!p) return pagina(res, 'Pedido não encontrado', P.paginaEmBreve('Link inválido', 'Este link de pedido não existe. Confira com quem te enviou.'), usuario, 404);
@@ -2340,7 +2346,7 @@ rota('POST', '/ln/:token/pagar', async ({ req, res, params }) => {
   const f = await corpoForm(req);
   const volta = (m) => redirecionar(res, `/ln/${p.token}${m ? `?erro=${encodeURIComponent(m)}` : ''}`);
   if (p.status !== 'aguardando_pagamento' || p.parceiro_modelo !== 'comissao' || p.asaas_id) return volta();
-  const cfg = lnCfgComTabela();
+  const cfg = lnCfgParceiro();
   if (f.aceite !== '1') return volta('Confirme a autorização para continuar.');
   if (!A.limitar(`lnt:${p.id}`, 8, 60)) return volta('Muitas tentativas. Aguarde alguns minutos.');
   const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
@@ -2368,7 +2374,7 @@ rota('POST', '/ln/:token/trocar', async ({ req, res, params }) => {
     if (c && AS.STATUS_PAGO.includes(c.status)) confirmarPedidoLN(p.id);
     else {
       if (c && !c.deleted) await AS.cancelarCobranca(p.asaas_id).catch(() => {});
-      db.prepare("UPDATE limpa_nome_pedidos SET asaas_id = NULL, asaas_parcelamento = NULL, pix_codigo = NULL, pix_imagem = NULL, link_pagamento = NULL, valor_centavos = ?, juros_centavos = 0, atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(lnCfg().preco, p.id);
+      db.prepare("UPDATE limpa_nome_pedidos SET asaas_id = NULL, asaas_parcelamento = NULL, pix_codigo = NULL, pix_imagem = NULL, link_pagamento = NULL, valor_centavos = ?, juros_centavos = 0, atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(lnCfgParceiro().preco, p.id);
     }
   }
   redirecionar(res, `/ln/${p.token}`);
@@ -2406,9 +2412,9 @@ function listaParceirosAdmin() {
     .map((x) => ({ ...x, saldo: saldoComissao(x.usuario_id), regra: regraParceiro(x.usuario_id, x), mens: mensalidadeParceiro(x) }));
 }
 const padraoParceiro = () => ({ comissaoTipo: lerConfig('parceiro_comissao_tipo') === 'fixo' ? 'fixo' : 'percentual', comissaoValor: Number(lerConfig('parceiro_comissao_valor') || 0),
-  atacado: Number(lerConfig('parceiro_atacado_centavos') || 0) || null, mensalidade: Number(lerConfig('parceiro_mensalidade_centavos') || 0) });
+  atacado: Number(lerConfig('parceiro_atacado_centavos') || 0) || null, mensalidade: Number(lerConfig('parceiro_mensalidade_centavos') || 0), preco: Number(lerConfig('parceiro_preco_centavos') || 0) || null });
 rota('GET', '/admin/parceiros', exigeAdmin(({ res, usuario, url }) => {
-  pagina(res, 'Admin · Parceiros', SV.adminParceiros({ menu: PD.menu('/admin/parceiros'), padrao: padraoParceiro(), parceiros: listaParceirosAdmin(), cfg: lnCfg(),
+  pagina(res, 'Admin · Parceiros', SV.adminParceiros({ menu: PD.menu('/admin/parceiros'), padrao: padraoParceiro(), parceiros: listaParceirosAdmin(), cfg: lnCfgParceiro(),
     ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
 }));
 const voltaParc = (res, m, ok) => redirecionar(res, `/admin/parceiros?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
@@ -2428,9 +2434,12 @@ rota('POST', '/admin/parceiros/padrao', exigeAdmin(async ({ req, res, usuario })
   if (valor === null || Number.isNaN(valor)) return voltaParc(res, tipo === 'fixo' ? 'Informe o valor da comissão em reais.' : 'Informe a comissão entre 0 e 100%.');
   if (Number.isNaN(atac) || (atac !== null && atac < 500)) return voltaParc(res, 'Preço de atacado inválido (mínimo R$ 5,00, ou deixe vazio).');
   if (Number.isNaN(mens)) return voltaParc(res, 'Mensalidade inválida.');
+  const precoP = lerReais(f.preco);
+  if (Number.isNaN(precoP) || (precoP !== null && precoP < 500)) return voltaParc(res, 'Preço de venda inválido.');
+  gravarConfig('parceiro_preco_centavos', precoP ? String(precoP) : '');
   gravarConfig('parceiro_comissao_tipo', tipo); gravarConfig('parceiro_comissao_valor', String(valor));
   gravarConfig('parceiro_atacado_centavos', atac ? String(atac) : ''); gravarConfig('parceiro_mensalidade_centavos', String(mens || 0));
-  registrar(usuario, 'Parceiros: regra padrão', `comissão ${tipo === 'fixo' ? P.reais(valor) : `${valor}%`} · atacado ${atac ? P.reais(atac) : 'desligado'} · mensalidade ${P.reais(mens || 0)}`);
+  registrar(usuario, 'Parceiros: regra padrão', `preço ao cliente ${precoP ? P.reais(precoP) : 'igual ao do site'} · comissão ${tipo === 'fixo' ? P.reais(valor) : `${valor}%`} · atacado ${atac ? P.reais(atac) : 'desligado'} · mensalidade ${P.reais(mens || 0)}`);
   voltaParc(res, 'Regra padrão salva.', true);
 }));
 rota('POST', '/admin/parceiros/novo', exigeAdmin(async ({ req, res, usuario }) => {

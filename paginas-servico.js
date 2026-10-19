@@ -737,7 +737,8 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
 <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;margin-bottom:18px">
 <form class="cartao" method="post" action="/admin/parceiros/padrao" style="flex:1 1 320px">
   <h2 style="font-size:1.15rem;margin-top:0">Regra padrão</h2>
-  <p class="muted" style="margin-top:0">Vale para quem não tiver regra própria. Preço do Limpa Nome hoje: ${reais(cfg.preco)}.</p>
+  <p class="muted" style="margin-top:0">Vale para quem não tiver regra própria. A comissão em % é calculada sobre o preço de venda ao cliente.</p>
+  <div class="campo"><label for="pp-preco">Preço de venda ao cliente final (R$) · vazio = igual ao do site</label><input id="pp-preco" type="text" name="preco" inputmode="decimal" value="${rs(padrao.preco)}"></div>
   <div style="display:flex;gap:10px;flex-wrap:wrap">
     <div class="campo" style="flex:1 1 140px"><label for="pp-tipo">Comissão</label><select id="pp-tipo" name="tipo" style="min-height:46px"><option value="percentual">% do preço</option><option value="fixo" ${padrao.comissaoTipo === 'fixo' ? 'selected' : ''}>Valor fixo (R$)</option></select></div>
     <div class="campo" style="flex:1 1 120px"><label for="pp-valor">Valor</label><input id="pp-valor" type="text" name="valor" inputmode="decimal" value="${padrao.comissaoTipo === 'fixo' ? rs(padrao.comissaoValor) : padrao.comissaoValor}"></div>

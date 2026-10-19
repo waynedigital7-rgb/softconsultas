@@ -480,6 +480,7 @@ const padrao = {
   parceiro_comissao_valor: '20',
   parceiro_atacado_centavos: '',
   parceiro_mensalidade_centavos: '9900',
+  parceiro_preco_centavos: '150000',
   raiox_preco: '3790',
   raiox_preco_de: '',
   raiox_produto: 'cred-completa-plus',
