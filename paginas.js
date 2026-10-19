@@ -1,3 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+// Versão do app.js no endereço: a cada atualização o navegador baixa o arquivo novo (sem ficar com o antigo em cache)
+let VERSAO_APP = '1';
+try { VERSAO_APP = createHash('sha1').update(readFileSync(new URL('./app.js', import.meta.url))).digest('hex').slice(0, 10); } catch {}
 // Páginas HTML (renderizadas no servidor)
 // Pixel da Meta / tag do Google
 let rastreioAtivo = false;
@@ -183,7 +188,7 @@ export function layout({ titulo, corpo, usuario, descricao = '', minimo = false 
 <link rel="icon" href="/icone.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>${CSS}</style><script src="/app.js" defer></script>${scriptRobo()}${rastreioAtivo ? '<script src="/rastreio.js" defer></script>' : ''}</head><body>
+<style>${CSS}</style><script src="/app.js?v=${VERSAO_APP}" defer></script>${scriptRobo()}${rastreioAtivo ? '<script src="/rastreio.js" defer></script>' : ''}</head><body>
 <header class="topo"><div class="in">
 <a class="marca" href="${usuario ? '/painel' : '/'}"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></a>
 <nav class="nav">${minimo && !usuario ? '<a href="/entrar" style="font-size:.92rem">Já tenho conta</a>' : nav}</nav></div></header>

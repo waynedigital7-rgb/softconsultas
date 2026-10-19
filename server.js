@@ -2347,7 +2347,8 @@ rota('GET', '/parceiro/cliente/:id', exigeParceiro(({ req, res, usuario, url, pa
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     ${p.status === 'aguardando_pagamento' && p.parceiro_modelo !== 'atacado' ? `<a class="btn" style="background:#1FA855" href="${P.esc(wpp)}" target="_blank" rel="noopener">Enviar link no WhatsApp</a>` : ''}
     <button class="btn sec" type="button" data-copiar-texto="${P.esc(link)}">Copiar link do cliente</button>
-  </div></div>`;
+  </div>
+  <div class="campo" style="margin:12px 0 0"><label for="link-cli">${p.status === 'aguardando_pagamento' ? 'Link de pagamento do cliente (ele escolhe Pix ou cartão e paga por aqui)' : 'Link do cliente (acompanhamento)'}</label><input id="link-cli" type="text" readonly value="${P.esc(link)}" style="font-size:.9rem"></div></div>`;
   pagina(res, `Cliente #${p.id}`, SV.paginaPedidoLN({ p, cfg: cfgServico(p.servico), voltar: ['/parceiro', '← Área do parceiro'], statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo !== 'atacado' || !!p.combo_de, topo, ...relacionadosCombo(p) }), usuario);
 }));
 
