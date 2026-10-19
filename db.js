@@ -435,6 +435,20 @@ db.exec(`
 for (const [c, def] of [['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
+// Ficha cadastral do Rating Bancário (dados do cliente; a senha do Serasa fica criptografada)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS rating_fichas (
+    pedido_id INTEGER PRIMARY KEY REFERENCES limpa_nome_pedidos(id),
+    dados TEXT NOT NULL DEFAULT '{}',
+    senha_cript TEXT,
+    selfie TEXT,
+    doc_extra TEXT,
+    preenchido_por TEXT,
+    apagado INTEGER NOT NULL DEFAULT 0,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    atualizado_em TEXT
+  );
+`);
 export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
 try { mkdirSync(pastaDocsLimpaNome, { recursive: true }); } catch {}
 export const registrar = (usuario, acao, detalhe = '') =>

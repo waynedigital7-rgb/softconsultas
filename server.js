@@ -18,7 +18,8 @@ import * as A from './auth.js';
 import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
 import { montarEmail, perfilDo, ETAPAS, PERFIS, CAMPANHAS, montarCampanha } from './emails-marketing.js';
-import { createHmac, randomBytes, createHash } from 'node:crypto';
+import { createHmac, randomBytes, createHash, createCipheriv, createDecipheriv, scryptSync } from 'node:crypto';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { TERMOS, PRIVACIDADE } from './textos.js';
 import { PUBLICOS, paginaLanding } from './landings.js';
 
@@ -2326,7 +2327,7 @@ rota('GET', '/parceiro/cliente/:id', exigeParceiro(({ req, res, usuario, url, pa
   const link = `${urlBase(req)}/ln/${p.token}`;
   const tel = String(p.telefone || '').replace(/\D/g, '');
   const wpp = `https://wa.me/${tel.length <= 11 ? '55' + tel : tel}?text=${encodeURIComponent(`Olá, ${String(p.nome).split(' ')[0]}! Segue o link para concluir o seu Limpa Nome (pedido #${p.id}). Você paga com Pix ou cartão e acompanha cada etapa por ele: ${link}`)}`;
-  const topo = `${url.searchParams.get('novo') ? '<div class="aviso ok">Cliente cadastrado! Agora envie o link de pagamento para ele.</div>' : ''}
+  const topo = `${url.searchParams.get('novo') ? '<div class="aviso ok">Cliente cadastrado! Agora envie o link de pagamento para ele.</div>' : ''}${url.searchParams.get('ficha') ? '<div class="aviso ok">Ficha cadastral salva.</div>' : ''}${fichaPendente(p) ? avisoFicha(`/parceiro/cliente/${p.id}/ficha`, 'você ou o cliente') + `<p class="muted" style="margin:-8px 0 18px">O cliente também pode preencher pelo link dele: ${P.esc(`${urlBase(req)}/ln/${p.token}/ficha`)}</p>` : ''}
 <div class="cartao" style="max-width:620px;margin-bottom:18px">
   <p style="margin:0 0 6px"><strong>${p.parceiro_modelo === 'atacado' ? `Atacado · você paga ${P.reais(p.valor_centavos)}` : `O cliente paga · sua comissão: ${P.reais(p.parceiro_comissao_centavos)}`}</strong></p>
   <p class="muted" style="margin:0 0 10px">${P.esc(p.email)} · ${P.esc(p.telefone)}</p>
@@ -2361,6 +2362,7 @@ const cfgPedidoParceiro = (p) => {
 };
 const cfgPublicoLN = (p) => ({ ...cfgPedidoParceiro(p), ajudaUrl: `/ln/${p.token}/ajuda` });
 rota('GET', '/ln/:token', ({ res, usuario, params, url }) => {
+  const ficha = url.searchParams.get('ficha') ? '<div class="aviso ok" style="max-width:620px">Ficha cadastral recebida! Avisamos a cada etapa por e-mail.</div>' : '';
   const p = pedidoToken(params.token);
   if (!p) return pagina(res, 'Pedido não encontrado', P.paginaEmBreve('Link inválido', 'Este link de pedido não existe. Confira com quem te enviou.'), usuario, 404);
   const cfg = cfgPublicoLN(p);
@@ -2369,7 +2371,7 @@ rota('GET', '/ln/:token', ({ res, usuario, params, url }) => {
     return pagina(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pagamento`, SV.paginaPagarClienteLN({ p, cfg, parceiro, erro: url.searchParams.get('erro') || '' }), usuario);
   const trocar = p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && p.asaas_id
     ? `<form method="post" action="/ln/${p.token}/trocar" style="max-width:520px;text-align:center;margin:0 auto 18px"><button class="btn sec" style="min-height:34px;padding:4px 14px;font-size:.85rem">Trocar a forma de pagamento</button></form>` : '';
-  pagina(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg, voltar: null, statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo === 'atacado', topo: trocar, ...relacionadosCombo(p) }), usuario);
+  pagina(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg, voltar: null, statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo === 'atacado', topo: ficha + (fichaPendente(p) ? avisoFicha(linkFicha(p)) : '') + trocar, ...relacionadosCombo(p) }), usuario);
 });
 
 rota('POST', '/ln/:token/pagar', async ({ req, res, params }) => {
@@ -2500,6 +2502,7 @@ rota('POST', '/admin/parceiros/novo', exigeAdmin(async ({ req, res, usuario }) =
   }
   if (parceiroRow(u.id)) db.prepare("UPDATE parceiros SET ativo = 1, atualizado_em = datetime('now') WHERE usuario_id = ?").run(u.id);
   else db.prepare('INSERT INTO parceiros (usuario_id) VALUES (?)').run(u.id);
+  if (f.isento === '1') db.prepare("UPDATE parceiros SET isento = 1, atualizado_em = datetime('now') WHERE usuario_id = ?").run(u.id);
   db.prepare('UPDATE usuarios SET parceiro = 1 WHERE id = ?').run(u.id);
   // Convite: link para definir a senha (vale 7 dias) ou para entrar
   let link = `${baseEmails()}/entrar`;
@@ -2512,7 +2515,7 @@ rota('POST', '/admin/parceiros/novo', exigeAdmin(async ({ req, res, usuario }) =
   emailServico({ para: u.email, assunto: 'Você agora é parceiro do Limpa Nome · Soft Consultas', titulo: 'Bem-vindo à área de parceiros',
     html: `<p>Olá, ${P.esc(String(u.nome).split(' ')[0])}! A sua área de parceiro do <strong>Limpa Nome</strong> está liberada. Lá você cadastra os seus clientes, envia o link de pagamento pelo WhatsApp e acompanha cada etapa do processo.</p>${mens.isento ? '' : `<p>Para começar a cadastrar clientes, ative a mensalidade de <strong>${P.reais(mens.valor)}</strong> dentro da área.</p>`}${criado ? '<p>Primeiro, crie a sua senha pelo botão abaixo (o link vale 7 dias). Depois é só entrar e clicar em <strong>Parceiro</strong> no menu.</p>' : '<p>Entre com o seu e-mail e senha de sempre e clique em <strong>Parceiro</strong> no menu.</p>'}`,
     botao: { href: link, texto: criado ? 'Criar minha senha' : 'Entrar' }, rodape: RODAPE_PARC });
-  registrar(usuario, 'Parceiros: parceiro cadastrado', `${u.email}${criado ? ' (conta nova, convite enviado)' : ''}`);
+  registrar(usuario, 'Parceiros: parceiro cadastrado', `${u.email}${criado ? ' (conta nova, convite enviado)' : ''}${f.isento === '1' ? ' · isento de mensalidade' : ''}`);
   voltaParc(res, `${u.email} agora é parceiro.${criado ? ' Enviamos o convite para ele criar a senha.' : ' Avisamos por e-mail.'}`, true);
 }));
 rota('GET', '/admin/parceiros/:id', exigeAdmin(({ res, usuario, url, params }) => {
@@ -2932,7 +2935,8 @@ const TEXTO_STATUS_RTG = {
 };
 function avisarStatusLN(p) {
   let f = (p.servico === 'rating' ? TEXTO_STATUS_RTG : TEXTO_STATUS_LN)[p.status];
-  if (p.servico === 'combo' && p.status === 'pago' && f) { const g = f; f = (q) => { const [t, x] = g(q); return [t, `${x} O Rating Bancário do seu combo começa assim que o Limpa Nome for concluído.`]; }; }
+  if (p.servico === 'combo' && p.status === 'pago' && f) { const g = f; f = (q) => { const [t, x] = g(q); return [t, `${x} O Rating Bancário do seu combo começa assim que o Limpa Nome for concluído. Já deixe pronta a <a href="${baseEmails()}${linkFicha(q)}">ficha cadastral do Rating</a>.`]; }; }
+  if (p.servico === 'rating' && p.status === 'pago' && !p.combo_de && f) { const g = f; f = (q) => { const [t, x] = g(q); return [t, `${x}<br><br><strong>Próximo passo:</strong> preencha a <a href="${baseEmails()}${linkFicha(q)}">ficha cadastral</a> (dados, referências, acesso ao Serasa e selfie com o documento). O trabalho começa assim que ela chegar.`]; }; }
   if (!f) return;
   const [t, x] = f(p);
   emailPedidoLN(p, t, x + (p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''));
@@ -3122,11 +3126,12 @@ rota('GET', '/limpa-nome/ajuda', exigeLogin(({ res, usuario, url }) => {
   redirecionar(res, `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(msg)}`);
 }));
 
-const detalhePedidoCliente = ({ res, usuario, params }) => {
+const detalhePedidoCliente = ({ res, usuario, params, url }) => {
   const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!p) return redirecionar(res, '/limpa-nome/servico');
   const voltar = p.servico === 'rating' ? ['/rating', '← Rating Bancário'] : ['/limpa-nome/servico', '← Limpa Nome'];
-  pagina(res, `Pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg: cfgServico(p.servico), voltar, ...relacionadosCombo(p) }), usuario);
+  const topo = (url.searchParams.get('ficha') ? '<div class="aviso ok" style="max-width:620px">Ficha cadastral recebida! Agora é com a gente: avisamos a cada etapa.</div>' : '') + (fichaPendente(p) ? avisoFicha(linkFicha(p)) : '');
+  pagina(res, `Pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg: cfgServico(p.servico), voltar, topo, ...relacionadosCombo(p) }), usuario);
 };
 // Combo: o pedido do Limpa Nome mostra o Rating que vem depois, e vice-versa
 const relacionadosCombo = (p) => ({
@@ -3135,10 +3140,149 @@ const relacionadosCombo = (p) => ({
 });
 rota('GET', '/limpa-nome/servico/:id', exigeLogin(detalhePedidoCliente));
 rota('GET', '/rating/:id', exigeLogin(detalhePedidoCliente));
+// ---------- Ficha cadastral do Rating ----------
+// Chave de criptografia: CHAVE_DADOS no Render (recomendado) ou um arquivo de chave gerado no disco
+let _chave = null;
+function chaveDados() {
+  if (_chave) return _chave;
+  if (process.env.CHAVE_DADOS) return (_chave = scryptSync(process.env.CHAVE_DADOS, 'softconsultas-fichas', 32));
+  const arq = path.join(pastaDocsLimpaNome, '.chave-fichas');
+  if (!existsSync(arq)) writeFileSync(arq, randomBytes(32).toString('hex'), { mode: 0o600 });
+  return (_chave = Buffer.from(readFileSync(arq, 'utf8').trim(), 'hex'));
+}
+function cifrar(t) {
+  const iv = randomBytes(12), c = createCipheriv('aes-256-gcm', chaveDados(), iv);
+  const ct = Buffer.concat([c.update(String(t), 'utf8'), c.final()]);
+  return `v1:${iv.toString('base64')}:${c.getAuthTag().toString('base64')}:${ct.toString('base64')}`;
+}
+function decifrar(s2) {
+  const [v, iv, tag, ct] = String(s2 || '').split(':');
+  if (v !== 'v1') return null;
+  const d = createDecipheriv('aes-256-gcm', chaveDados(), Buffer.from(iv, 'base64'));
+  d.setAuthTag(Buffer.from(tag, 'base64'));
+  return Buffer.concat([d.update(Buffer.from(ct, 'base64')), d.final()]).toString('utf8');
+}
+const fichaDe = (pid) => db.prepare('SELECT * FROM rating_fichas WHERE pedido_id = ?').get(pid);
+const dadosFicha = (f) => { try { return JSON.parse(f?.dados || '{}') || {}; } catch { return {}; } };
+// Pedido que recebe a ficha: o próprio Rating ou o Rating criado pelo combo
+const alvoFicha = (p) => (p.servico === 'rating' ? p : p.servico === 'combo' ? db.prepare('SELECT * FROM limpa_nome_pedidos WHERE combo_de = ?').get(p.id) : null);
+const fichaPendente = (p) => { const a = alvoFicha(p); return !!a && !!a.pago_em && !['concluido', 'cancelado', 'reembolsado'].includes(a.status) && !fichaDe(a.id); };
+const linkFicha = (p) => (p.token ? `/ln/${p.token}/ficha` : `/rating/${alvoFicha(p)?.id || p.id}/ficha`);
+const avisoFicha = (link, quem = 'você') => `<div class="cartao" style="max-width:620px;margin-bottom:18px;border:2px solid #C62828"><h2 style="font-size:1.15rem;margin:0 0 6px">📝 Falta a ficha cadastral do Rating</h2><p style="margin:0 0 12px">O trabalho no perfil bancário só começa depois que ${quem} preencher a ficha (dados pessoais, trabalho, referências, acesso ao Serasa e selfie com o documento).</p><a class="btn" href="${P.esc(link)}">Preencher a ficha cadastral</a></div>`;
+const formatarReaisCampo = (t) => { const c = centavos(t); return Number.isFinite(c) && c > 0 ? P.reais(c) : null; };
+async function salvarFicha({ req, alvo, quem }) {
+  let form;
+  try { form = await corpoMultipart(req, 16 * 1024 * 1024); } catch (e) { return { erro: e.message === 'arquivo grande demais' ? 'Arquivos grandes demais (até 6 MB cada).' : 'Não foi possível ler o formulário.', v: {} }; }
+  const c = form.campos, antiga = fichaDe(alvo.id), antes = dadosFicha(antiga);
+  const d = {};
+  for (const [k, rot, tipo] of SV.listaCamposFicha()) {
+    let val = String(c[k] ?? '').trim().replace(/\s+/g, tipo === 'textarea' ? ' ' : ' ').slice(0, tipo === 'textarea' ? 400 : 150);
+    if (!val) return { erro: `Preencha: ${rot}.`, v: { ...antes, ...c } };
+    if (Array.isArray(tipo) && !tipo.includes(val)) return { erro: `Escolha uma opção em: ${rot}.`, v: { ...antes, ...c } };
+    if (tipo === 'uf' && !SV.UFS.includes(val)) return { erro: `Escolha o estado em: ${rot}.`, v: { ...antes, ...c } };
+    if (tipo === 'date' && !/^\d{4}-\d{2}-\d{2}$/.test(val)) return { erro: `Data inválida em: ${rot}.`, v: { ...antes, ...c } };
+    if (tipo === 'email' && !A.emailValido(val)) return { erro: 'E-mail inválido.', v: { ...antes, ...c } };
+    if (tipo === 'tel' && A.soNumeros(val).length < 10) return { erro: `Telefone com DDD em: ${rot}.`, v: { ...antes, ...c } };
+    if (tipo === 'cep') { val = A.soNumeros(val); if (val.length !== 8) return { erro: 'CEP inválido.', v: { ...antes, ...c } }; val = val.replace(/^(\d{5})(\d{3})$/, '$1-$2'); }
+    if (tipo === 'money') { const r = formatarReaisCampo(val); if (!r) return { erro: `Valor inválido em: ${rot}. Ex.: 3.500,00`, v: { ...antes, ...c } }; val = r; }
+    d[k] = val;
+  }
+  const senha = String(c.senha_serasa || '');
+  if (!senha && !antiga?.senha_cript) return { erro: 'Informe a senha do Serasa.', v: { ...antes, ...d } };
+  if (c.aceite !== '1') return { erro: 'Confirme a autorização para enviar a ficha.', v: { ...antes, ...d } };
+  const arqs = {};
+  for (const [campo, nomeArq, obrigatorio] of [['selfie', 'selfie', !antiga?.selfie], ['doc_ficha', 'docficha', !alvo.doc_frente && !(alvo.combo_de && db.prepare('SELECT doc_frente FROM limpa_nome_pedidos WHERE id = ?').get(alvo.combo_de)?.doc_frente) && !antiga?.doc_extra]]) {
+    const a = form.arquivos[campo];
+    if (!a) { if (obrigatorio) return { erro: campo === 'selfie' ? 'Envie a selfie segurando o documento.' : 'Envie a foto da CNH ou do RG.', v: { ...antes, ...d } }; continue; }
+    if (a.dados.length > 6 * 1024 * 1024) return { erro: 'Cada arquivo pode ter até 6 MB.', v: { ...antes, ...d } };
+    const t = tipoDoc(a.dados);
+    if (!t || (campo === 'selfie' && t === 'pdf')) return { erro: campo === 'selfie' ? 'A selfie precisa ser uma foto (JPG, PNG ou WEBP).' : 'Envie o documento em JPG, PNG, WEBP ou PDF.', v: { ...antes, ...d } };
+    const arq = `${alvo.id}-${nomeArq}-${randomBytes(8).toString('hex')}.${t}`;
+    await writeFile(path.join(pastaDocsLimpaNome, arq), a.dados, { mode: 0o600 });
+    arqs[campo] = arq;
+  }
+  if (antiga) {
+    for (const [campo, col] of [['selfie', 'selfie'], ['doc_ficha', 'doc_extra']]) if (arqs[campo] && antiga[col]) await unlink(path.join(pastaDocsLimpaNome, path.basename(antiga[col]))).catch(() => {});
+    db.prepare("UPDATE rating_fichas SET dados = ?, senha_cript = COALESCE(?, senha_cript), selfie = COALESCE(?, selfie), doc_extra = COALESCE(?, doc_extra), preenchido_por = ?, atualizado_em = datetime('now') WHERE pedido_id = ?")
+      .run(JSON.stringify(d), senha ? cifrar(senha) : null, arqs.selfie || null, arqs.doc_ficha || null, quem, alvo.id);
+  } else {
+    db.prepare('INSERT INTO rating_fichas (pedido_id, dados, senha_cript, selfie, doc_extra, preenchido_por) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(alvo.id, JSON.stringify(d), cifrar(senha), arqs.selfie || null, arqs.doc_ficha || null, quem);
+  }
+  registrar(null, 'Rating: ficha cadastral enviada', `#${alvo.id} · ${alvo.nome} · por ${quem}`);
+  return { ok: true };
+}
+const renderFicha = (res, usuario, { p, alvo, action, voltar, erro = '', v = null, status }) => {
+  const f = fichaDe(alvo.id), d = v || { ...dadosFicha(f), _selfie: !!f?.selfie };
+  if (!v && !f) Object.assign(d, { nome: alvo.nome, email: alvo.email, celular: alvo.telefone });
+  const precisaDoc = !alvo.doc_frente && !(alvo.combo_de && db.prepare('SELECT doc_frente FROM limpa_nome_pedidos WHERE id = ?').get(alvo.combo_de)?.doc_frente) && !f?.doc_extra;
+  pagina(res, 'Ficha cadastral · Rating', SV.paginaFichaRating({ p: alvo, d, action, voltar, precisaDoc, temSenha: !!f?.senha_cript, erro }), usuario, status);
+};
+// Cliente da venda direta
+const fichaCliente = (fn) => exigeLogin(async (ctx) => {
+  const p = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE id = ? AND usuario_id = ? AND parceiro_id IS NULL AND servico = 'rating'").get(Number(ctx.params.id), ctx.usuario.id);
+  if (!p || !p.pago_em) return redirecionar(ctx.res, '/rating');
+  return fn({ ...ctx, alvo: p, action: `/rating/${p.id}/ficha`, voltar: [`/rating/${p.id}`, '← Meu pedido'], depois: `/rating/${p.id}` });
+});
+rota('GET', '/rating/:id/ficha', fichaCliente(({ res, usuario, alvo, action, voltar }) => renderFicha(res, usuario, { p: alvo, alvo, action, voltar })));
+rota('POST', '/rating/:id/ficha', fichaCliente(async ({ req, res, usuario, alvo, action, voltar, depois }) => {
+  const r = await salvarFicha({ req, alvo, quem: `cliente (${usuario.email})` });
+  if (r.erro) return renderFicha(res, usuario, { p: alvo, alvo, action, voltar, erro: r.erro, v: r.v, status: 400 });
+  redirecionar(res, `${depois}?ficha=1`);
+}));
+// Link do cliente (parceiro) e área do parceiro
+const fichaToken = (fn) => async (ctx) => {
+  const p = pedidoToken(ctx.params.token), alvo = p && alvoFicha(p);
+  if (!p || !alvo || !alvo.pago_em) return redirecionar(ctx.res, p ? `/ln/${p.token}` : '/');
+  return fn({ ...ctx, p, alvo, action: `/ln/${p.token}/ficha`, voltar: [`/ln/${p.token}`, '← Meu pedido'], depois: `/ln/${p.token}` });
+};
+rota('GET', '/ln/:token/ficha', fichaToken(({ res, usuario, p, alvo, action, voltar }) => renderFicha(res, usuario, { p, alvo, action, voltar })));
+rota('POST', '/ln/:token/ficha', fichaToken(async ({ req, res, usuario, p, alvo, action, voltar, depois }) => {
+  if (!A.limitar(`ficha:${alvo.id}`, 20, 60)) return renderFicha(res, usuario, { p, alvo, action, voltar, erro: 'Muitas tentativas. Aguarde alguns minutos.', status: 429 });
+  const r = await salvarFicha({ req, alvo, quem: 'cliente (link)' });
+  if (r.erro) return renderFicha(res, usuario, { p, alvo, action, voltar, erro: r.erro, v: r.v, status: 400 });
+  redirecionar(res, `${depois}?ficha=1`);
+}));
+const fichaParceiro = (fn) => exigeParceiro(async (ctx) => {
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ? AND parceiro_id = ?').get(Number(ctx.params.id), ctx.usuario.id), alvo = p && alvoFicha(p);
+  if (!p || !alvo || !alvo.pago_em) return redirecionar(ctx.res, '/parceiro');
+  return fn({ ...ctx, p, alvo, action: `/parceiro/cliente/${p.id}/ficha`, voltar: [`/parceiro/cliente/${p.id}`, '← Cliente'], depois: `/parceiro/cliente/${p.id}` });
+});
+rota('GET', '/parceiro/cliente/:id/ficha', fichaParceiro(({ res, usuario, p, alvo, action, voltar }) => renderFicha(res, usuario, { p, alvo, action, voltar })));
+rota('POST', '/parceiro/cliente/:id/ficha', fichaParceiro(async ({ req, res, usuario, p, alvo, action, voltar, depois }) => {
+  const r = await salvarFicha({ req, alvo, quem: `parceiro (${usuario.email})` });
+  if (r.erro) return renderFicha(res, usuario, { p, alvo, action, voltar, erro: r.erro, v: r.v, status: 400 });
+  redirecionar(res, `${depois}?ficha=1`);
+}));
+// Admin: ver ficha, revelar a senha (registrado), baixar em texto
+rota('GET', '/admin/rating/ficha/:id', exigeAdmin(({ res, usuario, params }) => {
+  const id = String(params.id);
+  const txt = id.endsWith('.txt');
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(id.replace(/\.txt$/, ''))), f = p && fichaDe(p.id);
+  if (!f) return redirecionar(res, `/admin/rating?erro=${encodeURIComponent('Ficha não encontrada.')}`);
+  const d = { ...dadosFicha(f), _em: f.atualizado_em || f.criado_em, _por: f.preenchido_por };
+  registrar(usuario, 'Rating: viu ficha cadastral', `#${p.id}`);
+  if (txt) {
+    const linhas = [`FICHA CADASTRAL RATING PF · pedido #${p.id}`, `CPF: ${p.cpf}`, ...SV.CAMPOS_FICHA.flatMap(([t, cs]) => ['', t.toUpperCase(), ...cs.map(([k, rot]) => `${rot}: ${d[k] ?? ''}`)]), '', 'Senha do Serasa: ver no painel (não vai no arquivo)'];
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="ficha-rating-${p.id}.txt"`, 'Cache-Control': 'no-store' });
+    return res.end(linhas.join('\r\n'));
+  }
+  pagina(res, 'Admin · Ficha', SV.adminFichaRating({ menu: PD.menu('/admin/rating'), p, d, temSenha: !!f.senha_cript, selfie: !!f.selfie, docExtra: !!f.doc_extra }), usuario);
+}));
+rota('POST', '/admin/rating/ficha/:id/senha', exigeAdmin(async ({ req, res, usuario, params }) => {
+  await corpoForm(req);
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(params.id)), f = p && fichaDe(p.id);
+  if (!f) return redirecionar(res, '/admin/rating');
+  let senha = null;
+  try { senha = f.senha_cript ? decifrar(f.senha_cript) : null; } catch { senha = '(não foi possível abrir: a chave de criptografia mudou)'; }
+  registrar(usuario, 'Rating: viu a senha do Serasa', `#${p.id} · ${p.nome}`);
+  pagina(res, 'Admin · Ficha', SV.adminFichaRating({ menu: PD.menu('/admin/rating'), p, d: { ...dadosFicha(f), _em: f.atualizado_em || f.criado_em, _por: f.preenchido_por }, temSenha: !!f.senha_cript, senha: senha ?? '', selfie: !!f.selfie, docExtra: !!f.doc_extra }), usuario);
+}));
+
 // Visitante clica em "Contratar": faz login/cadastro e volta para o formulário
 rota('GET', '/rating/contratar', exigeLogin(({ res }) => redirecionar(res, '/rating#pedido')));
 rota('GET', '/admin/rating', exigeAdmin(({ res, usuario, url }) => {
-  const pedidos = db.prepare(`SELECT p.*, u.email AS cliente, pu.nome AS parceiro_nome FROM limpa_nome_pedidos p JOIN usuarios u ON u.id = p.usuario_id LEFT JOIN usuarios pu ON pu.id = p.parceiro_id
+  const pedidos = db.prepare(`SELECT p.*, u.email AS cliente, pu.nome AS parceiro_nome, (SELECT COUNT(*) FROM rating_fichas rf WHERE rf.pedido_id = p.id) AS tem_ficha FROM limpa_nome_pedidos p JOIN usuarios u ON u.id = p.usuario_id LEFT JOIN usuarios pu ON pu.id = p.parceiro_id
     WHERE p.servico = 'rating' ORDER BY CASE WHEN p.status IN ('pago','em_analise','em_andamento','decisao') THEN 0 ELSE 1 END, p.id DESC LIMIT 500`).all();
   const n = (w) => db.prepare(`SELECT COUNT(*) n FROM limpa_nome_pedidos WHERE servico = 'rating' AND ${w}`).get().n;
   const k = { andamento: n("status IN ('em_analise','em_andamento','decisao')"), aguardandoInicio: n("status = 'pago'"), concluidos: n("status = 'concluido'"),
@@ -3227,14 +3371,18 @@ rota('POST', '/admin/limpa-nome/status', exigeAdmin(async ({ req, res, usuario }
   const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(f.id));
   if (!p) return volta('Pedido não encontrado.');
   if (!SV.STATUS_LN[f.status] || (p.servico === 'rating' && f.status === 'em_lote')) return volta('Status inválido.');
+  if (p.servico === 'rating' && ['em_analise', 'em_andamento', 'decisao', 'concluido'].includes(f.status) && !fichaDe(p.id)) return volta(`Pedido #${p.id}: a ficha cadastral ainda não foi preenchida. O cliente recebeu o link; você pode reenviar pelo WhatsApp.`);
   if (f.status !== 'aguardando_pagamento' && f.status !== 'cancelado' && !p.pago_em) return volta('Este pedido ainda não foi pago. Use "Conferir" ou aguarde a confirmação do Pix.');
   const obs = String(f.obs || '').trim().slice(0, 300);
   const lote = p.lote || (f.status === 'pago' && p.servico !== 'rating' ? proximoLoteLN() : null);
   db.prepare("UPDATE limpa_nome_pedidos SET status = ?, obs_admin = ?, lote = ?, atualizado_em = datetime('now') WHERE id = ?").run(f.status, obs || null, lote, p.id);
+  // Rating encerrado: a senha do Serasa é apagada na hora (os demais dados seguem a regra de 90 dias)
+  if (p.servico === 'rating' && ['concluido', 'cancelado', 'reembolsado'].includes(f.status)) db.prepare('UPDATE rating_fichas SET senha_cript = NULL WHERE pedido_id = ?').run(p.id);
   // Combo: Limpa Nome concluído libera o Rating Bancário
   if (p.servico === 'combo' && f.status === 'concluido' && p.status !== 'concluido') {
     const filho = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE combo_de = ? AND status = 'pago'").get(p.id);
-    if (filho) {
+    if (filho && !fichaDe(filho.id)) emailPedidoLN(filho, 'Seu Rating Bancário vai começar: falta a ficha', `O seu Limpa Nome foi concluído e agora é a vez do <strong>Rating Bancário</strong>. Para começarmos, preencha a ficha cadastral: <a href="${baseEmails()}${linkFicha(p.token ? p : filho)}">preencher agora</a>.`);
+    else if (filho) {
       db.prepare("UPDATE limpa_nome_pedidos SET status = 'em_analise', obs_admin = NULL, atualizado_em = datetime('now') WHERE id = ?").run(filho.id);
       avisarStatusLN({ ...filho, status: 'em_analise', obs_admin: null });
       registrar(usuario, 'Combo: Rating iniciado', `#${filho.id} (combo #${p.id})`);
@@ -3298,7 +3446,8 @@ rota('GET', '/admin/limpa-nome/lote.csv', exigeAdmin(({ res, usuario }) => {
 
 rota('GET', '/admin/limpa-nome/doc/:id/:lado', exigeAdmin(async ({ res, usuario, params }) => {
   const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(Number(params.id));
-  const arq = p && (params.lado === 'frente' ? p.doc_frente : params.lado === 'verso' ? p.doc_verso : null);
+  const fic = p && ['selfie', 'ficha'].includes(params.lado) ? fichaDe(p.id) : null;
+  const arq = p && (params.lado === 'frente' ? p.doc_frente : params.lado === 'verso' ? p.doc_verso : params.lado === 'selfie' ? fic?.selfie : params.lado === 'ficha' ? fic?.doc_extra : null);
   if (!arq || p.docs_apagados) { res.writeHead(404); return res.end('Documento não encontrado'); }
   try {
     const dados = await readFile(path.join(pastaDocsLimpaNome, path.basename(arq)));
@@ -3314,6 +3463,11 @@ async function limparDocsLN() {
   for (const p of lista) {
     for (const a of [p.doc_frente, p.doc_verso]) if (a) await unlink(path.join(pastaDocsLimpaNome, path.basename(a))).catch(() => {});
     db.prepare('UPDATE limpa_nome_pedidos SET docs_apagados = 1 WHERE id = ?').run(p.id);
+    const f = fichaDe(p.id);
+    if (f) {
+      for (const a of [f.selfie, f.doc_extra]) if (a) await unlink(path.join(pastaDocsLimpaNome, path.basename(a))).catch(() => {});
+      db.prepare("UPDATE rating_fichas SET senha_cript = NULL, selfie = NULL, doc_extra = NULL, apagado = 1, atualizado_em = datetime('now') WHERE pedido_id = ?").run(p.id);
+    }
   }
   if (lista.length) registrar(null, 'Limpa Nome: documentos apagados (LGPD)', `${lista.length} pedido(s)`);
 }

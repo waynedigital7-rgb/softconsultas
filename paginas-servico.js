@@ -798,11 +798,12 @@ export function adminParceiros({ menu, padrao, parceiros, cfg, ok, erro }) {
     <div class="campo" style="flex:1 1 200px"><label for="np-email">E-mail</label><input id="np-email" type="email" name="email" required maxlength="120"></div>
     <div class="campo" style="flex:1 1 160px"><label for="np-tel">WhatsApp</label><input id="np-tel" type="tel" name="telefone" maxlength="20"></div>
   </div>
+  <label style="display:flex;gap:10px;align-items:center;margin:0 0 14px"><input type="checkbox" name="isento" value="1" style="width:20px;height:20px"> Isento de mensalidade (fica ativo sem pagar)</label>
   <button class="btn">Cadastrar parceiro</button>
 </form></div>
 <div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Parceiros (${parceiros.length})</h2><div class="rolar"><table class="tabela"><tr><th>Parceiro</th><th>Mensalidade</th><th>Clientes</th><th>Pagos</th><th>Receita</th><th>Comissões</th><th>Saldo</th><th>Valores</th></tr>
 ${parceiros.map((x) => `<tr><td><strong>${esc(x.nome)}</strong>${x.ativo ? '' : ' <span class="tag">inativo</span>'}<br><span class="muted">${esc(x.email)}${x.telefone ? ` · ${esc(x.telefone)}` : ''}</span><br><span class="muted" style="font-size:.8rem">desde ${dataBR(x.criado_em)}</span></td>
-  <td>${x.mens.isento ? '<span class="muted">isento</span>' : x.mens.emDia ? `<strong style="color:var(--ok)">em dia</strong><br><span class="muted">até ${dataBR(x.mens.pagoAte)}</span>` : `<strong style="color:var(--erro)">${x.mens.assinatura ? 'aguardando pagamento' : 'não ativou'}</strong>`}<br><span class="muted">${x.mens.isento ? '' : reais(x.mens.valor)}${x.mens.forma ? ` · ${x.mens.forma}` : ''}</span></td>
+  <td>${x.isento ? '<strong style="color:var(--ok)">isento</strong>' : x.mens.isento ? '<span class="muted">grátis</span>' : x.mens.emDia ? `<strong style="color:var(--ok)">em dia</strong><br><span class="muted">até ${dataBR(x.mens.pagoAte)}</span>` : `<strong style="color:var(--erro)">${x.mens.assinatura ? 'aguardando pagamento' : 'não ativou'}</strong>`}<br><span class="muted">${x.mens.isento ? '' : reais(x.mens.valor)}${x.mens.forma ? ` · ${x.mens.forma}` : ''}</span></td>
   <td>${x.clientes}</td><td>${x.pagos}</td><td>${reais(x.receita)}</td><td>${reais(x.comissoes)}</td><td>${reais(x.saldo)}</td>
   <td style="min-width:240px"><span style="font-size:.85rem">${(x.regras || [x.regra]).filter((g) => g.disponivel).map((g) => `${esc(g.nomeServico || 'Limpa Nome')}: <strong>${reais(g.preco)}</strong> · comissão <strong>${reais(g.comissaoCentavos)}</strong>${g.atacado ? ` · atacado ${reais(g.atacado)}` : ''}`).join('<br>')}<br>${[x.preco_centavos, x.comissao_tipo, x.atacado_centavos, x.mensalidade_centavos].some((v) => v != null) || x.isento || Object.values(x.proprios || {}).some((o) => Object.values(o).some((v) => v != null)) ? ' · <span class="tag">valores próprios</span>' : ' · <span class="muted">padrão</span>'}</span>
     <div style="margin-top:6px"><a class="btn sec" style="${btnPeq}" href="/admin/parceiros/${x.usuario_id}">Editar valores</a></div></td></tr>`).join('') || '<tr><td colspan="8" class="vazio">Nenhum parceiro ainda.</td></tr>'}
@@ -955,10 +956,84 @@ export function adminRating({ menu, cfg, combo, ln, pedidos, k, ok, erro }) {
 ${pedidos.map((x) => `<tr><td>${x.id}</td><td><strong>${esc(x.nome)}</strong><br>${esc(formatarDoc(x.cpf))}<br><span class="muted">${esc(x.telefone)} · ${esc(x.email)}</span></td>
   <td>${x.combo_de ? `combo #${x.combo_de}` : 'avulso'}${x.parceiro_id ? `<br><strong style="color:#5B2D8E">parceiro: ${esc(x.parceiro_nome || '')}</strong>` : ''}${x.doc_frente ? `<br><a href="/admin/limpa-nome/doc/${x.id}/frente" target="_blank" rel="noopener">doc frente</a>${x.doc_verso ? ` · <a href="/admin/limpa-nome/doc/${x.id}/verso" target="_blank" rel="noopener">verso</a>` : ''}` : x.combo_de ? `<br><a href="/admin/limpa-nome/doc/${x.combo_de}/frente" target="_blank" rel="noopener">doc (do combo)</a>` : ''}</td>
   <td>${reais(x.valor_centavos)}${x.pago_em ? `<br><span class="muted">pago ${dt(x.pago_em)}</span>` : ''}</td>
-  <td>${etiqueta(x.status, 'rating')}${x.obs_admin ? `<br><span class="muted" style="font-size:.8rem">${esc(x.obs_admin)}</span>` : ''}</td>
+  <td>${etiqueta(x.status, 'rating')}${x.obs_admin ? `<br><span class="muted" style="font-size:.8rem">${esc(x.obs_admin)}</span>` : ''}<br>${x.tem_ficha ? `<a href="/admin/rating/ficha/${x.id}">📝 ver ficha cadastral</a>` : x.pago_em ? '<strong style="color:var(--erro);font-size:.85rem">ficha pendente</strong>' : ''}</td>
   <td>${x.pago_em ? `<form method="post" action="/admin/limpa-nome/status" style="display:flex;gap:6px;flex-wrap:wrap;margin:0"><input type="hidden" name="id" value="${x.id}"><input type="hidden" name="volta" value="/admin/rating">
     <select name="status" aria-label="Status" style="min-height:34px">${ops.map((o) => `<option value="${o}" ${o === x.status ? 'selected' : ''}>${esc(STATUS_RTG[o] || STATUS_LN[o].t)}</option>`).join('')}</select>
     <input type="text" name="obs" aria-label="Mensagem ao cliente" placeholder="mensagem ao cliente (opcional)" maxlength="300" style="min-width:180px;min-height:34px;padding:4px 8px" value="${esc(x.obs_admin || '')}">
     <button class="btn sec" style="${btnPeq}">Salvar</button></form>` : '<span class="muted">aguardando pagamento</span>'}</td></tr>`).join('') || '<tr><td colspan="6" class="vazio">Nenhum pedido ainda.</td></tr>'}
 </table></div><p class="muted" style="margin:10px 0 0;font-size:.88rem">Ao mudar a etapa, o cliente recebe um e-mail (e o parceiro, se for cliente dele). Nos combos, o Rating começa sozinho quando o Limpa Nome é marcado como concluído.</p></div>`;
+}
+
+// ======================= FICHA CADASTRAL DO RATING (PF) =======================
+// [chave, rótulo, tipo, opções/placeholder, largura]
+export const ESTADOS_CIVIS = ['Solteiro(a)', 'Casado(a)', 'União estável', 'Divorciado(a)', 'Separado(a)', 'Viúvo(a)'];
+export const ESCOLARIDADES = ['Fundamental incompleto', 'Fundamental completo', 'Médio incompleto', 'Médio completo', 'Superior incompleto', 'Superior completo', 'Pós-graduação'];
+export const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ');
+export const CAMPOS_FICHA = [
+  ['Dados pessoais', [
+    ['nome', 'Nome completo', 'text', '', '1 1 100%'],
+    ['rg', 'RG', 'text', '', '1 1 160px'], ['rg_expedicao', 'Data de expedição do RG', 'date', '', '1 1 160px'], ['rg_uf', 'Estado do RG', 'uf', '', '1 1 110px'],
+    ['titulo_eleitor', 'Título de eleitor', 'text', '', '1 1 180px'], ['estado_civil', 'Estado civil', ESTADOS_CIVIS, '', '1 1 180px'],
+    ['nome_pai', 'Nome do pai', 'text', 'Se não constar no documento, escreva "não consta"', '1 1 100%'],
+    ['escolaridade', 'Grau de instrução', ESCOLARIDADES, '', '1 1 220px'],
+  ]],
+  ['Contato e endereço', [
+    ['email', 'E-mail', 'email', '', '1 1 240px'], ['celular', 'Celular', 'tel', '', '1 1 160px'], ['tel_residencial', 'Telefone residencial', 'text', 'Se não tiver, escreva "não tenho"', '1 1 200px'],
+    ['cep', 'CEP', 'cep', '', '1 1 120px'], ['endereco', 'Endereço (rua/avenida)', 'text', '', '2 1 260px'], ['numero', 'Número', 'text', '', '0 1 100px'],
+    ['bairro', 'Bairro', 'text', '', '1 1 180px'], ['cidade', 'Cidade', 'text', '', '1 1 180px'], ['uf', 'UF', 'uf', '', '0 1 90px'],
+  ]],
+  ['Trabalho e renda', [
+    ['empresa', 'Empresa onde trabalha', 'text', 'Autônomo? Escreva "autônomo"', '1 1 240px'], ['ocupacao', 'Ocupação / cargo', 'text', '', '1 1 200px'],
+    ['admissao', 'Data de admissão', 'date', '', '1 1 160px'], ['renda', 'Renda mensal (R$)', 'money', '', '1 1 150px'], ['renda_familiar', 'Renda familiar (R$)', 'money', '', '1 1 150px'],
+    ['bancos', 'Bancos e instituições com que tem vínculo', 'textarea', 'Ex.: Caixa Econômica, Nubank, Renner, Itaú', '1 1 100%'],
+  ]],
+  ['3 referências pessoais', [1, 2, 3].flatMap((n) => [
+    [`ref${n}_nome`, `Referência ${n}: nome`, 'text', '', '2 1 220px'], [`ref${n}_tel`, 'Telefone', 'tel', '', '1 1 150px'], [`ref${n}_parentesco`, 'Grau de parentesco', 'text', 'Ex.: irmã, amigo', '1 1 150px'],
+  ])],
+];
+export const listaCamposFicha = () => CAMPOS_FICHA.flatMap(([, cs]) => cs);
+
+export function paginaFichaRating({ p, d = {}, action, voltar, precisaDoc, temSenha = false, erro = '', ok = '' }) {
+  const v = (k) => esc(d[k] ?? '');
+  const campo = ([k, rot, tipo, ph, flex]) => {
+    const id = `fc-${k}`;
+    let input;
+    if (Array.isArray(tipo)) input = `<select id="${id}" name="${k}" required style="min-height:46px"><option value="">Selecione</option>${tipo.map((o) => `<option ${d[k] === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+    else if (tipo === 'uf') input = `<select id="${id}" name="${k}" required style="min-height:46px"><option value="">UF</option>${UFS.map((o) => `<option ${d[k] === o ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+    else if (tipo === 'textarea') input = `<textarea id="${id}" name="${k}" required rows="2" maxlength="400" placeholder="${esc(ph)}" style="width:100%;font:inherit;padding:10px;border:1.5px solid #D6CCE0;border-radius:12px">${v(k)}</textarea>`;
+    else if (tipo === 'date') input = `<input id="${id}" name="${k}" type="date" required value="${v(k)}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px;width:100%">`;
+    else input = `<input id="${id}" name="${k}" type="${tipo === 'email' ? 'email' : tipo === 'tel' ? 'tel' : 'text'}" ${tipo === 'money' ? 'inputmode="decimal"' : tipo === 'cep' || tipo === 'tel' ? 'inputmode="numeric"' : ''} required maxlength="${tipo === 'textarea' ? 400 : 150}" placeholder="${esc(ph)}" value="${v(k)}">`;
+    return `<div class="campo" style="flex:${flex};min-width:0">${tipo !== 'textarea' && tipo !== 'date' && tipo !== 'uf' && !Array.isArray(tipo) ? '' : ''}<label for="${id}">${esc(rot)}</label>${input}</div>`;
+  };
+  return `${voltar ? `<p><a href="${esc(voltar[0])}">${esc(voltar[1])}</a></p>` : ''}
+<h1 style="font-size:1.6rem;margin:6px 0">Ficha cadastral · Rating Bancário</h1>
+<p class="muted" style="margin:0 0 16px">Pedido #${p.id} · ${esc(p.nome)} · CPF ${esc(formatarDoc(p.cpf))}. Todos os campos são obrigatórios: são os dados que usamos para trabalhar o seu perfil junto às instituições.</p>
+${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+<form class="cartao" method="post" action="${esc(action)}" enctype="multipart/form-data" style="max-width:820px">
+  ${CAMPOS_FICHA.map(([titulo, cs]) => `<h2 style="font-size:1.12rem;margin:6px 0 10px">${esc(titulo)}</h2><div style="display:flex;gap:12px;flex-wrap:wrap">${cs.map(campo).join('')}</div>`).join('')}
+  <h2 style="font-size:1.12rem;margin:6px 0 10px">Acesso ao Serasa</h2>
+  <div class="campo" style="max-width:360px"><label for="fc-senha">Senha do Serasa</label><input id="fc-senha" name="senha_serasa" type="password" autocomplete="off" ${temSenha ? 'placeholder="já informada (deixe vazio para manter)"' : 'required'} maxlength="100">
+    <small class="muted">Usada só para atualizar o seu cadastro e ativar o Cadastro Positivo. Fica guardada criptografada e é apagada quando o serviço termina. Não tem conta? Crie grátis em serasa.com.br antes de enviar.</small></div>
+  <h2 style="font-size:1.12rem;margin:6px 0 10px">Documentos</h2>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    ${precisaDoc ? `<div class="campo" style="flex:1 1 240px"><label for="fc-doc">Foto da CNH ou do RG</label><input id="fc-doc" name="doc_ficha" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required></div>` : '<p class="muted" style="flex:1 1 240px;margin:0">✓ Foto do documento já enviada no pedido.</p>'}
+    <div class="campo" style="flex:1 1 240px"><label for="fc-selfie">Selfie segurando a CNH ou o RG</label><input id="fc-selfie" name="selfie" type="file" accept="image/jpeg,image/png,image/webp" ${d._selfie ? '' : 'required'}>${d._selfie ? '<small class="muted">já enviada (envie outra só se quiser trocar)</small>' : '<small class="muted">Rosto e documento bem visíveis, sem reflexo.</small>'}</div>
+  </div>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin:6px 0 16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Confirmo que os dados são verdadeiros e autorizo o uso deles, das imagens e do acesso ao Serasa exclusivamente para o serviço de Rating Bancário, conforme a LGPD.</span></label>
+  <button class="btn" type="submit">Enviar ficha cadastral</button>
+</form>`;
+}
+
+export function adminFichaRating({ menu, p, d, temSenha, senha = null, selfie, docExtra }) {
+  const linha = ([k, rot]) => `<tr><th style="width:38%;text-align:left">${esc(rot)}</th><td>${esc(d[k] ?? '')}</td></tr>`;
+  return `<h1 style="font-size:1.6rem">Ficha cadastral · pedido #${p.id}</h1>${menu}
+<p><a href="/admin/rating">← Rating Bancário</a> · <a href="/admin/rating/ficha/${p.id}.txt">Baixar ficha (texto)</a></p>
+<div class="cartao" style="max-width:820px">
+  <p class="muted" style="margin-top:0">${esc(p.nome)} · CPF ${esc(formatarDoc(p.cpf))} · preenchida ${dt(d._em || '')}${d._por ? ` por ${esc(d._por)}` : ''}</p>
+  ${CAMPOS_FICHA.map(([t, cs]) => `<h2 style="font-size:1.05rem;margin:14px 0 6px">${esc(t)}</h2><table class="tabela">${cs.map(linha).join('')}</table>`).join('')}
+  <h2 style="font-size:1.05rem;margin:14px 0 6px">Serasa e documentos</h2>
+  <table class="tabela"><tr><th style="width:38%;text-align:left">Senha do Serasa</th><td>${senha !== null ? `<code style="font-size:1rem">${esc(senha)}</code>` : temSenha ? `<form method="post" action="/admin/rating/ficha/${p.id}/senha" style="margin:0"><button class="btn sec" style="${btnPeq}">Mostrar senha (fica registrado)</button></form>` : '<span class="muted">apagada</span>'}</td></tr>
+  <tr><th style="text-align:left">Selfie com documento</th><td>${selfie ? `<a href="/admin/limpa-nome/doc/${p.id}/selfie" target="_blank" rel="noopener">abrir</a>` : '<span class="muted">—</span>'}</td></tr>
+  <tr><th style="text-align:left">Documento</th><td>${docExtra ? `<a href="/admin/limpa-nome/doc/${p.id}/ficha" target="_blank" rel="noopener">abrir</a>` : p.doc_frente ? `<a href="/admin/limpa-nome/doc/${p.id}/frente" target="_blank" rel="noopener">abrir (do pedido)</a>` : p.combo_de ? `<a href="/admin/limpa-nome/doc/${p.combo_de}/frente" target="_blank" rel="noopener">abrir (do combo)</a>` : '—'}</td></tr></table>
+</div>`;
 }
