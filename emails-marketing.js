@@ -148,12 +148,54 @@ export const CAMPANHAS = {
   'cpf-credplus': { nome: 'Consulte seu CPF · Cred Completa Plus', produto: 'cred-completa-plus' },
   // Semanal: pode ser reenviada a cada lote; quem já tem pedido em andamento não recebe
   'limpa-nome-servico': { nome: 'Limpa Nome · lote da semana', produto: null, semanal: true },
+  // Preços novos (margem menor): uma por segmento; cada cliente recebe só a do seu perfil
+  'precos-limpa-nome': { nome: 'Preços novos · perfil Limpa Nome / CPF', produto: null, promo: true, perfil: 'limpa-nome' },
+  'precos-veiculos': { nome: 'Preços novos · perfil Veículos', produto: null, promo: true, perfil: 'veiculos' },
+  'precos-empresas': { nome: 'Preços novos · perfil Empresas', produto: null, promo: true, perfil: 'empresas' },
+  'precos-advogados': { nome: 'Preços novos · perfil Advogados', produto: null, promo: true, perfil: 'advogados' },
+  'precos-geral': { nome: 'Preços novos · demais clientes', produto: null, promo: true, perfil: 'geral' },
 };
-export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeResponder = false, servico = null }) {
+// Textos da campanha de preços por segmento
+const PROMO = {
+  'limpa-nome': { assunto: (n, d) => `${n}, consultar o seu CPF ficou ${d ? `até ${d}% ` : ''}mais barato`, titulo: 'Consultar o seu CPF ficou mais barato',
+    intro: 'Baixamos os preços das consultas. Agora ficou mais fácil descobrir onde o seu nome está negativado, quanto deve e o que negociar primeiro, antes de pedir crédito.' },
+  veiculos: { assunto: (n, d) => `${n}, consultar placa ficou ${d ? `até ${d}% ` : ''}mais barato`, titulo: 'Consultar placa ficou mais barato',
+    intro: 'Baixamos os preços das consultas. Antes de comprar ou vender um carro, confira leilão, sinistro, restrições e débitos pagando menos.' },
+  empresas: { assunto: (n, d) => `${n}, analisar clientes ficou ${d ? `até ${d}% ` : ''}mais barato`, titulo: 'Analise seus clientes pagando menos',
+    intro: 'Baixamos os preços das consultas. Agora sai ainda mais em conta checar CPF e CNPJ antes de vender a prazo: um único calote evitado paga muitas consultas.' },
+  advogados: { assunto: (n, d) => `${n}, localizar devedores ficou ${d ? `até ${d}% ` : ''}mais barato`, titulo: 'Localizar devedores ficou mais barato',
+    intro: 'Baixamos os preços das consultas. Endereços, telefones, bens e restrições para os seus processos, em PDF pronto para anexar, pagando menos.' },
+  geral: { assunto: (n, d) => `${n}, as consultas da Soft Consultas ficaram ${d ? `até ${d}% ` : ''}mais baratas`, titulo: 'Preços novos, mais baixos',
+    intro: 'Baixamos os preços das consultas de CPF, CNPJ e veículos. Mesmos relatórios oficiais em PDF, na hora, sem mensalidade: você paga só o que usar.' },
+};
+export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeResponder = false, servico = null, promo = null }) {
   const primeiro = esc(String(nome || '').trim().split(/\s+/)[0] || 'tudo bem');
   const utm = `?utm_source=email&utm_medium=campanha&utm_campaign=${chave}`;
   const b = bonus?.ativo ? bonus : null;
   const preco = produto?.preco_centavos ? reais(produto.preco_centavos) : '';
+  if (CAMPANHAS[chave]?.promo) {
+    const perfil = CAMPANHAS[chave].perfil, t = PROMO[perfil] || PROMO.geral, cfgP = P[perfil] || P.geral;
+    const itens = promo?.itens || [];
+    const desc = promo?.desconto || 0;
+    const link = `${base}${cfgP.link}${utm}`;
+    const cards = itens.map((i) => `<tr><td style="padding:14px 16px;border-bottom:1px solid #EEE7F4">
+        <div style="font-weight:bold;font-size:16px;color:#0F0C14">${esc(i.nome)}</div>
+        ${i.descricao ? `<div style="font-size:13px;color:#5B5366;margin-top:3px">${esc(i.descricao)}</div>` : ''}</td>
+      <td style="padding:14px 16px;border-bottom:1px solid #EEE7F4;text-align:right;white-space:nowrap;vertical-align:middle">
+        ${i.antes ? `<div style="font-size:13px;color:#9A8FA8;text-decoration:line-through">${reais(i.antes)}</div>` : ''}
+        <div style="font-size:19px;font-weight:bold;color:#5B2D8E">${reais(i.preco)}</div></td></tr>`).join('');
+    return {
+      assunto: t.assunto(primeiro, desc),
+      html: moldura({ base, sair, preheader: `${desc ? `Até ${desc}% mais barato. ` : ''}Relatórios oficiais em PDF, na hora, sem mensalidade.`, corpo: `
+        <div style="display:inline-block;background:#F6ECFC;color:#5B2D8E;font-weight:bold;font-size:12px;letter-spacing:1px;border-radius:999px;padding:6px 14px">PREÇOS NOVOS${desc ? ` · ATÉ ${desc}% MENOS` : ''}</div>
+        <h1 style="font-size:22px;margin:12px 0 10px">${primeiro}, ${esc(t.titulo.charAt(0).toLowerCase() + t.titulo.slice(1))}</h1>
+        <p>${esc(t.intro)}</p>
+        ${itens.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #EEE7F4;border-radius:14px;border-collapse:separate;margin:18px 0;overflow:hidden">${cards}</table>` : ''}
+        ${b ? caixaBonus(b) : ''}
+        ${botao(link, cfgP.cta)}
+        <p style="font-size:14px;color:#5B5366">Sem mensalidade: você recarrega o valor que quiser e paga só as consultas que fizer.${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
+    };
+  }
   if (chave === 'cpf-credplus') {
     const link = `${base}/consultas/${produto?.slug || 'cred-completa-plus'}${utm}`;
     return {

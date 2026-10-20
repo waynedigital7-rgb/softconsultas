@@ -1073,6 +1073,7 @@ rota('GET', '/admin/operacao', exigeAdmin(async ({ res, usuario, url }) => {
         pendentes: Object.fromEntries(Object.keys(PUBLICOS_CAMPANHA).map((p) => [p, listaCampanha(k, p).length])),
         consultaram: c.produto
           ? db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN consultas c ON c.usuario_id = e.usuario_id AND c.status = 'concluida' AND c.criado_em > e.criado_em AND c.produto_id = (SELECT id FROM produtos WHERE slug = ?) WHERE e.etapa = ? AND e.status = 'enviado'`).get(c.produto, `camp:${k}`).n
+          : c.promo ? db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN consultas c ON c.usuario_id = e.usuario_id AND c.status = 'concluida' AND c.criado_em > e.criado_em WHERE e.etapa = ? AND e.status = 'enviado'`).get(`camp:${k}`).n
           : db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN limpa_nome_pedidos lp ON lp.usuario_id = e.usuario_id AND lp.pago_em > e.criado_em WHERE e.etapa LIKE ? AND e.status = 'enviado'`).get(`camp:${k}:%`).n })),
       publicosCampanha: Object.fromEntries(Object.entries(PUBLICOS_CAMPANHA).map(([k, v]) => [k, v.nome])),
       recargasDepois: db.prepare(`SELECT COUNT(DISTINCT e.usuario_id) n FROM emails_enviados e JOIN recargas r ON r.usuario_id = e.usuario_id AND r.status = 'paga' AND r.pago_em > e.criado_em WHERE e.status = 'enviado'`).get().n },
@@ -1149,10 +1150,32 @@ const PUBLICOS_CAMPANHA = {
 const etapaCampanha = (chave) => (CAMPANHAS[chave].semanal ? `camp:${chave}:${proximoLoteLN()}` : `camp:${chave}`);
 const filtroCampanha = (chave) => (chave === 'limpa-nome-servico'
   ? ` AND NOT EXISTS (SELECT 1 FROM limpa_nome_pedidos lp WHERE lp.usuario_id = u.id AND lp.status IN ('pago','em_analise','em_lote','em_andamento','decisao','concluido'))` : '');
-const listaCampanha = (chave, publico, limite = 100000) => db.prepare(`SELECT u.* FROM usuarios u
+const listaCampanha = (chave, publico, limite = 100000) => {
+  const lista = db.prepare(`SELECT u.* FROM usuarios u
   WHERE u.ativo = 1 AND u.admin = 0 AND u.interno = 0 AND u.aceita_emails = 1 AND (${PUBLICOS_CAMPANHA[publico].sql})${filtroCampanha(chave)}
     AND NOT EXISTS (SELECT 1 FROM emails_enviados e WHERE e.usuario_id = u.id AND e.etapa = ?)
-  ORDER BY u.id LIMIT ?`).all(etapaCampanha(chave), limite);
+  ORDER BY u.id LIMIT ?`).all(etapaCampanha(chave), CAMPANHAS[chave].perfil ? 100000 : limite);
+  // Campanha por segmento: só quem é daquele perfil (de onde o cliente veio)
+  return CAMPANHAS[chave].perfil ? lista.filter((u) => perfilDo(u) === CAMPANHAS[chave].perfil).slice(0, limite) : lista;
+};
+// Campanha de preços: consultas do segmento (mais usadas primeiro) com o preço antigo (margem de 150%) riscado
+const REGEX_SEGMENTO = { 'limpa-nome': /d[ií]vida|cr[eé]dito|negativ|score/i, veiculos: /ve[ií]cul|placa|auto/i, empresas: /empresa|cnpj|cr[eé]dito|d[ií]vida/i, advogados: /pessoa|localiz|cadastr|endere|telefone|ve[ií]cul|im[oó]v/i };
+const MARKUP_ANTIGO = 150;
+function promoCampanha(chave) {
+  const c = CAMPANHAS[chave];
+  if (!c?.promo) return null;
+  const todos = db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM consultas k WHERE k.produto_id = p.id AND k.criado_em > datetime('now', '-90 days')) usos
+    FROM produtos p WHERE p.ativo = 1 AND p.endpoint <> '' ORDER BY usos DESC, p.ordem`).all();
+  const re = REGEX_SEGMENTO[c.perfil];
+  let lista = re ? todos.filter((p) => re.test(`${p.categoria} ${p.nome}`)) : todos;
+  if (lista.length < 2) lista = todos;
+  const itens = lista.slice(0, 6).map((p) => {
+    const antes = (p.markup_percentual === null || p.markup_percentual === undefined) ? precoDe(p.custo_centavos, MARKUP_ANTIGO) : null;
+    return { nome: p.nome, descricao: p.descricao, preco: p.preco_centavos, antes: antes && antes > p.preco_centavos ? antes : null };
+  });
+  const desconto = Math.max(0, ...itens.filter((i) => i.antes).map((i) => Math.floor((1 - i.preco / i.antes) * 100)));
+  return { itens, desconto };
+}
 const servicoCampanha = (chave) => (chave === 'limpa-nome-servico' ? { ...lnCfgComTabela(), lote: proximoLoteLN() } : null);
 const produtoCampanha = (chave) => (CAMPANHAS[chave].produto ? db.prepare('SELECT * FROM produtos WHERE slug = ?').get(CAMPANHAS[chave].produto) : null);
 const campanhaRodando = new Set();
@@ -1172,12 +1195,12 @@ async function dispararCampanha(chave, publico, admin) {
   if (!filaCampanhas().some((x) => x.chave === chave)) gravarFila([...filaCampanhas(), { chave, publico, admin: admin?.email || 'sistema' }]);
   let ok = 0, falhas = 0, parou = false;
   try {
-    const produto = produtoCampanha(chave), bonus = bonusPrimeira(), etapa = etapaCampanha(chave), servico = servicoCampanha(chave);
+    const produto = produtoCampanha(chave), bonus = bonusPrimeira(), etapa = etapaCampanha(chave), servico = servicoCampanha(chave), promo = promoCampanha(chave);
     for (const u of listaCampanha(chave, publico)) {
       if (!podeMarketing()) { parou = true; break; }
       if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, etapa, 'enviando').changes !== 1) continue;
       try {
-        const m = montarCampanha({ chave, nome: u.nome, produto, servico, bonus: publico === 'com_recarga' ? null : bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
+        const m = montarCampanha({ chave, nome: u.nome, produto, servico, promo, bonus: publico === 'com_recarga' ? null : bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
         await enviarEmail({ para: u.email, assunto: m.assunto, html: m.html, cabecalhos: { 'List-Unsubscribe': `<${linkSair(u.id)}>` } });
         db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, etapa);
         ok++;
@@ -1199,7 +1222,7 @@ async function dispararCampanha(chave, publico, admin) {
 
 rota('GET', '/admin/emails/campanha/previa', exigeAdmin(({ res, url }) => {
   const chave = CAMPANHAS[url.searchParams.get('c')] ? url.searchParams.get('c') : 'cpf-credplus';
-  const m = montarCampanha({ chave, nome: 'Maria Silva', produto: produtoCampanha(chave), servico: servicoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+  const m = montarCampanha({ chave, nome: 'Maria Silva', produto: produtoCampanha(chave), servico: servicoCampanha(chave), promo: promoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src * data:; style-src 'unsafe-inline'", 'X-Frame-Options': 'SAMEORIGIN' });
   res.end(`<div style="font-family:Arial;padding:10px 16px;background:#0F0C14;color:#fff">Assunto: <strong>${P.esc(m.assunto)}</strong></div>${m.html}`);
 }));
@@ -1214,7 +1237,7 @@ rota('POST', '/admin/emails/campanha', exigeAdmin(async ({ req, res, usuario }) 
   if (!process.env.RESEND_API_KEY) return volta('Falta a RESEND_API_KEY no Render: sem ela nenhum e-mail sai.');
   if (f.acao === 'teste') {
     try {
-      const m = montarCampanha({ chave, nome: usuario.nome, produto: produtoCampanha(chave), servico: servicoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+      const m = montarCampanha({ chave, nome: usuario.nome, produto: produtoCampanha(chave), servico: servicoCampanha(chave), promo: promoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
       await enviarEmail({ para: usuario.email, assunto: `[TESTE] ${m.assunto}`, html: m.html });
       return volta(`E-mail de teste enviado para ${usuario.email}.`, true);
     } catch (e) { return volta(`Falha ao enviar o teste: ${e.message}`); }
