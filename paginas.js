@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 // Versão do app.js no endereço: a cada atualização o navegador baixa o arquivo novo (sem ficar com o antigo em cache)
 let VERSAO_APP = '1';
+// Modo aplicativo (Android/iOS): o servidor informa por requisição se a página está sendo aberta dentro do app
+let ehModoApp = () => false;
+export const configurarModoApp = (fn) => { ehModoApp = fn; };
 try { VERSAO_APP = createHash('sha1').update(readFileSync(new URL('./app.js', import.meta.url))).digest('hex').slice(0, 10); } catch {}
 // Páginas HTML (renderizadas no servidor)
 // Pixel da Meta / tag do Google
@@ -174,7 +177,8 @@ a.cartao:hover{transform:translateY(-4px);box-shadow:0 14px 30px -18px rgba(159,
 .hero h1 em{font-style:normal;color:var(--roxo)}
 `;
 
-export function layout({ titulo, corpo, usuario, descricao = '', minimo = false }) {
+export function layout({ titulo, corpo, usuario, descricao = '', minimo = false, externo = false }) {
+  if (ehModoApp()) return layoutApp({ titulo, corpo, usuario });
   const nav = usuario
     ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/limpa-nome">Limpa Nome</a><a href="/rating">Rating</a><a href="/monitoramento">Monitoramento</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a>${usuario.parceiro ? '<a href="/parceiro">Parceiro</a>' : '<a href="/parceiro">Seja parceiro</a>'}<a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
        <form method="post" action="/sair" style="margin:0"><button class="btn sec" style="min-height:40px;padding:8px 18px;color:#fff;border-color:#3A3046">Sair</button></form>`
@@ -190,10 +194,10 @@ export function layout({ titulo, corpo, usuario, descricao = '', minimo = false 
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>${CSS}</style><script src="/app.js?v=${VERSAO_APP}" defer></script>${scriptRobo()}${rastreioAtivo ? '<script src="/rastreio.js" defer></script>' : ''}</head><body>
 <header class="topo"><div class="in">
-<a class="marca" href="${usuario ? '/painel' : '/'}"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></a>
-<nav class="nav">${minimo && !usuario ? '<a href="/entrar" style="font-size:.92rem">Já tenho conta</a>' : nav}</nav></div></header>
+${externo ? '<span class="marca"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></span>' : `<a class="marca" href="${usuario ? '/painel' : '/'}"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></a>`}
+${externo ? '' : `<nav class="nav">${minimo && !usuario ? '<a href="/entrar" style="font-size:.92rem">Já tenho conta</a>' : nav}</nav>`}</div></header>
 <main>${corpo}</main>
-<footer><strong>Cadastro grátis · Sem mensalidade · Você só paga pelas consultas</strong><br>Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01 · <a href="/termos">Termos de uso</a> · <a href="/privacidade">Privacidade</a></footer>
+<footer>${externo ? '' : '<strong>Cadastro grátis · Sem mensalidade · Você só paga pelas consultas</strong><br>'}Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01 · <a href="/termos">Termos de uso</a> · <a href="/privacidade">Privacidade</a></footer>
 </body></html>`;
 }
 
@@ -372,6 +376,60 @@ export const paginaConta = ({ usuario, erro, ok }) => `
     <div class="campo"><label for="nova">Nova senha</label><input id="nova" name="nova" type="password" autocomplete="new-password" minlength="8" required></div>
     <button class="btn" type="submit">Alterar senha</button>
   </form>
+  <h3 style="margin-top:28px">Excluir minha conta</h3>
+  <p class="muted" style="margin-top:0">Encerra o seu acesso e pede a exclusão dos seus dados. Pedidos em andamento continuam até o fim, e alguns registros (pagamentos e notas) ficam guardados pelo prazo que a lei exige.</p>
+  <form method="post" action="/conta/excluir">
+    <div class="campo"><label for="exc">Digite EXCLUIR para confirmar</label><input id="exc" name="confirmar" type="text" autocomplete="off" required></div>
+    <button class="btn sec" type="submit" style="color:var(--erro);border-color:var(--erro)">Excluir minha conta</button>
+  </form>
 </div>`;
 
 export const paginaTexto = (titulo, html) => `<div class="cartao" style="max-width:800px;margin:0 auto"><h1 style="font-size:1.7rem">${esc(titulo)}</h1>${html}</div>`;
+
+// ======================= APLICATIVO (Android/iOS) =======================
+const ICONES_APP = {
+  inicio: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  cpf: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/>',
+  limpa: '<path d="M4 20h16"/><path d="M14 4l6 6-9 9H5v-6z"/>',
+  rating: '<path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/>',
+  conta: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+};
+const ABAS_APP = [['/app', 'Início', 'inicio'], ['/monitoramento', 'Meu CPF', 'cpf'], ['/limpa-nome/servico', 'Limpa Nome', 'limpa'], ['/rating', 'Rating', 'rating'], ['/conta', 'Conta', 'conta']];
+export function layoutApp({ titulo, corpo, usuario }) {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0F0C14"><title>${esc(titulo)} · Soft Consultas</title>
+<link rel="icon" href="/icone.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>${CSS}
+body{padding-top:env(safe-area-inset-top)}
+.topo-app{background:var(--preto);color:#fff;position:sticky;top:0;z-index:20;padding:12px 16px;display:flex;align-items:center;gap:10px}
+.topo-app img{width:28px;height:28px}.topo-app b{font-family:Montserrat,sans-serif}.topo-app span{color:#C98BEB}
+main{padding:18px 16px ${usuario ? '96px' : '40px'}}
+footer{display:none}
+.abas-app{position:fixed;left:0;right:0;bottom:0;z-index:30;background:#fff;border-top:1px solid #E8E1EF;display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+.abas-app a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;text-decoration:none;color:#7A7285;font-size:.72rem;font-weight:600;padding:4px 0}
+.abas-app a.on{color:var(--roxo)}
+.abas-app svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+body.modo-app a[href*="/ajuda"][style*="position:fixed"]{bottom:calc(84px + env(safe-area-inset-bottom)) !important}
+</style><script src="/app.js?v=${VERSAO_APP}" defer></script></head><body class="modo-app">
+<header class="topo-app"><img src="/icone-branco.png" alt=""><b>Soft</b><span>Consultas</span></header>
+<main>${corpo}</main>
+${usuario ? `<nav class="abas-app" aria-label="Menu do aplicativo">${ABAS_APP.map(([h, t, i]) => `<a href="${h}" data-aba="${h}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONES_APP[i]}</svg>${t}</a>`).join('')}</nav>` : ''}
+</body></html>`;
+}
+
+export function paginaAppInicio({ usuario, mon, pedidos, whatsapp, notificacoes }) {
+  const primeiro = esc(String(usuario.nome || '').split(' ')[0]);
+  const r = mon?.resumo;
+  const cartao = (titulo, conteudo, link, botao) => `<div class="cartao" style="margin-bottom:14px"><h2 style="font-size:1.1rem;margin:0 0 8px">${titulo}</h2>${conteudo}${link ? `<p style="margin:12px 0 0"><a class="btn" style="min-height:42px;padding:8px 20px" href="${link}">${botao}</a></p>` : ''}</div>`;
+  const listaPed = (lista, vazio) => (lista.length ? lista.map((p) => `<a href="${p.link}" style="display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid #EEE7F4;text-decoration:none;color:inherit"><span><strong>${esc(p.titulo)}</strong><br><span class="muted" style="font-size:.85rem">${esc(p.sub)}</span></span><span style="color:var(--roxo);font-weight:700;align-self:center">›</span></a>`).join('') : `<p class="muted" style="margin:0">${vazio}</p>`);
+  return `<h1 style="font-size:1.5rem;margin:0 0 4px">Olá, ${primeiro}!</h1>
+<p class="muted" style="margin:0 0 16px">Tudo sobre o seu nome, num lugar só.</p>
+${notificacoes === false ? '<div class="aviso" data-push-aviso>Ative as notificações para saber na hora quando sair uma baixa ou aparecer algo novo no seu CPF.</div>' : ''}
+${cartao('🛡️ Meu CPF', mon ? `<p style="margin:0">${mon.ativo ? '<strong style="color:var(--ok)">Monitoramento ativo</strong>' : `<strong>${esc(mon.status)}</strong>`}${mon.ultima ? ` · última checagem ${esc(mon.ultima)}` : ''}</p>${r ? `<p style="margin:8px 0 0">Score <strong>${r.score ?? '—'}</strong> · ${r.qtd ? `<strong style="color:var(--erro)">${r.qtd} restrição(ões)</strong>` : 'sem restrições'}</p>` : ''}` : '<p class="muted" style="margin:0">Você ainda não tem o Monitoramento ativo nesta conta.</p>', '/monitoramento', 'Ver meu CPF')}
+${cartao('🧹 Limpa Nome', listaPed(pedidos.ln, 'Nenhum pedido ainda. Tire as negativações do seu nome por ação judicial coletiva.'), '/limpa-nome/servico', pedidos.ln.length ? 'Ver Limpa Nome' : 'Quero limpar meu nome')}
+${cartao('📈 Rating Bancário', listaPed(pedidos.rating, 'Melhore a forma como os bancos enxergam você.'), '/rating', pedidos.rating.length ? 'Ver Rating' : 'Conhecer o Rating')}
+${whatsapp ? `<a class="btn sec" style="width:100%;justify-content:center" href="https://wa.me/${esc(whatsapp)}" target="_blank" rel="noopener">💬 Falar com o atendimento</a>` : ''}`;
+}
