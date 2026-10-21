@@ -2412,7 +2412,7 @@ const areaParceiro = async ({ req, res, usuario, url, parc }) => {
     andamento: n((p) => ['pago', 'em_analise', 'em_lote', 'em_andamento', 'decisao'].includes(p.status)), concluidos: n((p) => p.status === 'concluido'),
     comissoes: db.prepare("SELECT COALESCE(SUM(valor_centavos), 0) s FROM comissoes WHERE usuario_id = ? AND tipo = 'comissao' AND referencia LIKE 'ln_%'").get(usuario.id).s };
   const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.', pref: 'Preferência salva.' };
-  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.blocoMarcaAtalho({ x: parc }) + SV.paginaParceiro({ usuario, mostrarNome: !!parc.mostrar_nome, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
+  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.blocoMarcaAtalho({ x: parc }) + SV.paginaParceiro({ usuario, mostrarNome: !!parc.mostrar_nome, vendedor: { nome: parc.vendedor_nome || '', cnpj: parc.vendedor_cnpj || '', mostrarCnpj: !!parc.mostrar_cnpj, preview: nomeParceiroVisivel(usuario.id) }, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
 };
 // Quem ainda não é parceiro vê a página de adesão (taxa única); o preço de parceiro/atacado só aparece depois
@@ -2525,12 +2525,27 @@ rota('POST', '/parceiro/mensalidade', exigeParceiro(async ({ req, res, usuario, 
 
 rota('POST', '/parceiro/preferencias', exigeParceiro(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
-  db.prepare("UPDATE parceiros SET mostrar_nome = ?, atualizado_em = datetime('now') WHERE usuario_id = ?").run(f.mostrar_nome === '1' ? 1 : 0, usuario.id);
-  registrar(usuario, 'Parceiro: preferência de identificação', f.mostrar_nome === '1' ? 'mostra o nome ao cliente' : 'não mostra o nome ao cliente');
+  const nomeV = String(f.vendedor_nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const cnpj = A.soNumeros(f.vendedor_cnpj);
+  if (cnpj && !(cnpj.length === 14 && A.documentoValido(cnpj))) return redirecionar(res, `/parceiro?erro=${encodeURIComponent('CNPJ inválido. Confira os números.')}`);
+  if (f.mostrar_cnpj === '1' && !cnpj) return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Informe o CNPJ para mostrar aos clientes.')}`);
+  db.prepare("UPDATE parceiros SET mostrar_nome = ?, vendedor_nome = ?, vendedor_cnpj = ?, mostrar_cnpj = ?, atualizado_em = datetime('now') WHERE usuario_id = ?")
+    .run(f.mostrar_nome === '1' ? 1 : 0, nomeV || null, cnpj || null, f.mostrar_cnpj === '1' ? 1 : 0, usuario.id);
+  registrar(usuario, 'Parceiro: identificação para o cliente', `${f.mostrar_nome === '1' ? 'mostra o nome' : 'sem nome'} · ${f.mostrar_cnpj === '1' ? `mostra CNPJ ${cnpj}` : 'sem CNPJ'}${nomeV ? ` · empresa ${nomeV}` : ''}`);
   redirecionar(res, '/parceiro?ok=pref');
 }));
-// Nome do parceiro para o cliente: só quando o parceiro escolheu aparecer
-const nomeParceiroVisivel = (pid) => { const x = pid && db.prepare('SELECT p.mostrar_nome, u.nome FROM parceiros p JOIN usuarios u ON u.id = p.usuario_id WHERE p.usuario_id = ?').get(pid); return x?.mostrar_nome ? x.nome : null; };
+// Identificação do vendedor para o cliente (já com o rótulo): nome e/ou CNPJ, só o que o parceiro escolheu mostrar
+const fmtCnpj = (c) => String(c || '').replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+const nomeParceiroVisivel = (pid) => {
+  const x = pid && db.prepare('SELECT p.mostrar_nome, p.vendedor_nome, p.vendedor_cnpj, p.mostrar_cnpj, u.nome FROM parceiros p JOIN usuarios u ON u.id = p.usuario_id WHERE p.usuario_id = ?').get(pid);
+  if (!x) return null;
+  const cnpj = x.mostrar_cnpj && x.vendedor_cnpj ? x.vendedor_cnpj : null;
+  const partes = [];
+  if (x.mostrar_nome) partes.push(x.vendedor_nome || x.nome);
+  else if (cnpj && x.vendedor_nome) partes.push(x.vendedor_nome);
+  if (cnpj) partes.push(`CNPJ ${fmtCnpj(cnpj)}`);
+  return partes.length ? `${cnpj ? 'Vendedor' : 'Atendimento'}: ${partes.join(' · ')}` : null;
+};
 // ===================== WHITE LABEL DO PARCEIRO =====================
 // Marca própria (nome, logo, cor, WhatsApp), página de vendas /p/:slug e recebimento na subconta Asaas dele, com split da nossa parte.
 const pastaMarcas = path.join(path.dirname(pastaAnuncios), 'marcas');
@@ -2538,7 +2553,7 @@ mkdirSync(pastaMarcas, { recursive: true });
 function marcaDe(x) {
   if (typeof x === 'number') x = parceiroRow(x);
   if (!x?.ativo || !x.marca_ativa || !x.marca_nome) return null;
-  return { uid: x.usuario_id, nome: x.marca_nome, logo: x.marca_logo ? `/marca-logo/${x.usuario_id}?v=${String(x.marca_logo).slice(-8)}` : null, cor: x.marca_cor,
+  return { uid: x.usuario_id, cnpj: x.mostrar_cnpj && x.vendedor_cnpj ? fmtCnpj(x.vendedor_cnpj) : null, nome: x.marca_nome, logo: x.marca_logo ? `/marca-logo/${x.usuario_id}?v=${String(x.marca_logo).slice(-8)}` : null, cor: x.marca_cor,
     whatsapp: x.marca_whatsapp, email: x.marca_email, slug: x.marca_slug, texto: x.marca_texto };
 }
 const marcaPedido = (p) => (p?.parceiro_id ? marcaDe(p.parceiro_id) : null);
@@ -2867,7 +2882,7 @@ rota('POST', '/parceiro/novo', exigeParceiro(async ({ req, res, usuario, parc })
   registrar(usuario, 'Parceiro: cliente cadastrado', `#${id} · ${r.nomeServico} · ${nome} · ${modelo === 'atacado' ? `atacado ${P.reais(valor)}` : `cliente paga ${P.reais(venda)} · comissão ${P.reais(comissaoPedido)}`}`);
   if (modelo === 'comissao') {
     const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
-    emailPedidoLN(p, `Falta só o pagamento do seu ${r.nomeServico}`, `O seu pedido de <strong>${P.esc(r.nomeServico)}</strong> foi cadastrado${parc.mostrar_nome ? ` por <strong>${P.esc(usuario.nome)}</strong>` : ''}. Para começar, conclua o pagamento de <strong>${P.reais(venda)}</strong> (Pix ou até ${cfg.parcelas}x no cartão) pelo botão abaixo.`);
+    emailPedidoLN(p, `Falta só o pagamento do seu ${r.nomeServico}`, `O seu pedido de <strong>${P.esc(r.nomeServico)}</strong> foi cadastrado${nomeParceiroVisivel(usuario.id) ? ` (${P.esc(nomeParceiroVisivel(usuario.id))})` : ''}. Para começar, conclua o pagamento de <strong>${P.reais(venda)}</strong> (Pix ou até ${cfg.parcelas}x no cartão) pelo botão abaixo.`);
     return redirecionar(res, `/parceiro/cliente/${id}?novo=1`);
   }
   // Atacado: o parceiro paga agora
@@ -2940,7 +2955,7 @@ rota('GET', '/ln/:token', ({ res, usuario, params, url }) => {
   const cfg = cfgPublicoLN(p);
   const marca = marcaPedido(p);
   const parceiro = marca ? null : nomeParceiroVisivel(p.parceiro_id);
-  const ficha = (url.searchParams.get('ficha') ? '<div class="aviso ok" style="max-width:620px">Ficha cadastral recebida! Avisamos a cada etapa por e-mail.</div>' : '') + (parceiro ? `<p class="muted" style="margin:-10px 0 16px">Atendimento: ${P.esc(parceiro)}</p>` : '');
+  const ficha = (url.searchParams.get('ficha') ? '<div class="aviso ok" style="max-width:620px">Ficha cadastral recebida! Avisamos a cada etapa por e-mail.</div>' : '') + (parceiro ? `<p class="muted" style="margin:-10px 0 16px">${P.esc(parceiro)}</p>` : '');
   if (p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && !p.asaas_id) {
     const xs = parceiroRow(p.parceiro_id);
     return paginaExterna(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pagamento`, SV.paginaPagarClienteLN({ p, cfg, parceiro, erro: url.searchParams.get('erro') || '', recebedor: subAtiva(xs) ? dadosSub(xs).nome : '' }), 200, marca);

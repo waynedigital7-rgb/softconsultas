@@ -437,7 +437,7 @@ ${marca.logo ? `<link rel="icon" href="${esc(marca.logo)}"><meta property="og:im
 </style><script src="/app.js?v=${VERSAO_APP}" defer></script>${scriptRobo()}</head><body>
 <header class="topo-marca"><div class="in">${marca.logo ? `<img src="${esc(marca.logo)}" alt="${esc(marca.nome)}">` : ''}<b>${marca.logo ? '' : esc(marca.nome)}</b></div></header>
 <main>${corpo}</main>
-<footer>${esc(marca.nome)}${marca.whatsapp ? ` · <a href="https://wa.me/${esc(marca.whatsapp)}" target="_blank" rel="noopener">WhatsApp</a>` : ''}${marca.email ? ` · <a href="mailto:${esc(marca.email)}">${esc(marca.email)}</a>` : ''} · <a href="/privacidade" target="_blank" rel="noopener">Privacidade</a></footer>
+<footer>${esc(marca.nome)}${marca.cnpj ? ` · CNPJ ${esc(marca.cnpj)}` : ''}${marca.whatsapp ? ` · <a href="https://wa.me/${esc(marca.whatsapp)}" target="_blank" rel="noopener">WhatsApp</a>` : ''}${marca.email ? ` · <a href="mailto:${esc(marca.email)}">${esc(marca.email)}</a>` : ''} · <a href="/privacidade" target="_blank" rel="noopener">Privacidade</a></footer>
 </body></html>`;
 }
 

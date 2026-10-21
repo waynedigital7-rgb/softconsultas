@@ -655,7 +655,7 @@ const ehReais = (t) => t === 'fixo' || t === 'nossa_parte';
 const optNossa = (sel) => `<option value="nossa_parte" ${sel === 'nossa_parte' ? 'selected' : ''}>Nossa parte fixa (R$): o resto é do parceiro</option>`;
 const txtTipo = (t, v) => (t === 'nossa_parte' ? `nossa parte ${reais(v)}` : t === 'fixo' ? reais(v) : `${v}%`);
 
-export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro, repasse = null, mostrarNome = false }) {
+export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro, repasse = null, mostrarNome = false, vendedor = {} }) {
   const disp = regras.filter((x) => x.disponivel);
   const linkCliente = (p) => `${base}/ln/${p.token}`;
   const wpp = (p) => {
@@ -682,8 +682,16 @@ ${!disp.length ? '<div class="aviso">Os serviços estão pausados para novos ped
   </div>
   ${disp.length ? '<a class="btn" href="/parceiro/novo" style="flex:none">+ Cadastrar cliente</a>' : ''}
 </div>
-<form class="cartao" method="post" action="/parceiro/preferencias" style="margin-bottom:18px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
-  <label style="display:flex;gap:10px;align-items:flex-start;flex:1 1 320px"><input type="checkbox" name="mostrar_nome" value="1" ${mostrarNome ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Mostrar o meu nome para os clientes</strong><br><span class="muted">Ligado: a página de pagamento, o acompanhamento e o e-mail mostram "Atendimento: ${esc(usuario.nome)}". Desligado: o cliente vê só a Soft Consultas.</span></span></label>
+<form class="cartao" method="post" action="/parceiro/preferencias" style="margin-bottom:18px">
+  <h2 style="font-size:1.1rem;margin:0 0 4px">Como você aparece para o cliente</h2>
+  <p class="muted" style="margin:0 0 12px;font-size:.92rem">Vale para a página de pagamento, o acompanhamento do pedido e os e-mails do cliente.</p>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 260px;margin-bottom:10px"><label for="vd-nome">Nome da empresa vendedora (opcional)</label><input id="vd-nome" type="text" name="vendedor_nome" maxlength="120" value="${esc(vendedor.nome || '')}" placeholder="${esc(usuario.nome)}"></div>
+    <div class="campo" style="flex:1 1 200px;margin-bottom:10px"><label for="vd-cnpj">CNPJ da empresa</label><input id="vd-cnpj" type="text" name="vendedor_cnpj" inputmode="numeric" maxlength="18" value="${esc(vendedor.cnpj ? formatarDoc(vendedor.cnpj) : '')}" placeholder="00.000.000/0000-00"></div>
+  </div>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin:4px 0 8px"><input type="checkbox" name="mostrar_nome" value="1" ${mostrarNome ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Mostrar o nome da empresa para os clientes</strong> <span class="muted">(se o campo acima ficar vazio, aparece o seu nome)</span></span></label>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin:4px 0 12px"><input type="checkbox" name="mostrar_cnpj" value="1" ${vendedor.mostrarCnpj ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Mostrar o CNPJ como vendedor</strong></span></label>
+  <p style="margin:0 0 12px;font-size:.92rem">O cliente vê agora: <strong>${vendedor.preview ? esc(vendedor.preview) : 'só a Soft Consultas (sem o seu nome)'}</strong></p>
   <button class="btn sec" style="${btnPeq}">Salvar</button></form>
 <div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Meus clientes</h2><div class="rolar"><table class="tabela"><tr><th>#</th><th>Cliente</th><th>Modelo</th><th>Valor</th><th>Status</th><th>Baixas</th><th>Ações</th></tr>
 ${pedidos.map((p) => { const b = Object.keys(lerBaixas(p)).length; const pend = p.status === 'aguardando_pagamento';
@@ -748,7 +756,7 @@ export function paginaPagarClienteLN({ p, cfg, parceiro, erro = '', recebedor = 
   return `<div style="max-width:640px;margin:0 auto">
 <span class="tag">Limpa Nome · pedido #${p.id}</span>
 <h1 style="font-size:1.7rem;margin:10px 0 6px">${esc(String(p.nome).split(' ')[0])}, falta só o pagamento</h1>
-<p class="muted" style="margin:0 0 16px">${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(p.cpf))}${parceiro ? ` · Atendimento: ${esc(parceiro)}` : ''}</p>
+<p class="muted" style="margin:0 0 16px">${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(p.cpf))}${parceiro ? ` · ${esc(parceiro)}` : ''}</p>
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 <div class="cartao" style="margin-bottom:16px">
   <h2 style="font-size:1.15rem;margin-top:0">O que você está contratando: ${esc(SERVICOS[p.servico] || 'Limpa Nome')}</h2>

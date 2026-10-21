@@ -456,6 +456,10 @@ for (const [c, def] of [['marca_ativa', 'INTEGER NOT NULL DEFAULT 0'], ['marca_n
   ['sub_dados', 'TEXT'], ['sub_id', 'TEXT'], ['sub_wallet', 'TEXT'], ['sub_chave', 'TEXT'], ['sub_status', 'TEXT'], ['sub_criada_em', 'TEXT'], ['sub_aprovada_em', 'TEXT'], ['sub_erro', 'TEXT'], ['sub_webhook', 'INTEGER NOT NULL DEFAULT 0']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
+// Vendedor que aparece para o cliente: nome da empresa e CNPJ (opcional)
+for (const [c, def] of [['vendedor_nome', 'TEXT'], ['vendedor_cnpj', 'TEXT'], ['mostrar_cnpj', 'INTEGER NOT NULL DEFAULT 0']]) {
+  if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
+}
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_parc_slug ON parceiros(marca_slug) WHERE marca_slug IS NOT NULL');
 for (const [c, def] of [['asaas_sub', 'INTEGER'], ['split_centavos', 'INTEGER'], ['origem_pagina', 'INTEGER NOT NULL DEFAULT 0']]) {
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
