@@ -1,5 +1,5 @@
 // Páginas da área do cliente: catálogo, consulta, resultado, histórico e recarga
-import { esc, reais, dt, botoesPdf } from './paginas.js';
+import { esc, reais, dt, botoesPdf, ofertaPrimeiraHtml } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 const ROTULO_DOC = { cpf: 'CPF', cnpj: 'CNPJ', cpf_cnpj: 'CPF ou CNPJ', placa: 'Placa', cep: 'CEP' };
@@ -210,19 +210,21 @@ export function paginaHistorico({ consultas, busca = '', dias = 10 }) {
 
 export function paginaRecarregar({ minimo, faixas, erro, primeira = null, pedirDocumento = false }) {
   const sugestoes = [3000, 5000, 10000, 20000, 30000, 50000].filter((v) => v >= minimo);
-  const bonusDe = (v) => { let p = 0; for (const f of faixas) if (v >= f.a_partir_de) p = Math.max(p, f.percentual); if (primeira && v >= primeira.min) p = Math.max(p, primeira.pct); return p; };
+  const bonusValor = (v) => { let p = 0; for (const f of faixas) if (v >= f.a_partir_de) p = Math.max(p, f.percentual); let b = Math.round((v * p) / 100);
+    if (primeira && v >= primeira.min) { const x = Math.round((v * primeira.pct) / 100); b = Math.max(b, primeira.teto > 0 ? Math.min(x, primeira.teto) : x); } return b; };
+  const marcado = primeira && sugestoes.includes(primeira.exemplo) ? primeira.exemplo : sugestoes[1];
   return `
 <div class="cartao estreito" style="max-width:600px">
   <h1 style="font-size:1.6rem">Recarregar créditos</h1>
   <p class="muted">Pague por Pix e o saldo cai na hora. Recarga mínima de ${reais(minimo)}. <strong>Sem mensalidade:</strong> o saldo é usado só nas consultas que você fizer.</p>
-  ${primeira ? `<div class="aviso ok" style="border:2px solid var(--ok)"><strong>Oferta de primeira recarga:</strong> +${primeira.pct}% de crédito${primeira.min ? ` recarregando a partir de ${reais(primeira.min)}` : ''}${primeira.ate ? `, válida até ${primeira.ate.split('-').reverse().join('/')}` : ''}.</div>` : ''}
+  ${primeira ? ofertaPrimeiraHtml(primeira, false) : ''}
   ${faixas.length ? `<div class="aviso ok">${faixas.map((f) => `Recarregando a partir de ${reais(f.a_partir_de)}, ganhe <strong>+${f.percentual}%</strong> de bônus`).join('<br>')}</div>` : ''}
   ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
   <form method="post" action="/recarregar">
     <div class="grade" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px">
       ${sugestoes.map((v, i) => `<label class="cartao" style="padding:14px;cursor:pointer;display:flex;gap:10px;align-items:center">
-        <input type="radio" name="valor" value="${v / 100}" ${i === 1 ? 'checked' : ''} style="accent-color:var(--roxo);width:18px;height:18px">
-        <span><strong>${reais(v)}</strong>${bonusDe(v) ? `<br><small style="color:var(--ok);font-weight:700">+${reais(Math.round((v * bonusDe(v)) / 100))} bônus</small>` : ''}</span></label>`).join('')}
+        <input type="radio" name="valor" value="${v / 100}" ${v === marcado ? 'checked' : ''} style="accent-color:var(--roxo);width:18px;height:18px">
+        <span><strong>${reais(v)}</strong>${bonusValor(v) ? `<br><small style="color:var(--ok);font-weight:700">+${reais(bonusValor(v))} bônus</small>` : ''}</span></label>`).join('')}
     </div>
     ${pedirDocumento ? `<div class="campo"><label for="documento">Seu CPF ou CNPJ (para emitir o Pix)</label><input id="documento" name="documento" type="text" inputmode="numeric" required>
       <small class="muted">Pedimos só uma vez. Com CNPJ, as consultas de empresa e as sensíveis são liberadas automaticamente.</small></div>` : ''}

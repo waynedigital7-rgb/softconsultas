@@ -93,6 +93,8 @@ export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div class="campo" style="flex:1 1 140px;margin:0"><label for="primeira_pct">Bônus (%)</label><input id="primeira_pct" name="primeira_pct" type="text" inputmode="numeric" value="${primeira.pct}"></div>
       <div class="campo" style="flex:1 1 160px;margin:0"><label for="primeira_min">A partir de (R$)</label><input id="primeira_min" name="primeira_min" type="text" inputmode="decimal" value="${(primeira.min / 100).toFixed(2).replace('.', ',')}"></div>
+      <div class="campo" style="flex:1 1 140px;margin:0"><label for="primeira_teto">Bônus máximo (R$, 0 = sem limite)</label><input id="primeira_teto" name="primeira_teto" type="text" inputmode="decimal" value="${((primeira.teto || 0) / 100).toFixed(2).replace('.', ',')}"></div>
+      <div class="campo" style="flex:1 1 140px;margin:0"><label for="primeira_dias">Prazo após o cadastro (dias, 0 = sem prazo)</label><input id="primeira_dias" name="primeira_dias" type="text" inputmode="numeric" value="${primeira.dias || 0}"></div>
       <div class="campo" style="flex:1 1 180px;margin:0"><label for="primeira_ate">Válida até</label><input id="primeira_ate" name="primeira_ate" type="date" value="${primeira.ate || ''}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
     </div>
     <small class="muted">Vale só na primeira recarga paga de cada cliente e aparece nas páginas de campanha. Coloque 0% para desligar.</small></fieldset>

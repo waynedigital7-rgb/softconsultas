@@ -284,7 +284,7 @@ function garantirCodigo(usuario) {
 }
 
 rota('GET', '/', ({ res, usuario }) => (usuario ? redirecionar(res, '/painel')
-  : pagina(res, 'Consultas para o seu negócio', P.paginaInicial({}), null)));
+  : pagina(res, 'Consultas para o seu negócio', P.paginaInicial({ oferta: bonusPrimeira() }), null)));
 
 // Cadastro
 rota('GET', '/cadastro', ({ res, usuario, url }) => (usuario ? redirecionar(res, '/consultas')
@@ -321,7 +321,7 @@ rota('POST', '/cadastro', async ({ req, res }) => {
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)`).run(v.nome, v.email, v.documento, v.telefone, A.gerarHashSenha(f.senha), admin, indicador?.id ?? null, codigoUnico(),
       t(org.origem || (indicador ? 'indicacao' : '')), t(org.utm_source), t(org.utm_medium), t(org.utm_campaign), t(org.utm_content), t(org.pagina));
   const token = A.criarSessao(Number(r.lastInsertRowid));
-  const bv = montarEmail({ etapa: 'boasvindas', nome: v.nome, perfil: perfilDo({ origem: org.origem, utm_campaign: org.utm_campaign, pagina_entrada: org.pagina }), bonus: bonusPrimeira(), base: urlBase(req), sair: null });
+  const bv = montarEmail({ etapa: 'boasvindas', nome: v.nome, perfil: perfilDo({ origem: org.origem, utm_campaign: org.utm_campaign, pagina_entrada: org.pagina }), bonus: bonusEmail(Number(r.lastInsertRowid)), base: urlBase(req), sair: null });
   enviarEmail({ para: v.email, assunto: bv.assunto, html: bv.html })
     .catch((e) => console.error('e-mail boas-vindas:', e.message));
   const placaConsulta = placaOk(f.consulta);
@@ -395,7 +395,7 @@ rota('POST', '/redefinir-senha', async ({ req, res }) => {
 rota('GET', '/painel', exigeLogin(async ({ res, usuario }) => {
   const transacoes = db.prepare('SELECT * FROM transacoes WHERE usuario_id = ? ORDER BY id DESC LIMIT 20').all(usuario.id);
   const consultas = db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 10').all(usuario.id);
-  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas, anuncios: anunciosParaExibir(), contato: contatoAnuncie() }), usuario);
+  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas, anuncios: anunciosParaExibir(), contato: contatoAnuncie(), oferta: usuario.admin || usuario.interno ? null : ofertaPrimeira(usuario.id) }), usuario);
 }));
 
 rota('GET', '/conta', exigeLogin(({ res, usuario, url }) => pagina(res, 'Minha conta',
@@ -492,16 +492,57 @@ function bonusPrimeira() {
   const pct = Number(lerConfig('bonus_primeira_percentual') || 0);
   const min = Number(lerConfig('bonus_primeira_minimo_centavos') || 0);
   const ate = lerConfig('bonus_primeira_ate') || '';
+  // teto: bônus máximo em R$ (0 = sem teto); dias: prazo de cada cliente a partir do cadastro (0 = sem prazo individual)
+  const teto = Number(lerConfig('bonus_primeira_teto_centavos') || 0);
+  const dias = Number(lerConfig('bonus_primeira_dias') || 0);
   const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
-  return { pct, min, ate, ativo: pct > 0 && (!ate || hoje <= ate) };
+  return { pct, min, ate, teto, dias, ativo: pct > 0 && (!ate || hoje <= ate) };
+}
+// "Primeira recarga em dobro": 1ª vez em 2026-10-21 → 100% de bônus, até R$ 30, a partir de R$ 30, 7 dias após o cadastro
+if (!lerConfig('promo_dobro_v1')) {
+  gravarConfig('bonus_primeira_percentual', '100'); gravarConfig('bonus_primeira_minimo_centavos', '3000'); gravarConfig('bonus_primeira_teto_centavos', '3000');
+  gravarConfig('bonus_primeira_dias', '7'); gravarConfig('bonus_primeira_ate', ''); gravarConfig('bonus_primeira_desde', new Date().toISOString().slice(0, 19).replace('T', ' '));
+  gravarConfig('promo_dobro_v1', '1');
+  registrar(null, 'Oferta: primeira recarga em dobro ligada', 'R$ 30 vira R$ 60 (bônus de 100%, até R$ 30), 7 dias após o cadastro');
+}
+const valorBonusPrimeira = (v, bp) => { const b = Math.round((v * bp.pct) / 100); return bp.teto > 0 ? Math.min(b, bp.teto) : b; };
+// Fim do prazo da oferta para o cliente (UTC, formato do SQLite). Quem se cadastrou antes da oferta conta a partir do lançamento.
+function prazoPrimeira(uid, bp = bonusPrimeira()) {
+  if (!bp.dias) return null;
+  const u = db.prepare('SELECT criado_em FROM usuarios WHERE id = ?').get(uid);
+  const desde = lerConfig('bonus_primeira_desde') || '';
+  const base = u?.criado_em && u.criado_em > desde ? u.criado_em : desde || u?.criado_em;
+  return base ? db.prepare("SELECT datetime(?, ?) d").get(base, `+${bp.dias} days`).d : null;
 }
 const ehPrimeiraRecarga = (uid) => !db.prepare("SELECT 1 FROM recargas WHERE usuario_id = ? AND status = 'paga'").get(uid);
+// Oferta de primeira recarga válida para este cliente agora (ou null)
+function ofertaPrimeira(uid) {
+  const bp = bonusPrimeira();
+  if (!uid || !bp.ativo || !ehPrimeiraRecarga(uid)) return null;
+  const prazo = prazoPrimeira(uid, bp);
+  if (prazo && prazo < sqlAgora()) return null;
+  const doc = db.prepare('SELECT documento FROM usuarios WHERE id = ?').get(uid)?.documento || '';
+  if (doc && db.prepare("SELECT 1 FROM recargas rc JOIN usuarios u ON u.id = rc.usuario_id WHERE u.documento = ? AND rc.status = 'paga'").get(doc)) return null;
+  const exemplo = Math.max(bp.min, 500);
+  return { ...bp, prazo, exemplo, bonusExemplo: valorBonusPrimeira(exemplo, bp) };
+}
+// Oferta para os e-mails: a do próprio cliente (com o prazo dele) ou a genérica (prévias)
+function bonusEmail(uid) {
+  const o = uid ? ofertaPrimeira(uid) : null;
+  const bp = bonusPrimeira();
+  if (uid && !o) return null;
+  const x = o || { ...bp, exemplo: Math.max(bp.min, 500), bonusExemplo: valorBonusPrimeira(Math.max(bp.min, 500), bp), prazo: null };
+  if (!x.ativo) return null;
+  const fim = x.prazo ? new Date(Date.parse(x.prazo.replace(' ', 'T') + 'Z') - 3 * 3600000).toISOString().slice(0, 10).split('-').reverse().join('/') : '';
+  return { ...x, prazoTexto: fim ? `até ${fim}` : x.dias ? `nos ${x.dias} dias depois do cadastro` : x.ate ? `até ${x.ate.split('-').reverse().join('/')}` : '' };
+}
 const bonusPara = (v, uid) => {
   let p = 0;
   for (const f of faixasBonus()) if (v >= f.a_partir_de) p = Math.max(p, f.percentual);
-  const bp = bonusPrimeira();
-  if (uid && bp.ativo && v >= bp.min && ehPrimeiraRecarga(uid)) p = Math.max(p, bp.pct);
-  return Math.round((v * p) / 100);
+  let b = Math.round((v * p) / 100);
+  const of = ofertaPrimeira(uid);
+  if (of && v >= of.min) b = Math.max(b, valorBonusPrimeira(v, of));
+  return b;
 };
 const VALOR_MAXIMO_PADRAO = 100000; // R$ 1.000 por recarga (ajustável em Configurações)
 const valorMaximo = () => Math.max(1000, Number(lerConfig('recarga_maxima_centavos') || VALOR_MAXIMO_PADRAO));
@@ -512,14 +553,17 @@ const VALOR_CONFIRMAR = 30000; // acima de R$ 300 o cliente confirma o valor ant
 function bonusNoPagamento(r) {
   let p = 0;
   for (const f of faixasBonus()) if (r.valor_centavos >= f.a_partir_de) p = Math.max(p, f.percentual);
+  let b = Math.round((r.valor_centavos * p) / 100);
   const bp = bonusPrimeira();
   if (bp.ativo && r.valor_centavos >= bp.min) {
     const doc = db.prepare('SELECT documento FROM usuarios WHERE id = ?').get(r.usuario_id)?.documento || '';
     const jaPagou = db.prepare("SELECT 1 FROM recargas WHERE usuario_id = ? AND status = 'paga' AND id <> ?").get(r.usuario_id, r.id)
       || (doc && db.prepare("SELECT 1 FROM recargas rc JOIN usuarios u ON u.id = rc.usuario_id WHERE u.documento = ? AND rc.status = 'paga' AND rc.id <> ?").get(doc, r.id));
-    if (!jaPagou) p = Math.max(p, bp.pct);
+    // O prazo vale pela data em que o Pix foi gerado (quem gerou dentro do prazo e pagou logo depois recebe)
+    const prazo = prazoPrimeira(r.usuario_id, bp);
+    if (!jaPagou && !(prazo && r.criado_em && r.criado_em > prazo)) b = Math.max(b, valorBonusPrimeira(r.valor_centavos, bp));
   }
-  return Math.min(r.bonus_centavos || 0, Math.round((r.valor_centavos * p) / 100));
+  return Math.min(r.bonus_centavos || 0, b);
 }
 
 function creditarRecarga(recargaId) {
@@ -656,7 +700,7 @@ async function processarEmails() {
         // Reserva antes de enviar: nunca manda a mesma etapa duas vezes
         if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, et.chave, 'enviando').changes !== 1) continue;
         try {
-          const m = montarEmail({ etapa: et.chave, nome: u.nome, perfil: perfilDo(u), bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
+          const m = montarEmail({ etapa: et.chave, nome: u.nome, perfil: perfilDo(u), bonus: bonusEmail(u.id), base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
           await enviarEmail({ para: u.email, assunto: m.assunto, html: m.html, cabecalhos: { 'List-Unsubscribe': `<${linkSair(u.id)}>` } });
           db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, et.chave);
         } catch (e) {
@@ -682,7 +726,7 @@ rota('GET', '/emails/sair', ({ res, url }) => {
 });
 
 const dadosRecarga = (usuario) => ({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(),
-  primeira: bonusPrimeira().ativo && ehPrimeiraRecarga(usuario.id) ? bonusPrimeira() : null, pedirDocumento: !usuario.documento });
+  primeira: ofertaPrimeira(usuario.id), pedirDocumento: !usuario.documento });
 rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => pagina(res, 'Recarregar', PA.paginaRecarregar(dadosRecarga(usuario)), usuario)));
 
 rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
@@ -1316,7 +1360,7 @@ async function dispararCampanha(chave, publico, admin) {
       if (!podeMarketing()) { parou = true; break; }
       if (db.prepare('INSERT OR IGNORE INTO emails_enviados (usuario_id, etapa, status) VALUES (?, ?, ?)').run(u.id, etapa, 'enviando').changes !== 1) continue;
       try {
-        const m = montarCampanha({ chave, nome: u.nome, produto, servico, promo, bonus: publico === 'com_recarga' ? null : bonus, base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
+        const m = montarCampanha({ chave, nome: u.nome, produto, servico, promo, bonus: publico === 'com_recarga' ? null : bonusEmail(u.id), base: baseEmails(), sair: linkSair(u.id), podeResponder: !!process.env.EMAIL_RESPOSTA });
         await enviarEmail({ para: u.email, assunto: m.assunto, html: m.html, cabecalhos: { 'List-Unsubscribe': `<${linkSair(u.id)}>` } });
         db.prepare("UPDATE emails_enviados SET status = 'enviado' WHERE usuario_id = ? AND etapa = ?").run(u.id, etapa);
         ok++;
@@ -1338,7 +1382,7 @@ async function dispararCampanha(chave, publico, admin) {
 
 rota('GET', '/admin/emails/campanha/previa', exigeAdmin(({ res, url }) => {
   const chave = CAMPANHAS[url.searchParams.get('c')] ? url.searchParams.get('c') : 'cpf-credplus';
-  const m = montarCampanha({ chave, nome: 'Maria Silva', produto: produtoCampanha(chave), servico: servicoCampanha(chave), promo: promoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+  const m = montarCampanha({ chave, nome: 'Maria Silva', produto: produtoCampanha(chave), servico: servicoCampanha(chave), promo: promoCampanha(chave), bonus: bonusEmail(null), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src * data:; style-src 'unsafe-inline'", 'X-Frame-Options': 'SAMEORIGIN' });
   res.end(`<div style="font-family:Arial;padding:10px 16px;background:#0F0C14;color:#fff">Assunto: <strong>${P.esc(m.assunto)}</strong></div>${m.html}`);
 }));
@@ -1353,7 +1397,7 @@ rota('POST', '/admin/emails/campanha', exigeAdmin(async ({ req, res, usuario }) 
   if (!process.env.RESEND_API_KEY) return volta('Falta a RESEND_API_KEY no Render: sem ela nenhum e-mail sai.');
   if (f.acao === 'teste') {
     try {
-      const m = montarCampanha({ chave, nome: usuario.nome, produto: produtoCampanha(chave), servico: servicoCampanha(chave), promo: promoCampanha(chave), bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+      const m = montarCampanha({ chave, nome: usuario.nome, produto: produtoCampanha(chave), servico: servicoCampanha(chave), promo: promoCampanha(chave), bonus: bonusEmail(null), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
       await enviarEmail({ para: usuario.email, assunto: `[TESTE] ${m.assunto}`, html: m.html });
       return volta(`E-mail de teste enviado para ${usuario.email}.`, true);
     } catch (e) { return volta(`Falha ao enviar o teste: ${e.message}`); }
@@ -1393,7 +1437,7 @@ rota('POST', '/admin/operacao/emails', exigeAdmin(async ({ req, res, usuario }) 
 rota('GET', '/admin/emails/previa', exigeAdmin(({ res, url }) => {
   const etapa = [...ETAPAS.map((e) => e.chave), 'boasvindas'].includes(url.searchParams.get('etapa')) ? url.searchParams.get('etapa') : 'd1';
   const perfil = PERFIS.includes(url.searchParams.get('perfil')) ? url.searchParams.get('perfil') : 'geral';
-  const m = montarEmail({ etapa, nome: 'Maria Silva', perfil, bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+  const m = montarEmail({ etapa, nome: 'Maria Silva', perfil, bonus: bonusEmail(null), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "default-src 'none'; img-src * data:; style-src 'unsafe-inline'", 'X-Frame-Options': 'SAMEORIGIN' });
   res.end(`<div style="font-family:Arial;padding:10px 16px;background:#0F0C14;color:#fff">Assunto: <strong>${P.esc(m.assunto)}</strong></div>${m.html}`);
 }));
@@ -1403,7 +1447,7 @@ rota('POST', '/admin/emails/teste', exigeAdmin(async ({ req, res, usuario }) => 
   const etapa = [...ETAPAS.map((e) => e.chave), 'boasvindas'].includes(f.etapa) ? f.etapa : 'd1';
   const perfil = PERFIS.includes(f.perfil) ? f.perfil : 'geral';
   try {
-    const m = montarEmail({ etapa, nome: usuario.nome, perfil, bonus: bonusPrimeira(), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
+    const m = montarEmail({ etapa, nome: usuario.nome, perfil, bonus: bonusEmail(null), base: baseEmails(), sair: '#', podeResponder: !!process.env.EMAIL_RESPOSTA });
     await enviarEmail({ para: usuario.email, assunto: `[TESTE] ${m.assunto}`, html: m.html });
     redirecionar(res, `/admin/operacao?ok=${encodeURIComponent(`E-mail de teste enviado para ${usuario.email}.`)}`);
   } catch (e) {
@@ -1585,6 +1629,8 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   if (!Number.isFinite(taxaS) || taxaS < 0 || taxaS > 50) return erro('Taxa de saque inválida (0 a 50%).');
   const bpPct = Number(String(f.primeira_pct ?? '0').replace(',', '.')), bpMin = centavos(f.primeira_min || '0'), bpAte = /^\d{4}-\d{2}-\d{2}$/.test(f.primeira_ate || '') ? f.primeira_ate : '';
   if (!Number.isFinite(bpPct) || bpPct < 0 || bpPct > 100 || !Number.isFinite(bpMin) || bpMin < 0) return erro('Bônus de primeira recarga inválido.');
+  const bpTeto = centavos(f.primeira_teto || '0'), bpDias = Math.floor(Number(f.primeira_dias || 0));
+  if (!Number.isFinite(bpTeto) || bpTeto < 0 || !Number.isFinite(bpDias) || bpDias < 0 || bpDias > 365) return erro('Bônus máximo ou prazo da primeira recarga inválido.');
   const alerta = centavos(f.alerta_apifull);
   if (!Number.isFinite(alerta) || alerta < 0) return erro('Valor de alerta do saldo APIFull inválido.');
   if (!Number.isFinite(minimo) || minimo < 500) return erro('A recarga mínima precisa ser de pelo menos R$ 5,00.');
@@ -1609,9 +1655,11 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('bonus_primeira_percentual', bpPct);
   gravarConfig('bonus_primeira_minimo_centavos', bpMin);
   gravarConfig('bonus_primeira_ate', bpAte);
+  gravarConfig('bonus_primeira_teto_centavos', bpTeto);
+  gravarConfig('bonus_primeira_dias', bpDias);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
-  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, máxima ${P.reais(valorMaximo())}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
+  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, máxima ${P.reais(valorMaximo())}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, 1ª recarga ${bpPct}% a partir de ${P.reais(bpMin)} até ${P.reais(bpTeto)} em ${bpDias} dias, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
   redirecionar(res, '/admin/config?ok=1');
 }));
 

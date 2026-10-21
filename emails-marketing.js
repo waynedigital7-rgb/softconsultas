@@ -51,7 +51,7 @@ const P = {
 export const ETAPAS = [
   { chave: 'd1', horas: 24, nome: '1 dia depois' },
   { chave: 'd3', horas: 72, nome: '3 dias depois' },
-  { chave: 'd7', horas: 168, nome: '7 dias depois' },
+  { chave: 'd7', horas: 144, nome: '6 dias depois (último dia da oferta)' },
 ];
 
 function moldura({ base, preheader, corpo, sair }) {
@@ -73,9 +73,14 @@ function moldura({ base, preheader, corpo, sair }) {
 }
 const botao = (href, texto) => `<p style="margin:24px 0"><a href="${esc(href)}" style="display:inline-block;background:#9F31D3;color:#ffffff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold;font-size:16px">${esc(texto)}</a></p>`;
 const lista = (itens) => `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 4px">${itens.map((i) => `<tr><td style="padding:4px 10px 4px 0;color:#9F31D3;font-weight:bold;vertical-align:top">✓</td><td style="padding:4px 0">${esc(i)}</td></tr>`).join('')}</table>`;
-const caixaBonus = (b) => `<div style="background:#F6ECFC;border:1px solid #E3C6F4;border-radius:14px;padding:14px 16px;margin:18px 0">
-  <strong style="color:#7A1FA8">+${b.pct}% de bônus na primeira recarga</strong><br>
-  <span style="font-size:14px">Recarregando ${reais(b.min)} via Pix, você recebe ${reais(Math.round(b.min * (1 + b.pct / 100)))} em créditos${b.ate ? `. Válido até ${b.ate.split('-').reverse().join('/')}` : ''}.</span></div>`;
+const nomeOferta = (b) => (b.pct >= 100 ? 'primeira recarga em dobro' : `+${b.pct}% na primeira recarga`);
+const caixaBonus = (b) => {
+  const ex = b.exemplo || Math.max(b.min || 0, 500);
+  const bon = b.bonusExemplo ?? Math.round((ex * b.pct) / 100);
+  return `<div style="background:#EFFAF3;border:2px solid #1E7B4D;border-radius:14px;padding:14px 16px;margin:18px 0">
+  <strong style="color:#14532D;font-size:17px">🎁 ${b.pct >= 100 ? 'Sua primeira recarga em dobro' : `+${b.pct}% na sua primeira recarga`}</strong><br>
+  <span style="font-size:15px">Recarregue <strong>${reais(ex)}</strong> por Pix e receba <strong>${reais(ex + bon)}</strong> em créditos para consultas${b.prazoTexto ? ` (válido ${b.prazoTexto})` : ''}.</span></div>`;
+};
 
 // Monta { assunto, html } para uma etapa
 export function montarEmail({ etapa, nome, perfil, bonus, base, sair, podeResponder = false }) {
@@ -109,7 +114,7 @@ export function montarEmail({ etapa, nome, perfil, bonus, base, sair, podeRespon
   }
   if (etapa === 'd1') {
     return {
-      assunto: b ? `${primeiro}, seu bônus de +${b.pct}% está esperando` : `${primeiro}, sua primeira consulta leva 2 minutos`,
+      assunto: b ? `${primeiro}, sua ${nomeOferta(b)} está esperando` : `${primeiro}, sua primeira consulta leva 2 minutos`,
       html: moldura({ base, sair, preheader: `Veja como ${p.gancho} em poucos minutos.`, corpo: `
         <h1 style="font-size:22px;margin:0 0 12px">Oi, ${primeiro}! Falta só um passo.</h1>
         <p>Sua conta na Soft Consultas está pronta para ${esc(p.gancho)}. Funciona assim:</p>
@@ -133,10 +138,10 @@ export function montarEmail({ etapa, nome, perfil, bonus, base, sair, podeRespon
   }
   // d7: última chamada
   return {
-    assunto: b ? `Última chamada: +${b.pct}% na sua primeira recarga` : `${primeiro}, ainda podemos ajudar?`,
-    html: moldura({ base, sair, preheader: b ? 'Seu bônus de primeira recarga ainda está disponível.' : 'Se tiver qualquer dúvida, estamos aqui para ajudar.', corpo: `
+    assunto: b ? `Último dia: ${nomeOferta(b)}` : `${primeiro}, ainda podemos ajudar?`,
+    html: moldura({ base, sair, preheader: b ? `Recarregue ${reais(b.exemplo || b.min)} e receba ${reais((b.exemplo || b.min) + (b.bonusExemplo || 0))}. Acaba hoje.` : 'Se tiver qualquer dúvida, estamos aqui para ajudar.', corpo: `
       <h1 style="font-size:22px;margin:0 0 12px">${primeiro}, sua conta continua pronta</h1>
-      <p>Faz uma semana que você criou sua conta e ainda não fez a primeira consulta. Se ficou alguma dúvida sobre preço, segurança ou qual consulta escolher, ${podeResponder ? 'é só responder este e-mail' : 'fale com a gente pelo site'}.</p>
+      <p>Faz alguns dias que você criou sua conta e ainda não fez a primeira consulta. Se ficou alguma dúvida sobre preço, segurança ou qual consulta escolher, ${podeResponder ? 'é só responder este e-mail' : 'fale com a gente pelo site'}.</p>
       ${b ? caixaBonus(b) : ''}
       ${botao(`${base}/recarregar${utm('seq_d7')}`, b ? 'Usar meu bônus agora' : 'Fazer minha primeira consulta')}` }),
   };

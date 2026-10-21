@@ -226,7 +226,8 @@ export function bannerAnuncios(anuncios = [], contato = '#') {
   <p class="muted" style="text-align:right;font-size:.8rem;margin:6px 0 0"><a href="${esc(contato)}" target="_blank" rel="noopener">Anuncie aqui</a></p>`;
 }
 
-export const paginaInicial = ({ anuncios = [], contato = '#' } = {}) => `
+export const paginaInicial = ({ anuncios = [], contato = '#', oferta = null } = {}) => `
+${oferta?.ativo ? `<div class="faixa-gratis" role="note" style="background:#EFFAF3;border-color:#1E7B4D;color:#14532D">🎁 <strong>${oferta.pct >= 100 ? 'Primeira recarga em dobro' : `+${oferta.pct}% na primeira recarga`}:</strong>&nbsp;recarregue ${reais(Math.max(oferta.min, 500))} e receba ${reais(Math.max(oferta.min, 500) + (oferta.teto ? Math.min(oferta.teto, Math.round(Math.max(oferta.min, 500) * oferta.pct / 100)) : Math.round(Math.max(oferta.min, 500) * oferta.pct / 100)))} em consultas${oferta.dias ? ` (nos ${oferta.dias} dias depois do cadastro)` : ''}. <a href="/cadastro" style="margin-left:6px;font-weight:700">Criar conta grátis</a></div>` : ''}
 <section class="hero">
   <div>
     <span class="tag">Consultas para o seu negócio</span>
@@ -316,8 +317,26 @@ export const botoesPdf = (id) => `<span style="display:inline-flex;gap:6px;flex-
   <a class="btn" style="min-height:38px;padding:6px 14px" href="/consulta/${id}/pdf?baixar=1">${ICONE_BAIXAR} Baixar PDF</a>
   <a class="btn sec" style="min-height:38px;padding:6px 14px" href="/consulta/${id}/pdf" target="_blank" rel="noopener">Abrir</a></span>`;
 
-export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#' }) => `
+// Faixa da oferta de primeira recarga (painel e página de recarga). prazo: fim da oferta deste cliente (UTC do SQLite)
+export function ofertaPrimeiraHtml(o, comBotao = true) {
+  const dobro = o.pct >= 100;
+  const titulo = dobro ? `Primeira recarga em dobro: recarregue ${reais(o.exemplo)} e receba ${reais(o.exemplo + o.bonusExemplo)}` : `Primeira recarga com +${o.pct}%: recarregue ${reais(o.exemplo)} e receba ${reais(o.exemplo + o.bonusExemplo)}`;
+  let prazo = '';
+  if (o.prazo) {
+    const ms = Date.parse(o.prazo.replace(' ', 'T') + 'Z') - Date.now();
+    const d = Math.floor(ms / 86400000), h = Math.max(1, Math.ceil((ms % 86400000) / 3600000));
+    const dc = Math.ceil(ms / 86400000);
+    prazo = ms <= 0 ? '' : d >= 2 ? `Faltam ${dc} dias para acabar.` : d === 1 ? `Falta 1 dia e ${h}h para acabar.` : `Acaba em ${h} hora${h > 1 ? 's' : ''}!`;
+  } else if (o.ate) prazo = `Válida até ${o.ate.split('-').reverse().join('/')}.`;
+  return `<div class="cartao" style="border:2px solid #1E7B4D;background:#EFFAF3;margin:0 0 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+  <div style="flex:1 1 280px"><div style="font-family:Montserrat,sans-serif;font-weight:800;font-size:1.15rem;color:#14532D">🎁 ${titulo}</div>
+  <div style="margin-top:4px">Só na sua primeira recarga${o.teto ? ` (bônus de até ${reais(o.teto)})` : ''}, por Pix. O bônus entra junto com o saldo. ${prazo ? `<strong>${prazo}</strong>` : ''}</div></div>
+  ${comBotao ? `<a class="btn" href="/recarregar" style="background:#1E7B4D">Recarregar ${reais(o.exemplo)} e ganhar ${reais(o.bonusExemplo)}</a>` : ''}</div>`;
+}
+
+export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#', oferta = null }) => `
 <h1 style="font-size:1.8rem">Olá, ${esc(usuario.nome.split(' ')[0])}</h1>
+${oferta ? ofertaPrimeiraHtml(oferta) : ''}
 ${!usuario.admin && !usuario.interno && !transacoes.length ? faixaGratis() : ''}
 <p class="muted" style="margin-top:-4px">Bem-vindo ao seu painel.</p>
 <div class="grade" style="margin:22px 0">

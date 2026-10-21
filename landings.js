@@ -132,7 +132,7 @@ export function paginaLanding({ chave, cfg, produtos, bonus = {}, consultasFeita
       </form>
       <a href="/cadastro?origem=${encodeURIComponent(chave)}" data-evento="Lead" style="display:inline-block;margin:10px 0 4px;color:#fff;font-weight:700;text-decoration:underline">Ou crie sua conta grátis em 30 segundos →</a>
       <div class="lp-linha">
-        ${bonus.ativo ? `<span class="lp-oferta">+${bonus.pct}% na 1ª recarga${fim ? ` · até ${fim}` : ''}</span>` : ''}
+        ${bonus.ativo ? `<span class="lp-oferta">${bonus.pct >= 100 ? `1ª recarga em dobro${bonus.min ? `: ${reais(bonus.min)} vira ${reais(bonus.min + (bonus.teto ? Math.min(bonus.teto, Math.round(bonus.min * bonus.pct / 100)) : Math.round(bonus.min * bonus.pct / 100)))}` : ''}` : `+${bonus.pct}% na 1ª recarga`}${fim ? ` · até ${fim}` : ''}</span>` : ''}
         <span>Cadastro grátis · sem mensalidade${menor ? ` · a partir de <strong>${reais(menor)}</strong>` : ''}</span>
       </div>
     </div>
