@@ -268,6 +268,11 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_rx_asaas ON raiox_pedidos(asaas_id);
 `);
+// Meta (API de Conversões): cookies do pixel e navegador de quem comprou, para o servidor avisar a compra
+db.exec(`CREATE TABLE IF NOT EXISTS rastreio_meta (
+  chave TEXT PRIMARY KEY, fbp TEXT, fbc TEXT, ip TEXT, ua TEXT, url TEXT,
+  atualizado_em TEXT NOT NULL DEFAULT (datetime('now'))
+)`);
 // Raio-X: data em que o e-mail com o PDF saiu (os já entregues antes desta coluna contam como enviados)
 if (!colunas('raiox_pedidos').includes('email_enviado_em')) {
   db.exec('ALTER TABLE raiox_pedidos ADD COLUMN email_enviado_em TEXT');

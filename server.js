@@ -30,9 +30,9 @@ const ARQUIVOS = { '/icone.png': 'image/png', '/icone-branco.png': 'image/png', 
 function scriptRastreio() {
   return `(function(){
   var cfg = ${JSON.stringify(RASTREIO)};
-  window.scEvento = function(nome, valor){
+  window.scEvento = function(nome, valor, eid){
     try {
-      if (cfg.meta && window.fbq) fbq('track', nome, valor ? { value: valor, currency: 'BRL' } : {});
+      if (cfg.meta && window.fbq) { if (eid) fbq('track', nome, valor ? { value: valor, currency: 'BRL' } : {}, { eventID: eid }); else fbq('track', nome, valor ? { value: valor, currency: 'BRL' } : {}); }
       if (cfg.google && window.gtag) {
         var mapa = { CompleteRegistration: 'sign_up', Purchase: 'purchase', Lead: 'generate_lead' };
         gtag('event', mapa[nome] || nome, valor ? { value: valor, currency: 'BRL' } : {});
@@ -166,6 +166,43 @@ const RASTREIO = {
   convRecarga: (process.env.GOOGLE_ADS_CONV_RECARGA || '').replace(/[^\w/-]/g, ''),
 };
 RASTREIO.ativo = !!(RASTREIO.meta || RASTREIO.google);
+// API de Conversões da Meta: o servidor avisa cada compra paga (mesmo se o cliente fechou a página antes do Pix confirmar)
+const CAPI = { token: process.env.META_CAPI_TOKEN || '', teste: process.env.META_CAPI_TEST_CODE || '' };
+function guardarRastreio(req, chave) {
+  try {
+    const c = cookies(req);
+    const ref = String(req.headers.referer || '').slice(0, 300);
+    db.prepare(`INSERT INTO rastreio_meta (chave, fbp, fbc, ip, ua, url) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(chave) DO UPDATE SET fbp = COALESCE(excluded.fbp, fbp), fbc = COALESCE(excluded.fbc, fbc), ip = excluded.ip, ua = excluded.ua, url = COALESCE(excluded.url, url), atualizado_em = datetime('now')`)
+      .run(chave, c._fbp || null, c._fbc || null, ipDe(req), String(req.headers['user-agent'] || '').slice(0, 400), ref || null);
+  } catch (e) { console.error('rastreio:', e.message); }
+}
+const hashMeta = (v) => createHash('sha256').update(String(v).trim().toLowerCase()).digest('hex');
+function telefoneMeta(t) { let d = String(t || '').replace(/\D/g, ''); if (!d) return null; if (d.length <= 11) d = '55' + d; return d; }
+function capiCompra({ eid, valor, email, telefone, nome, usuarioId, chave, conteudo }) {
+  if (!CAPI.token || !RASTREIO.meta || !eid || !valor) return;
+  const r = (chave && db.prepare('SELECT * FROM rastreio_meta WHERE chave = ?').get(chave))
+    || (usuarioId && db.prepare('SELECT * FROM rastreio_meta WHERE chave = ?').get(`u-${usuarioId}`)) || {};
+  const partes = String(nome || '').trim().split(/\s+/);
+  const ud = {};
+  if (email) ud.em = [hashMeta(email)];
+  const tel = telefoneMeta(telefone); if (tel) ud.ph = [hashMeta(tel)];
+  if (partes[0]) ud.fn = [hashMeta(partes[0])];
+  if (partes.length > 1) ud.ln = [hashMeta(partes[partes.length - 1])];
+  if (usuarioId) ud.external_id = [hashMeta(`u${usuarioId}`)];
+  ud.country = [hashMeta('br')];
+  if (r.ip) ud.client_ip_address = r.ip;
+  if (r.ua) ud.client_user_agent = r.ua;
+  if (r.fbp) ud.fbp = r.fbp;
+  if (r.fbc) ud.fbc = r.fbc;
+  const corpo = { data: [{ event_name: 'Purchase', event_time: Math.floor(Date.now() / 1000), event_id: eid, action_source: 'website',
+    event_source_url: r.url || `${baseEmails()}/`, user_data: ud, custom_data: { currency: 'BRL', value: Number(valor) / 100, content_name: conteudo || undefined } }] };
+  if (CAPI.teste) corpo.test_event_code = CAPI.teste;
+  fetch(`https://graph.facebook.com/v21.0/${RASTREIO.meta}/events?access_token=${encodeURIComponent(CAPI.token)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo), signal: AbortSignal.timeout(15000) })
+    .then(async (x) => { if (!x.ok) console.error('meta capi:', x.status, (await x.text()).slice(0, 300)); })
+    .catch((e) => console.error('meta capi:', e.message));
+}
 const DOM_META = RASTREIO.meta ? ' https://connect.facebook.net https://www.facebook.com' : '';
 const DOM_GOOGLE = RASTREIO.google ? ' https://www.googletagmanager.com https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.google.com https://www.google.com.br https://googleads.g.doubleclick.net https://*.doubleclick.net https://www.googleadservices.com' : '';
 P.configurarRastreio(RASTREIO.ativo);
@@ -501,6 +538,8 @@ function creditarRecarga(recargaId) {
         .run(r.usuario_id, r.bonus_centavos, 'Bônus de recarga', `bonus_${r.id}`);
     }
     db.exec('COMMIT');
+    try { const u = db.prepare('SELECT nome, email, telefone FROM usuarios WHERE id = ?').get(r.usuario_id) || {};
+      capiCompra({ eid: `rec-${r.id}`, valor: r.valor_centavos, email: u.email, telefone: u.telefone, nome: u.nome, usuarioId: r.usuario_id, conteudo: 'Recarga' }); } catch (e) { console.error('capi recarga:', e.message); }
     return true;
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
@@ -708,11 +747,11 @@ rota('GET', '/api/recarga/:id/status', async ({ res, usuario, params }) => {
   if (!usuario) return json(res, { pago: false }, 401);
   const r = db.prepare('SELECT * FROM recargas WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!r) return json(res, { pago: false }, 404);
-  if (r.status === 'paga') return json(res, { pago: true, valor: r.valor_centavos / 100 });
+  if (r.status === 'paga') return json(res, { pago: true, valor: r.valor_centavos / 100, eid: `rec-${r.id}` });
   if (r.asaas_id && A.limitar(`st:${r.id}`, 30, 5)) {
     try {
       const c = await AS.buscarCobranca(r.asaas_id);
-      if (AS.STATUS_PAGO.includes(c.status)) { if (creditarRecarga(r.id)) processarRepasse().catch((e) => console.error('repasse:', e.message)); return json(res, { pago: true, valor: r.valor_centavos / 100 }); }
+      if (AS.STATUS_PAGO.includes(c.status)) { if (creditarRecarga(r.id)) processarRepasse().catch((e) => console.error('repasse:', e.message)); return json(res, { pago: true, valor: r.valor_centavos / 100, eid: `rec-${r.id}` }); }
     } catch (e) { console.warn('status recarga:', e.message); }
   }
   json(res, { pago: false });
@@ -1839,6 +1878,8 @@ function confirmarCompraDigital(id) {
   if (ok) {
     const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ?').get(id);
     registrar(null, 'Ebook: venda paga', `#${id} · ${P.reais(c.valor_centavos)} · ${c.forma}`);
+    { const u = db.prepare('SELECT nome, email, telefone FROM usuarios WHERE id = ?').get(c.usuario_id) || {};
+      capiCompra({ eid: `dig-${id}`, valor: c.valor_centavos, email: u.email, telefone: u.telefone, nome: u.nome, usuarioId: c.usuario_id, conteudo: 'Ebook' }); }
     entregarEbook(c).catch(() => {});
   }
   return ok;
@@ -1905,11 +1946,11 @@ rota('GET', '/api/ebook/:id/status', async ({ res, usuario, params }) => {
   if (!usuario) return json(res, { pago: false }, 401);
   const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!c) return json(res, { pago: false }, 404);
-  if (c.status === 'paga') return json(res, { pago: true, valor: c.valor_centavos / 100 });
+  if (c.status === 'paga') return json(res, { pago: true, valor: c.valor_centavos / 100, eid: `dig-${c.id}` });
   if (c.asaas_id && A.limitar(`stebk:${c.id}`, 30, 5)) {
     try {
       const cob = await AS.buscarCobranca(c.asaas_id);
-      if (AS.STATUS_PAGO.includes(cob.status) && Math.round(Number(cob.value) * 100) >= c.valor_centavos) { confirmarCompraDigital(c.id); return json(res, { pago: true, valor: c.valor_centavos / 100 }); }
+      if (AS.STATUS_PAGO.includes(cob.status) && Math.round(Number(cob.value) * 100) >= c.valor_centavos) { confirmarCompraDigital(c.id); return json(res, { pago: true, valor: c.valor_centavos / 100, eid: `dig-${c.id}` }); }
     } catch (e) { console.warn('status ebook:', e.message); }
   }
   json(res, { pago: false });
@@ -1986,6 +2027,7 @@ function confirmarRaioX(id) {
   if (ok) {
     const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(id);
     registrar(null, 'Raio-X: venda paga', `#${id} · ${p.email} · ${P.reais(p.valor_centavos)} · ${p.forma}`);
+    capiCompra({ eid: `rx-${id}`, valor: p.valor_centavos, email: p.email, telefone: p.whatsapp, nome: p.nome, chave: `rx-${id}`, conteudo: 'Raio-X' });
     entregarRaioX(id);
   }
   return ok;
@@ -2089,6 +2131,7 @@ rota('POST', '/raio-x', async ({ req, res, usuario }) => {
   let org = {}; try { org = JSON.parse(cookies(req).sc_origem || '{}') || {}; } catch {}
   const id = Number(db.prepare('INSERT INTO raiox_pedidos (token, nome, email, whatsapp, documento, valor_centavos, forma, aceite_ip, origem) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(token, nome, email, whats || null, doc, cfg.preco, forma, ipDe(req), String(org.utm_campaign || org.origem || '').slice(0, 80)).lastInsertRowid);
+  guardarRastreio(req, `rx-${id}`);
   try {
     const cli = await AS.criarCliente({ nome, documento: doc, email, telefone: whats || undefined });
     const cob = await AS.criarCobrancaDigital({ clienteId: cli.id, valorCentavos: cfg.preco, compraId: id, forma, prefixo: AS.PREFIXO_RAIOX, descricao: `Raio-X do ${doc.length === 14 ? 'CNPJ' : 'CPF'} - Soft Consultas #${id}` });
@@ -2113,11 +2156,11 @@ rota('GET', '/raio-x/r/:token', ({ res, usuario, params }) => {
 rota('GET', '/api/raio-x/:token/status', async ({ res, params }) => {
   const p = pedidoRX(params.token);
   if (!p) return json(res, { pago: false }, 404);
-  if (p.status === 'paga') return json(res, { pago: true, entregue: !!p.entregue_em, valor: p.valor_centavos / 100 });
+  if (p.status === 'paga') return json(res, { pago: true, entregue: !!p.entregue_em, valor: p.valor_centavos / 100, eid: `rx-${p.id}` });
   if (p.asaas_id && A.limitar(`strx:${p.id}`, 30, 5)) {
     try {
       const cob = await AS.buscarCobranca(p.asaas_id);
-      if (AS.STATUS_PAGO.includes(cob.status) && Math.round(Number(cob.value) * 100) >= p.valor_centavos) { confirmarRaioX(p.id); return json(res, { pago: true, entregue: false, valor: p.valor_centavos / 100 }); }
+      if (AS.STATUS_PAGO.includes(cob.status) && Math.round(Number(cob.value) * 100) >= p.valor_centavos) { confirmarRaioX(p.id); return json(res, { pago: true, entregue: false, valor: p.valor_centavos / 100, eid: `rx-${p.id}` }); }
     } catch (e) { console.warn('status raio-x:', e.message); }
   }
   json(res, { pago: false });
@@ -2391,6 +2434,7 @@ function confirmarAdesao(id) {
   db.prepare('UPDATE usuarios SET parceiro = 1 WHERE id = ?').run(a.usuario_id);
   const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(a.usuario_id);
   registrar(null, 'Parceiro: adesão paga (novo parceiro)', `${u?.email} · ${P.reais(a.valor_centavos)}`);
+  capiCompra({ eid: `ade-${a.id}`, valor: a.valor_centavos, email: u?.email, nome: u?.nome, usuarioId: a.usuario_id, conteudo: 'Adesão parceiro' });
   emailServico({ para: u?.email, assunto: 'Bem-vindo à área de parceiros · Soft Consultas', titulo: 'Agora você é parceiro!',
     html: `<p>Olá, ${P.esc(String(u?.nome || '').split(' ')[0])}! A sua adesão foi confirmada e a <strong>área de parceiro</strong> já está liberada. Lá você vê os seus preços de parceiro, cadastra clientes de Limpa Nome e Rating Bancário, envia o link de pagamento pelo WhatsApp e acompanha cada etapa.</p>`,
     botao: { href: `${baseEmails()}/parceiro`, texto: 'Abrir minha área de parceiro' }, rodape: RODAPE_PARC });
@@ -2637,11 +2681,11 @@ rota('POST', '/ln/:token/trocar', async ({ req, res, params }) => {
 rota('GET', '/api/ln/:token/status', async ({ res, params }) => {
   const p = pedidoToken(params.token);
   if (!p) return json(res, { pago: false }, 404);
-  if (p.status !== 'aguardando_pagamento') return json(res, { pago: true, valor: p.valor_centavos / 100 });
+  if (p.status !== 'aguardando_pagamento') return json(res, { pago: true, valor: p.valor_centavos / 100, eid: `ln-${p.id}` });
   if (p.asaas_id && A.limitar(`stln:${p.id}`, 30, 5)) {
     try {
       const c = await AS.buscarCobranca(p.asaas_id);
-      if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) { confirmarPedidoLN(p.id); return json(res, { pago: true, valor: p.valor_centavos / 100 }); }
+      if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) { confirmarPedidoLN(p.id); return json(res, { pago: true, valor: p.valor_centavos / 100, eid: `ln-${p.id}` }); }
     } catch (e) { console.warn('status LN token:', e.message); }
   }
   json(res, { pago: false });
@@ -2829,7 +2873,8 @@ function confirmarPagamentoMon(m, pagamentoId) {
   const primeiro = m.status === 'aguardando';
   db.prepare("UPDATE monitoramentos SET status = 'ativo', ativo_ate = ?, pagamentos = pagamentos + 1, proxima_checagem = COALESCE(CASE WHEN ? THEN datetime('now') END, proxima_checagem, datetime('now')) WHERE id = ?").run(ate, primeiro ? 1 : 0, m.id);
   registrar(null, primeiro ? 'Monitoramento: assinatura ativada' : 'Monitoramento: renovação paga', `#${m.id} · ${docFmt(m.documento)} · ${m.plano} · ${P.reais(m.valor_centavos)} · ativo até ${ate.slice(0, 10)}`);
-  const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(m.usuario_id);
+  const u = db.prepare('SELECT nome, email, telefone FROM usuarios WHERE id = ?').get(m.usuario_id);
+  if (primeiro) capiCompra({ eid: `mon-${m.id}`, valor: m.valor_centavos, email: u?.email, telefone: u?.telefone, nome: u?.nome, usuarioId: m.usuario_id, conteudo: 'Monitoramento' });
   if (primeiro) emailServico({ para: u?.email, assunto: 'Seu monitoramento está ativo 🛡️', titulo: 'Monitoramento ativado!',
     html: `<p>Olá, ${P.esc(String(u?.nome || '').split(' ')[0])}! A partir de agora vigiamos o seu ${docFmt(m.documento)}. A primeira checagem acontece agora e você recebe o resultado por e-mail.</p><p>Se aparecer negativação nova, protesto ou queda no score, avisamos na hora.</p>`,
     botao: { href: '/monitoramento', texto: 'Ver meu monitoramento' } });
@@ -3012,11 +3057,11 @@ rota('GET', '/api/monitoramento/:id/status', async ({ res, usuario, params }) =>
   if (!usuario) return json(res, { pago: false }, 401);
   const m = db.prepare('SELECT * FROM monitoramentos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!m) return json(res, { pago: false }, 404);
-  if (m.status === 'ativo') return json(res, { pago: true, valor: m.valor_centavos / 100 });
+  if (m.status === 'ativo') return json(res, { pago: true, valor: m.valor_centavos / 100, eid: `mon-${m.id}` });
   if (m.asaas_sub_id && A.limitar(`stmon:${m.id}`, 30, 5)) {
     try {
       const pag = (await AS.pagamentosAssinatura(m.asaas_sub_id))?.data?.find((p) => AS.STATUS_PAGO.includes(p.status));
-      if (pag && Math.round(Number(pag.value) * 100) >= m.valor_centavos) { confirmarPagamentoMon(m, pag.id); return json(res, { pago: true, valor: m.valor_centavos / 100 }); }
+      if (pag && Math.round(Number(pag.value) * 100) >= m.valor_centavos) { confirmarPagamentoMon(m, pag.id); return json(res, { pago: true, valor: m.valor_centavos / 100, eid: `mon-${m.id}` }); }
     } catch (e) { console.warn('status monitoramento:', e.message); }
   }
   json(res, { pago: false });
@@ -3244,6 +3289,7 @@ function confirmarPedidoLN(id) {
     const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
     registrar(null, 'Limpa Nome: pedido pago', `#${id} · ${p.nome} · ${P.reais(p.valor_centavos)}${p.forma_pagamento === 'cartao' ? ` (cartão ${p.parcelas}x)` : ''} · lote ${lote}`);
     avisarStatusLN(p);
+    if (!p.parceiro_id && !p.combo_de) capiCompra({ eid: `ln-${p.id}`, valor: p.valor_centavos, email: p.email, telefone: p.telefone || p.whatsapp, nome: p.nome, usuarioId: p.usuario_id, conteudo: p.servico || 'limpa-nome' });
     // Parceiro: comissão quando o cliente paga (uma vez por pedido)
     if (p.parceiro_id && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos > 0) {
       const ins = db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'comissao', ?, ?, ?)")
@@ -3599,11 +3645,11 @@ rota('GET', '/api/limpa-nome/:id/status', async ({ res, usuario, params }) => {
   if (!usuario) return json(res, { pago: false }, 401);
   const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!p) return json(res, { pago: false }, 404);
-  if (p.status !== 'aguardando_pagamento') return json(res, { pago: true, valor: p.valor_centavos / 100 });
+  if (p.status !== 'aguardando_pagamento') return json(res, { pago: true, valor: p.valor_centavos / 100, eid: `ln-${p.id}` });
   if (p.asaas_id && A.limitar(`stln:${p.id}`, 30, 5)) {
     try {
       const c = await AS.buscarCobranca(p.asaas_id);
-      if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) { confirmarPedidoLN(p.id); return json(res, { pago: true, valor: p.valor_centavos / 100 }); }
+      if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) { confirmarPedidoLN(p.id); return json(res, { pago: true, valor: p.valor_centavos / 100, eid: `ln-${p.id}` }); }
     } catch (e) { console.warn('status limpa nome:', e.message); }
   }
   json(res, { pago: false });
@@ -3919,6 +3965,7 @@ async function atenderRequisicao(req, res) {
       }
       usuario.interno = usuario.admin || usuario.interno ? 1 : 0;
     }
+    if (usuario && req.method === 'POST' && !url.pathname.startsWith('/api/')) guardarRastreio(req, `u-${usuario.id}`);
     await fn({ req, res, url, token, usuario, params });
   } catch (e) {
     console.error('erro:', e);

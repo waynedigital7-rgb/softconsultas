@@ -23,6 +23,8 @@ Plataforma de consultas com cadastro, carteira de créditos (recarga por Pix), c
 | `URL_BASE` | `https://softconsultas.com` (links de e-mail e de indicação) |
 | `TURNSTILE_SITE_KEY` e `TURNSTILE_SECRET_KEY` | "Não sou um robô" (Cloudflare Turnstile) no cadastro, login e senha |
 | `META_PIXEL_ID` | Pixel da Meta (Instagram/Facebook) nas páginas |
+| `META_CAPI_TOKEN` | Token da API de Conversões da Meta (Gerenciador de Eventos → pixel → Configurações → Gerar token). O servidor avisa cada compra paga, mesmo se o cliente fechou a página |
+| `META_CAPI_TEST_CODE` | Opcional: código de teste do Gerenciador de Eventos, para ver os eventos na aba "Testar eventos". Apague depois de testar |
 | `GOOGLE_TAG_ID` | Tag do Google (ex.: `G-XXXX` do Analytics ou `AW-XXXX` do Ads) |
 | `GOOGLE_ADS_CONV_CADASTRO` / `GOOGLE_ADS_CONV_RECARGA` | Conversões do Google Ads no formato `AW-XXXX/rótulo` |
 | `CONTATO_ANUNCIE` | Link do botão "Anuncie aqui" (padrão: WhatsApp) |

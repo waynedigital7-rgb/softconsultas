@@ -112,6 +112,36 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ===== Aplicativo (Android/iOS) =====
+  // Aba ativa na barra inferior
+  document.querySelectorAll('.abas-app a').forEach((l) => {
+    const h = l.getAttribute('data-aba');
+    if (location.pathname === h || (h !== '/app' && location.pathname.startsWith(h))) l.classList.add('on');
+  });
+  const cap = window.Capacitor;
+  if (cap && cap.isNativePlatform && cap.isNativePlatform()) {
+    const plat = cap.getPlatform ? cap.getPlatform() : '';
+    const logado = !!document.querySelector('.abas-app');
+    const salvarToken = (token) => {
+      if (!token || !logado) return;
+      try { if (localStorage.getItem('sc_push_token') === token) return; } catch {}
+      fetch('/api/app/dispositivo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, plataforma: plat }) })
+        .then((r) => { if (r.ok) { try { localStorage.setItem('sc_push_token', token); } catch {} } }).catch(() => {});
+    };
+    const abrirLink = (dados) => { const l = dados && dados.link; if (l && /^\/[\w\/?=&%.-]*$/.test(l)) location.href = l; };
+    // Firebase Messaging (token FCM no Android e no iPhone)
+    const plugin = (n) => (cap.Plugins && cap.Plugins[n]) || (cap.registerPlugin ? cap.registerPlugin(n) : null);
+    const fm = plugin('FirebaseMessaging');
+    if (fm && logado) {
+      fm.requestPermissions().then((p) => { if (p.receive === 'granted') return fm.getToken().then((t) => salvarToken(t.token)); }).catch(() => {});
+      fm.addListener('tokenReceived', (e) => salvarToken(e.token));
+      fm.addListener('notificationActionPerformed', (e) => abrirLink(e.notification && e.notification.data));
+    }
+    // Botão "voltar" do Android
+    const appPl = plugin('App');
+    if (appPl) appPl.addListener('backButton', ({ canGoBack }) => { if (canGoBack && location.pathname !== '/app') history.back(); else appPl.exitApp(); });
+  }
+
   // Copiar código Pix
   const copiar = document.getElementById('copiar');
   if (copiar) copiar.addEventListener('click', async () => {
@@ -136,7 +166,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (j.pago) {
           document.getElementById('aguardando').hidden = true;
           document.getElementById('pago').hidden = false;
-          if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor);
+          if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor, j.eid);
           return;
         }
       } catch {}
@@ -151,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const aguardandoPix = !!document.querySelector('.pulsando');
     const ver = async () => {
       try { const j = await (await fetch(`/api/raio-x/${rx.getAttribute('data-raiox')}/status`, { headers: { Accept: 'application/json' } })).json();
-        if (j.pago && aguardandoPix) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.reload(); }
+        if (j.pago && aguardandoPix) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor, j.eid); return location.reload(); }
         if (j.entregue) return location.reload(); } catch {}
       setTimeout(ver, 5000);
     };
@@ -163,7 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (ebk) {
     const ver = async () => {
       try { const j = await (await fetch(`/api/ebook/${ebk.getAttribute('data-ebook')}/status`, { headers: { Accept: 'application/json' } })).json();
-        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.assign(ebk.getAttribute('data-destino') || '/ebook/baixar'); } } catch {}
+        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor, j.eid); return location.assign(ebk.getAttribute('data-destino') || '/ebook/baixar'); } } catch {}
       setTimeout(ver, 5000);
     };
     setTimeout(ver, 4000);
@@ -174,7 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (mon) {
     const ver = async () => {
       try { const j = await (await fetch(`/api/monitoramento/${mon.getAttribute('data-mon')}/status`, { headers: { Accept: 'application/json' } })).json();
-        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.assign('/monitoramento?ok=' + encodeURIComponent('Pagamento confirmado! Seu monitoramento está ativo e a primeira checagem chega no seu e-mail.')); } } catch {}
+        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor, j.eid); return location.assign('/monitoramento?ok=' + encodeURIComponent('Pagamento confirmado! Seu monitoramento está ativo e a primeira checagem chega no seu e-mail.')); } } catch {}
       setTimeout(ver, 5000);
     };
     setTimeout(ver, 4000);
@@ -187,7 +217,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const ver = async () => {
       try {
         const j = await (await fetch(ln.getAttribute('data-status-url') || `/api/limpa-nome/${id}/status`, { headers: { Accept: 'application/json' } })).json();
-        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor); return location.reload(); }
+        if (j.pago) { if (window.scEvento && j.valor) window.scEvento('Purchase', j.valor, j.eid); return location.reload(); }
       } catch {}
       setTimeout(ver, 5000);
     };
