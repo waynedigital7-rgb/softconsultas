@@ -2411,8 +2411,8 @@ const areaParceiro = async ({ req, res, usuario, url, parc }) => {
   const k = { total: pedidos.length, aguardando: n((p) => p.status === 'aguardando_pagamento'), pagos: n((p) => p.pago_em && p.status !== 'reembolsado'),
     andamento: n((p) => ['pago', 'em_analise', 'em_lote', 'em_andamento', 'decisao'].includes(p.status)), concluidos: n((p) => p.status === 'concluido'),
     comissoes: db.prepare("SELECT COALESCE(SUM(valor_centavos), 0) s FROM comissoes WHERE usuario_id = ? AND tipo = 'comissao' AND referencia LIKE 'ln_%'").get(usuario.id).s };
-  const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.', pref: 'Preferência salva.' };
-  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.blocoMarcaAtalho({ x: parc }) + SV.paginaParceiro({ usuario, mostrarNome: !!parc.mostrar_nome, vendedor: { nome: parc.vendedor_nome || '', cnpj: parc.vendedor_cnpj || '', mostrarCnpj: !!parc.mostrar_cnpj, preview: nomeParceiroVisivel(usuario.id) }, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
+  const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.', pref: 'Preferência salva.', pix: 'Chave Pix salva: a comissão cai sozinha quando o cliente pagar.' };
+  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.blocoMarcaAtalho({ x: parc }) + SV.paginaParceiro({ usuario, mostrarNome: !!parc.mostrar_nome, vendedor: { nome: parc.vendedor_nome || '', cnpj: parc.vendedor_cnpj || '', mostrarCnpj: !!parc.mostrar_cnpj, preview: nomeParceiroVisivel(usuario.id) }, repasse: parc.repasse_auto ? parc.repasse_pix : null, pixAtual: parc.repasse_pix || '', r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
 };
 // Quem ainda não é parceiro vê a página de adesão (taxa única); o preço de parceiro/atacado só aparece depois
@@ -2558,7 +2558,7 @@ function marcaDe(x) {
 }
 const marcaPedido = (p) => (p?.parceiro_id ? marcaDe(p.parceiro_id) : null);
 const chaveSub = (x) => { try { return x?.sub_chave ? decifrar(x.sub_chave) : null; } catch { return null; } };
-const subAtiva = (x) => !!(x && x.sub_status === 'aprovada' && x.sub_wallet && chaveSub(x));
+const subAtiva = (x) => !!(x && subcontaLiberada() && x.sub_status === 'aprovada' && x.sub_wallet && chaveSub(x));
 const dadosSub = (x) => { try { return JSON.parse(x?.sub_dados || '{}') || {}; } catch { return {}; } };
 // Chave do Asaas para mexer na cobrança do pedido (subconta do parceiro ou a conta principal)
 function chaveDoPedido(p) {
@@ -2617,8 +2617,8 @@ const precosMarca = (x) => { try { return JSON.parse(x?.marca_precos || '{}') ||
 rota('GET', '/parceiro/marca', exigeParceiro(async ({ req, res, usuario, parc, url }) => {
   if (parc.sub_status === 'pendente' && A.limitar(`subst:${usuario.id}`, 6, 10)) parc = await atualizarSubconta(parc);
   const docs = await documentosSub(parc);
-  const msgs = { marca: 'Marca salva.', sub: 'Conta de recebimento criada! Agora siga o e-mail do Asaas para enviar os documentos.', st: 'Situação atualizada.' };
-  pagina(res, 'Minha marca', SV.paginaMarcaParceiro({ x: parc, regras: regrasParceiro(usuario.id, parc), base: urlBase(req), docs, ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
+  const msgs = { marca: 'Marca salva.', sub: 'Conta de recebimento criada! Agora siga o e-mail do Asaas para enviar os documentos.', st: 'Situação atualizada.', pix: 'Chave Pix salva: a comissão cai sozinha quando o cliente pagar.' };
+  pagina(res, 'Minha marca', SV.paginaMarcaParceiro({ x: parc, regras: regrasParceiro(usuario.id, parc), base: urlBase(req), docs, subconta: subcontaLiberada() || !!parc.sub_id, ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
 }));
 rota('POST', '/parceiro/marca', exigeParceiro(async ({ req, res, usuario, parc }) => {
   const volta = (m) => redirecionar(res, `/parceiro/marca?erro=${encodeURIComponent(m)}`);
@@ -2671,9 +2671,33 @@ rota('GET', '/marca-logo/:uid', async ({ res, params }) => {
   } catch { res.writeHead(404); res.end(); }
 });
 // Cria a subconta Asaas no nome do parceiro (a apiKey só vem agora: guardamos criptografada)
+// Recebimento na subconta (opção 2) fica desligado até liberarmos: config wl_subconta = '1' liga
+const subcontaLiberada = () => lerConfig('wl_subconta') === '1';
+// Chave Pix do parceiro para o repasse automático da comissão (como o do Mateus)
+rota('POST', '/parceiro/pix', exigeParceiro(async ({ req, res, usuario, parc }) => {
+  const f = await corpoForm(req);
+  const volta = f.volta === 'marca' ? '/parceiro/marca' : '/parceiro';
+  const chave = String(f.repasse_pix || '').trim().slice(0, 140);
+  if (f.acao === 'desligar') {
+    db.prepare("UPDATE parceiros SET repasse_auto = 0, atualizado_em = datetime('now') WHERE usuario_id = ?").run(usuario.id);
+    registrar(usuario, 'Parceiro: desligou o repasse automático', usuario.email);
+    return redirecionar(res, `${volta}?ok=pix`);
+  }
+  if (!chave || !AS.tipoChavePix(chave)) return redirecionar(res, `${volta}?erro=${encodeURIComponent('Chave Pix inválida. Use CPF, CNPJ, e-mail, celular com DDD ou a chave aleatória.')}`);
+  if (!A.limitar(`pixp:${usuario.id}`, 5, 60)) return redirecionar(res, `${volta}?erro=${encodeURIComponent('Muitas alterações seguidas. Aguarde alguns minutos.')}`);
+  const antes = parc.repasse_pix;
+  db.prepare("UPDATE parceiros SET repasse_auto = 1, repasse_pix = ?, atualizado_em = datetime('now') WHERE usuario_id = ?").run(chave, usuario.id);
+  registrar(usuario, 'Parceiro: chave Pix do repasse automático', `${usuario.email} · ${antes && antes !== chave ? `de ${antes} para ` : ''}${chave}`);
+  // Aviso de segurança: qualquer troca da chave chega no e-mail do parceiro
+  emailServico({ para: usuario.email, assunto: 'Chave Pix do repasse alterada', titulo: 'Sua chave Pix de repasse foi salva',
+    html: `<p>A partir de agora, a sua comissão cai automaticamente na chave Pix <strong>${P.esc(chave)}</strong> quando o cliente paga (no cartão, quando o dinheiro do cartão cair).</p><p>Se não foi você, entre na sua área de parceiro e troque a senha agora.</p>`,
+    botao: { href: `${baseEmails()}/parceiro`, texto: 'Ver minha área de parceiro' }, rodape: RODAPE_PARC });
+  redirecionar(res, `${volta}?ok=pix`);
+}));
 rota('POST', '/parceiro/marca/recebimento', exigeParceiro(async ({ req, res, usuario, parc }) => {
   const f = await corpoForm(req);
   const volta = (m) => redirecionar(res, `/parceiro/marca?erro=${encodeURIComponent(m)}`);
+  if (!subcontaLiberada() && !parc.sub_id) return volta('O recebimento no nome da empresa ainda não está disponível. Cadastre a sua chave Pix para receber a comissão automaticamente.');
   if (parc.sub_id) return volta('Você já tem uma conta de recebimento.');
   if (!A.limitar(`subc:${usuario.id}`, 3, 60)) return volta('Muitas tentativas. Aguarde alguns minutos.');
   const pf = f.tipo === 'pf';

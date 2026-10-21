@@ -68,6 +68,7 @@ Os textos em `/termos` e `/privacidade` são uma minuta. Peça para um advogado 
 ## White label do parceiro
 - O parceiro configura em **Parceiro → Sua marca**: nome, logo, cor, WhatsApp, e-mail e a página de vendas `/p/nome-da-empresa`.
 - Com a marca ativa, a página de pagamento, o acompanhamento, a ficha do Rating e os e-mails do cliente saem só com a marca dele (sem o pixel da Soft).
-- **Receber no nome da empresa:** o sistema cria uma subconta Asaas no CPF/CNPJ do parceiro. Depois que o Asaas aprova, as cobranças saem pela subconta e o *split* manda a nossa parte fixa (atacado) para a nossa conta. A comissão não entra no saldo nem no repasse por Pix (ele já recebeu direto).
+- **Receber no nome da empresa (DESLIGADO por enquanto; liga com a config `wl_subconta` = 1):** o sistema cria uma subconta Asaas no CPF/CNPJ do parceiro. Depois que o Asaas aprova, as cobranças saem pela subconta e o *split* manda a nossa parte fixa (atacado) para a nossa conta. A comissão não entra no saldo nem no repasse por Pix (ele já recebeu direto).
 - Requisitos no Asaas: conta principal PJ com criação de subcontas e split liberados pela API. No início vale o "Período de Avaliação Regulatório" do Asaas (até 10 subcontas, R$ 2.000 em cobranças por subconta, 60 dias) até a homologação.
 - Admin → Parceiros → (parceiro): situação da subconta, vendas com split, botões para conferir, pausar/retomar o recebimento na subconta e desligar a marca.
+- Enquanto a subconta está desligada, o parceiro cadastra a própria chave Pix (área do parceiro ou "Sua marca") e a comissão sai no repasse automático, como o do Mateus. Toda troca de chave fica registrada e avisa o parceiro por e-mail.

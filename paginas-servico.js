@@ -655,7 +655,20 @@ const ehReais = (t) => t === 'fixo' || t === 'nossa_parte';
 const optNossa = (sel) => `<option value="nossa_parte" ${sel === 'nossa_parte' ? 'selected' : ''}>Nossa parte fixa (R$): o resto é do parceiro</option>`;
 const txtTipo = (t, v) => (t === 'nossa_parte' ? `nossa parte ${reais(v)}` : t === 'fixo' ? reais(v) : `${v}%`);
 
-export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro, repasse = null, mostrarNome = false, vendedor = {} }) {
+// Chave Pix para o repasse automático da comissão (área do parceiro e tela da marca)
+export function formPixRepasse({ repasse = null, pixAtual = '', volta = '' }) {
+  return `<form class="cartao" method="post" action="/parceiro/pix" style="margin-bottom:18px">
+  <h2 style="font-size:1.1rem;margin:0 0 4px">Receber a comissão no Pix automaticamente</h2>
+  <p class="muted" style="margin:0 0 12px;font-size:.92rem">${repasse ? `Ligado: quando o cliente paga, a sua comissão cai sozinha na chave <strong>${esc(repasse)}</strong>. No Pix sai na hora; no cartão, quando o dinheiro do cartão cair.` : 'Cadastre a sua chave Pix (pode ser o CNPJ da sua empresa) e a comissão cai sozinha a cada cliente que pagar, sem precisar pedir saque.'}</p>
+  ${volta ? `<input type="hidden" name="volta" value="${esc(volta)}">` : ''}
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+    <div class="campo" style="flex:1 1 280px;margin:0"><label for="px-chave">Chave Pix</label><input id="px-chave" type="text" name="repasse_pix" maxlength="140" value="${esc(pixAtual)}" placeholder="CNPJ, CPF, e-mail, celular ou chave aleatória"></div>
+    <button class="btn" type="submit" style="min-height:46px">${repasse ? 'Trocar chave' : 'Ligar repasse automático'}</button>
+    ${repasse ? '<button class="btn sec" type="submit" name="acao" value="desligar" style="min-height:46px" formnovalidate>Desligar</button>' : ''}
+  </div></form>`;
+}
+
+export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro, repasse = null, mostrarNome = false, vendedor = {}, pixAtual = '' }) {
   const disp = regras.filter((x) => x.disponivel);
   const linkCliente = (p) => `${base}/ln/${p.token}`;
   const wpp = (p) => {
@@ -682,6 +695,7 @@ ${!disp.length ? '<div class="aviso">Os serviços estão pausados para novos ped
   </div>
   ${disp.length ? '<a class="btn" href="/parceiro/novo" style="flex:none">+ Cadastrar cliente</a>' : ''}
 </div>
+${formPixRepasse({ repasse, pixAtual })}
 <form class="cartao" method="post" action="/parceiro/preferencias" style="margin-bottom:18px">
   <h2 style="font-size:1.1rem;margin:0 0 4px">Como você aparece para o cliente</h2>
   <p class="muted" style="margin:0 0 12px;font-size:.92rem">Vale para a página de pagamento, o acompanhamento do pedido e os e-mails do cliente.</p>
@@ -1121,7 +1135,7 @@ export function blocoMarcaAtalho({ x }) {
   <a class="btn${ativa ? ' sec' : ''}" href="/parceiro/marca">${ativa ? 'Configurar minha marca' : 'Ativar minha marca'}</a></div>`;
 }
 
-export function paginaMarcaParceiro({ x, regras = [], base, docs = [], ok = '', erro = '' }) {
+export function paginaMarcaParceiro({ x, regras = [], base, docs = [], ok = '', erro = '', subconta = false }) {
   const v = (k) => esc(x[k] ?? '');
   let precos = {}; try { precos = JSON.parse(x.marca_precos || '{}') || {}; } catch {}
   const rs = (c) => (c ? (c / 100).toFixed(2).replace('.', ',') : '');
@@ -1188,10 +1202,10 @@ ${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso
   <button class="btn" type="submit">Salvar minha marca</button>
   ${link && x.marca_ativa ? `<div class="campo" style="margin:16px 0 0"><label for="mc-link">Sua página de vendas (divulgue este link)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="mc-link" readonly value="${esc(link)}" style="flex:1 1 260px"><button class="btn sec" type="button" data-copiar-texto="${esc(link)}">Copiar</button><a class="btn sec" href="${esc(link)}" target="_blank" rel="noopener">Abrir</a></div></div>` : ''}
 </form>
-<div class="cartao" style="max-width:760px">
+${subconta ? `<div class="cartao" style="max-width:760px">
   <h2 style="font-size:1.2rem;margin-top:0">2. Receber no nome da sua empresa</h2>
   ${recebimento}
-</div>`;
+</div>` : `<div style="max-width:760px"><h2 style="font-size:1.2rem;margin:0 0 10px">2. Receber a sua parte</h2>${formPixRepasse({ repasse: x.repasse_auto ? x.repasse_pix : null, pixAtual: x.repasse_pix || '', volta: 'marca' })}</div>`}`;
 }
 
 // Página de vendas pública do parceiro (white label): o cliente escolhe o serviço, preenche os dados e vai para o pagamento
