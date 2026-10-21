@@ -72,3 +72,8 @@ Os textos em `/termos` e `/privacidade` são uma minuta. Peça para um advogado 
 - Requisitos no Asaas: conta principal PJ com criação de subcontas e split liberados pela API. No início vale o "Período de Avaliação Regulatório" do Asaas (até 10 subcontas, R$ 2.000 em cobranças por subconta, 60 dias) até a homologação.
 - Admin → Parceiros → (parceiro): situação da subconta, vendas com split, botões para conferir, pausar/retomar o recebimento na subconta e desligar a marca.
 - Enquanto a subconta está desligada, o parceiro cadastra a própria chave Pix (área do parceiro ou "Sua marca") e a comissão sai no repasse automático, como o do Mateus. Toda troca de chave fica registrada e avisa o parceiro por e-mail.
+
+## Aviso de cada venda
+- A cada venda paga (recarga, Limpa Nome, Rating, combo, Raio-X, ebook, monitoramento, adesão e mensalidade de parceiro) o sistema avisa: e-mail para o primeiro endereço do `ADMIN_EMAIL`, push no app (contas admin) e Telegram (opcional).
+- Telegram: crie um bot no @BotFather, mande uma mensagem para ele e coloque `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no Render.
+- Liga/desliga em Admin → Configurações → "Aviso de cada venda".

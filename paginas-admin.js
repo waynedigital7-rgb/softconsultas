@@ -79,7 +79,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
 </form>`;
 }
 
-export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, ok, erro }) {
+export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, notif = { vendas: true, email: true, telegram: false }, ok, erro }) {
   return `<h1 style="font-size:1.7rem">Configurações</h1>${menu('/admin/config')}${aviso(ok, erro)}
 <form class="cartao" method="post" action="/admin/config" style="max-width:640px">
   <div class="campo"><label for="markup">Margem sobre o custo APIFull (%)</label><input id="markup" name="markup" type="text" inputmode="numeric" value="${markup}">
@@ -89,6 +89,10 @@ export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10
   <div class="campo"><label for="faixas">Bônus de recarga</label>
     <input id="faixas" name="faixas" type="text" value="${esc(faixas.map((f) => `${f.a_partir_de / 100}=${f.percentual}`).join('; '))}">
     <small class="muted">Formato: valor=percentual, separados por ponto e vírgula. Ex.: <code>100=5; 300=10</code> (a partir de R$ 100 ganha 5%, a partir de R$ 300 ganha 10%). Deixe vazio para não dar bônus.</small></div>
+  <fieldset style="border:1px solid var(--borda);border-radius:14px;padding:14px 16px;margin:0 0 16px"><legend style="font-weight:700;padding:0 6px">Aviso de cada venda</legend>
+    <label style="display:flex;gap:10px;align-items:center;margin:4px 0"><input type="checkbox" name="notif_vendas" value="1" ${notif.vendas ? 'checked' : ''} style="width:20px;height:20px"> Avisar a cada venda (recarga, Limpa Nome, Rating, Raio-X, ebook, monitoramento, adesão e mensalidade de parceiro)</label>
+    <label style="display:flex;gap:10px;align-items:center;margin:4px 0 8px 30px"><input type="checkbox" name="notif_vendas_email" value="1" ${notif.email ? 'checked' : ''} style="width:20px;height:20px"> Por e-mail (para o primeiro e-mail do ADMIN_EMAIL)</label>
+    <small class="muted">Também chega como notificação no celular: pelo app (contas admin, quando o app estiver instalado) e pelo Telegram${notif.telegram ? ' (ligado)' : ' (para ligar, coloque TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no Render)'}.</small></fieldset>
   <fieldset style="border:1px solid var(--borda);border-radius:14px;padding:14px 16px;margin:0 0 16px"><legend style="font-weight:700;padding:0 6px">Oferta de primeira recarga</legend>
     <div style="display:flex;gap:12px;flex-wrap:wrap">
       <div class="campo" style="flex:1 1 140px;margin:0"><label for="primeira_pct">Bônus (%)</label><input id="primeira_pct" name="primeira_pct" type="text" inputmode="numeric" value="${primeira.pct}"></div>

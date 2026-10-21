@@ -168,6 +168,27 @@ const RASTREIO = {
 RASTREIO.ativo = !!(RASTREIO.meta || RASTREIO.google);
 // API de Conversões da Meta: o servidor avisa cada compra paga (mesmo se o cliente fechou a página antes do Pix confirmar)
 const CAPI = { token: process.env.META_CAPI_TOKEN || '', teste: process.env.META_CAPI_TEST_CODE || '' };
+// ===== Aviso de venda para o admin: e-mail, push no app (contas admin) e Telegram (opcional) =====
+// Liga/desliga em Admin → Configurações (config notif_vendas, padrão ligado). Telegram: TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no Render.
+const notifCfg = () => ({ vendas: lerConfig('notif_vendas') !== '0', email: lerConfig('notif_vendas_email') !== '0', telegram: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) });
+function notificarVenda({ produto, valor, cliente = '', detalhe = '', link = '/admin' }) {
+  try {
+    if (lerConfig('notif_vendas') === '0') return;
+    const titulo = `💰 Venda: ${produto} · ${P.reais(valor)}`;
+    const texto = [cliente, detalhe].filter(Boolean).join(' · ');
+    const hoje = db.prepare("SELECT COUNT(*) n FROM registro_admin WHERE acao = 'Venda notificada' AND date(criado_em, '-3 hours') = date('now', '-3 hours')").get().n + 1;
+    db.prepare("INSERT INTO registro_admin (admin_email, acao, detalhe) VALUES (?, 'Venda notificada', ?)").run('sistema', `${produto} · ${P.reais(valor)}${texto ? ` · ${texto}` : ''}`);
+    const admins = String(process.env.ADMIN_EMAIL || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (admins.length && lerConfig('notif_vendas_email') !== '0') enviarEmail({ para: admins[0], assunto: `${titulo} (${hoje}ª de hoje)`,
+      html: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#0F0C14"><p style="font-size:20px;margin:0 0 8px"><strong>${P.esc(produto)}</strong> · ${P.reais(valor)}</p>${texto ? `<p style="margin:0 0 8px">${P.esc(texto)}</p>` : ''}<p style="color:#7A7285;margin:0 0 12px">${hoje}ª venda de hoje</p><a href="${baseEmails()}${link}" style="color:#9F31D3;font-weight:bold">Abrir no admin</a></div>` })
+      .catch((e) => console.error('aviso de venda (e-mail):', e.message));
+    for (const a of db.prepare('SELECT id FROM usuarios WHERE admin = 1 AND ativo = 1').all()) enviarPush(a.id, { titulo, corpo: texto || `${hoje}ª venda de hoje`, link: '/app' }).catch(() => {});
+    const tg = process.env.TELEGRAM_BOT_TOKEN, chat = process.env.TELEGRAM_CHAT_ID;
+    if (tg && chat) fetch(`https://api.telegram.org/bot${tg}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ chat_id: chat, text: `${titulo}\n${texto}${texto ? '\n' : ''}${hoje}ª venda de hoje` }) })
+      .then(async (r) => { if (!r.ok) console.error('aviso de venda (telegram):', r.status, (await r.text()).slice(0, 200)); }).catch((e) => console.error('aviso de venda (telegram):', e.message));
+  } catch (e) { console.error('aviso de venda:', e.message); }
+}
 function guardarRastreio(req, chave) {
   try {
     const c = cookies(req);
@@ -514,6 +535,7 @@ function prazoPrimeira(uid, bp = bonusPrimeira()) {
   const base = u?.criado_em && u.criado_em > desde ? u.criado_em : desde || u?.criado_em;
   return base ? db.prepare("SELECT datetime(?, ?) d").get(base, `+${bp.dias} days`).d : null;
 }
+const ehPrimeiraDoCliente = (r) => !db.prepare("SELECT 1 FROM recargas WHERE usuario_id = ? AND status = 'paga' AND id <> ?").get(r.usuario_id, r.id);
 const ehPrimeiraRecarga = (uid) => !db.prepare("SELECT 1 FROM recargas WHERE usuario_id = ? AND status = 'paga'").get(uid);
 // Oferta de primeira recarga válida para este cliente agora (ou null)
 function ofertaPrimeira(uid) {
@@ -583,6 +605,7 @@ function creditarRecarga(recargaId) {
     }
     db.exec('COMMIT');
     try { const u = db.prepare('SELECT nome, email, telefone FROM usuarios WHERE id = ?').get(r.usuario_id) || {};
+      notificarVenda({ produto: 'Recarga', valor: r.valor_centavos, cliente: u.nome, detalhe: `${u.email || ''}${r.bonus_centavos ? ` · bônus ${P.reais(r.bonus_centavos)}` : ''}${ehPrimeiraDoCliente(r) ? ' · 1ª recarga' : ''}`, link: '/admin/recargas' });
       capiCompra({ eid: `rec-${r.id}`, valor: r.valor_centavos, email: u.email, telefone: u.telefone, nome: u.nome, usuarioId: r.usuario_id, conteudo: 'Recarga' }); } catch (e) { console.error('capi recarga:', e.message); }
     return true;
   } catch (e) { db.exec('ROLLBACK'); throw e; }
@@ -1613,13 +1636,13 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
-  maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
+  maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), notif: notifCfg(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
 
 rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = centavos(f.minimo), markup = Number(String(f.markup || '').replace(',', '.'));
-  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), notif: notifCfg(), erro: m }), usuario, 400);
   const dias = Number(f.dias);
   if (!Number.isInteger(dias) || dias < 1 || dias > 365) return erro('O prazo do histórico precisa ser entre 1 e 365 dias.');
   const comissaoMax = Number(f.comissao_maxima), saqueMin = centavos(f.saque_minimo);
@@ -1656,10 +1679,12 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('bonus_primeira_minimo_centavos', bpMin);
   gravarConfig('bonus_primeira_ate', bpAte);
   gravarConfig('bonus_primeira_teto_centavos', bpTeto);
+  gravarConfig('notif_vendas', f.notif_vendas === '1' ? '1' : '0');
+  gravarConfig('notif_vendas_email', f.notif_vendas_email === '1' ? '1' : '0');
   gravarConfig('bonus_primeira_dias', bpDias);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
-  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, máxima ${P.reais(valorMaximo())}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, 1ª recarga ${bpPct}% a partir de ${P.reais(bpMin)} até ${P.reais(bpTeto)} em ${bpDias} dias, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
+  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, máxima ${P.reais(valorMaximo())}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, 1ª recarga ${bpPct}% a partir de ${P.reais(bpMin)} até ${P.reais(bpTeto)} em ${bpDias} dias, aviso de vendas ${f.notif_vendas === '1' ? 'ligado' : 'desligado'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
   redirecionar(res, '/admin/config?ok=1');
 }));
 
@@ -1927,6 +1952,7 @@ function confirmarCompraDigital(id) {
   if (ok) {
     const c = db.prepare('SELECT * FROM compras_digitais WHERE id = ?').get(id);
     registrar(null, 'Ebook: venda paga', `#${id} · ${P.reais(c.valor_centavos)} · ${c.forma}`);
+    { const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(c.usuario_id) || {}; notificarVenda({ produto: 'Ebook', valor: c.valor_centavos, cliente: u.nome, detalhe: `${u.email || ''} · ${c.forma}` }); }
     { const u = db.prepare('SELECT nome, email, telefone FROM usuarios WHERE id = ?').get(c.usuario_id) || {};
       capiCompra({ eid: `dig-${id}`, valor: c.valor_centavos, email: u.email, telefone: u.telefone, nome: u.nome, usuarioId: c.usuario_id, conteudo: 'Ebook' }); }
     entregarEbook(c).catch(() => {});
@@ -2076,6 +2102,7 @@ function confirmarRaioX(id) {
   if (ok) {
     const p = db.prepare('SELECT * FROM raiox_pedidos WHERE id = ?').get(id);
     registrar(null, 'Raio-X: venda paga', `#${id} · ${p.email} · ${P.reais(p.valor_centavos)} · ${p.forma}`);
+    notificarVenda({ produto: 'Raio-X do CPF', valor: p.valor_centavos, cliente: p.nome, detalhe: `${p.email} · ${p.forma}${p.origem ? ` · origem ${p.origem}` : ''}`, link: '/admin/raio-x/vendas' });
     capiCompra({ eid: `rx-${id}`, valor: p.valor_centavos, email: p.email, telefone: p.whatsapp, nome: p.nome, chave: `rx-${id}`, conteudo: 'Raio-X' });
     entregarRaioX(id);
   }
@@ -2366,6 +2393,7 @@ function creditarMensalidade(uid, pagamentoId) {
   db.prepare("UPDATE parceiros SET pago_ate = ?, ultimo_pagamento = ?, atualizado_em = datetime('now') WHERE usuario_id = ?").run(ate, pagamentoId || null, uid);
   const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(uid);
   registrar(null, 'Parceiro: mensalidade paga', `${u?.email} · acesso até ${ate}`);
+  notificarVenda({ produto: 'Mensalidade de parceiro', valor: mensalidadeParceiro(parceiroRow(uid)).valor, cliente: u?.nome, detalhe: u?.email, link: '/admin/parceiros' });
   return true;
 }
 function webhookParceiro(event, payment) {
@@ -2483,6 +2511,7 @@ function confirmarAdesao(id) {
   db.prepare('UPDATE usuarios SET parceiro = 1 WHERE id = ?').run(a.usuario_id);
   const u = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(a.usuario_id);
   registrar(null, 'Parceiro: adesão paga (novo parceiro)', `${u?.email} · ${P.reais(a.valor_centavos)}`);
+  notificarVenda({ produto: 'Adesão de parceiro', valor: a.valor_centavos, cliente: u?.nome, detalhe: u?.email, link: '/admin/parceiros' });
   capiCompra({ eid: `ade-${a.id}`, valor: a.valor_centavos, email: u?.email, nome: u?.nome, usuarioId: a.usuario_id, conteudo: 'Adesão parceiro' });
   emailServico({ para: u?.email, assunto: 'Bem-vindo à área de parceiros · Soft Consultas', titulo: 'Agora você é parceiro!',
     html: `<p>Olá, ${P.esc(String(u?.nome || '').split(' ')[0])}! A sua adesão foi confirmada e a <strong>área de parceiro</strong> já está liberada. Lá você vê os seus preços de parceiro, cadastra clientes de Limpa Nome e Rating Bancário, envia o link de pagamento pelo WhatsApp e acompanha cada etapa.</p>`,
@@ -3250,6 +3279,7 @@ function confirmarPagamentoMon(m, pagamentoId) {
   const ate = somarPeriodo(base, m.plano);
   const primeiro = m.status === 'aguardando';
   db.prepare("UPDATE monitoramentos SET status = 'ativo', ativo_ate = ?, pagamentos = pagamentos + 1, proxima_checagem = COALESCE(CASE WHEN ? THEN datetime('now') END, proxima_checagem, datetime('now')) WHERE id = ?").run(ate, primeiro ? 1 : 0, m.id);
+  { const um = db.prepare('SELECT nome, email FROM usuarios WHERE id = ?').get(m.usuario_id) || {}; notificarVenda({ produto: primeiro ? 'Monitoramento (nova assinatura)' : 'Monitoramento (renovação)', valor: m.valor_centavos, cliente: um.nome, detalhe: `${m.plano} · ${um.email || ''}` }); }
   registrar(null, primeiro ? 'Monitoramento: assinatura ativada' : 'Monitoramento: renovação paga', `#${m.id} · ${docFmt(m.documento)} · ${m.plano} · ${P.reais(m.valor_centavos)} · ativo até ${ate.slice(0, 10)}`);
   const u = db.prepare('SELECT nome, email, telefone FROM usuarios WHERE id = ?').get(m.usuario_id);
   if (primeiro) capiCompra({ eid: `mon-${m.id}`, valor: m.valor_centavos, email: u?.email, telefone: u?.telefone, nome: u?.nome, usuarioId: m.usuario_id, conteudo: 'Monitoramento' });
@@ -3671,6 +3701,9 @@ function confirmarPedidoLN(id) {
   if (ok) {
     const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
     registrar(null, 'Limpa Nome: pedido pago', `#${id} · ${p.nome} · ${P.reais(p.valor_centavos)}${p.forma_pagamento === 'cartao' ? ` (cartão ${p.parcelas}x)` : ''} · lote ${lote}`);
+    if (!p.combo_de) { const pc = p.parceiro_id ? db.prepare('SELECT u.nome FROM usuarios u WHERE u.id = ?').get(p.parceiro_id) : null;
+      notificarVenda({ produto: SERVICOS[p.servico] || 'Limpa Nome', valor: p.valor_centavos, cliente: p.nome,
+        detalhe: `${p.forma_pagamento === 'cartao' ? `cartão ${p.parcelas}x` : 'Pix'}${pc ? ` · parceiro ${pc.nome} (comissão ${P.reais(p.parceiro_comissao_centavos || 0)})` : ''}`, link: p.servico === 'rating' ? '/admin/rating' : '/admin/limpa-nome' }); }
     avisarStatusLN(p);
     if (!p.parceiro_id && !p.combo_de) capiCompra({ eid: `ln-${p.id}`, valor: p.valor_centavos, email: p.email, telefone: p.telefone || p.whatsapp, nome: p.nome, usuarioId: p.usuario_id, conteudo: p.servico || 'limpa-nome' });
     // Parceiro: comissão quando o cliente paga (uma vez por pedido)
