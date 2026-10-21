@@ -1,5 +1,6 @@
 // Soft Consultas: servidor principal (Node 22, sem dependências externas nesta etapa)
 import http from 'node:http';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +19,7 @@ import * as A from './auth.js';
 import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
 import { montarEmail, perfilDo, ETAPAS, PERFIS, CAMPANHAS, montarCampanha } from './emails-marketing.js';
-import { createHmac, randomBytes, createHash, createCipheriv, createDecipheriv, scryptSync } from 'node:crypto';
+import { createHmac, randomBytes, createHash, createCipheriv, createDecipheriv, scryptSync, createSign } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { TERMOS, PRIVACIDADE } from './textos.js';
 import { PUBLICOS, paginaLanding } from './landings.js';
@@ -192,6 +193,8 @@ const avisoGeral = (usuario) => {
   const t = usuario ? String(lerConfig('aviso_geral') || '').trim() : '';
   return t ? `<div class="aviso" role="status" style="background:#FFF6E0;border-color:#F0C24B;color:#5A4300">${P.esc(t)}</div>` : '';
 };
+// Página do link do cliente (sem login): sem menu, sem botões de conta
+const paginaExterna = (res, titulo, corpo, status) => html(res, P.layout({ titulo, corpo, usuario: null, externo: true }), status, { 'X-Robots-Tag': 'noindex' });
 const pagina = (res, titulo, corpo, usuario, status, extra) =>
   html(res, P.layout({ titulo, corpo: (usuario?.admin && !armazenamento.persistente ? AVISO_DISCO : '') + avisoGeral(usuario) + corpo, usuario }), status, extra);
 
@@ -225,7 +228,7 @@ function acharRota(metodo, caminho) {
 const exigeLogin = (fn) => async (ctx) => {
   if (ctx.usuario) return fn(ctx);
   const destino = ctx.req.method === 'GET' ? `${ctx.url.pathname}${ctx.url.search}` : '';
-  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x|parceiro|rating)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
+  const ok = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x|parceiro|rating|app)[\w\/?=&%.-]*$/.test(destino) && destino.length < 300;
   return redirecionar(ctx.res, '/entrar', ok ? { 'Set-Cookie': `sc_voltar=${encodeURIComponent(destino)}; Path=/; Max-Age=1800; HttpOnly; SameSite=Lax` } : {});
 };
 const exigeAdmin = (fn) => async (ctx) => (ctx.usuario?.admin ? fn(ctx) : redirecionar(ctx.res, ctx.usuario ? '/painel' : '/entrar'));
@@ -307,7 +310,7 @@ rota('POST', '/entrar', async ({ req, res }) => {
   if (!u.ativo) return erro('Esta conta está desativada. Fale com o suporte.', 403);
   A.limparLimite(`login:${email}`);
   const voltar = String(cookies(req).sc_voltar || '');
-  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x|parceiro|rating)[\w\/?=&%.-]*$/.test(voltar) ? voltar : '/painel';
+  const destinoOk = /^\/(consultas|recarregar|painel|indicacoes|historico|limpa-nome|monitoramento|ebook|raio-x|parceiro|rating|app)[\w\/?=&%.-]*$/.test(voltar) ? voltar : (ctxReq.getStore()?.app ? '/app' : '/painel');
   redirecionar(res, destinoOk, { 'Set-Cookie': [A.cookieSessao(A.criarSessao(u.id), ehHttps(req)), 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
@@ -360,6 +363,79 @@ rota('GET', '/painel', exigeLogin(async ({ res, usuario }) => {
 
 rota('GET', '/conta', exigeLogin(({ res, usuario, url }) => pagina(res, 'Minha conta',
   P.paginaConta({ usuario, ok: url.searchParams.get('ok') ? 'Senha alterada com sucesso.' : '' }), usuario)));
+// ---------- Notificações push do app (Firebase Cloud Messaging, Android e iPhone) ----------
+// FCM_SERVICE_ACCOUNT no Render: o JSON da conta de serviço do Firebase (sem ela, o push fica desligado)
+let _fcm = null;
+function contaFcm() {
+  if (_fcm !== null) return _fcm;
+  try { _fcm = process.env.FCM_SERVICE_ACCOUNT ? JSON.parse(process.env.FCM_SERVICE_ACCOUNT) : false; } catch { _fcm = false; console.warn('FCM_SERVICE_ACCOUNT inválido'); }
+  return _fcm;
+}
+let _tokenFcm = { valor: null, expira: 0 };
+async function tokenFcm() {
+  const c = contaFcm();
+  if (!c) return null;
+  if (_tokenFcm.valor && Date.now() < _tokenFcm.expira) return _tokenFcm.valor;
+  const b64 = (o) => Buffer.from(typeof o === 'string' ? o : JSON.stringify(o)).toString('base64url');
+  const agora = Math.floor(Date.now() / 1000);
+  const corpo = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ iss: c.client_email, scope: 'https://www.googleapis.com/auth/firebase.messaging', aud: 'https://oauth2.googleapis.com/token', iat: agora, exp: agora + 3600 })}`;
+  const assinatura = createSign('RSA-SHA256').update(corpo).sign(c.private_key).toString('base64url');
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `grant_type=${encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer')}&assertion=${corpo}.${assinatura}` });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) throw new Error(`FCM token: ${r.status} ${j.error || ''}`);
+  _tokenFcm = { valor: j.access_token, expira: Date.now() + (Number(j.expires_in || 3600) - 300) * 1000 };
+  return j.access_token;
+}
+async function enviarPush(usuarioId, { titulo, corpo, link = '/app' }) {
+  const c = contaFcm();
+  if (!c || !usuarioId) return 0;
+  const aparelhos = db.prepare('SELECT token FROM app_dispositivos WHERE usuario_id = ? AND ativo = 1').all(usuarioId);
+  if (!aparelhos.length) return 0;
+  let ok = 0;
+  try {
+    const at = await tokenFcm();
+    for (const { token } of aparelhos) {
+      const r = await fetch(`https://fcm.googleapis.com/v1/projects/${c.project_id}/messages:send`, { method: 'POST', headers: { Authorization: `Bearer ${at}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: { token, notification: { title: String(titulo).slice(0, 100), body: String(corpo).slice(0, 240) }, data: { link },
+          android: { priority: 'high', notification: { sound: 'default' } }, apns: { payload: { aps: { sound: 'default' } } } } }) });
+      if (r.ok) ok++;
+      else if (r.status === 404 || r.status === 400) db.prepare("UPDATE app_dispositivos SET ativo = 0, atualizado_em = datetime('now') WHERE token = ?").run(token);
+    }
+  } catch (e) { console.warn('push:', e.message); }
+  return ok;
+}
+// O app registra o aparelho depois do login
+rota('POST', '/api/app/dispositivo', exigeLogin(async ({ req, res, usuario }) => {
+  const b = await corpoJson(req).catch(() => ({}));
+  const token = String(b?.token || '').trim();
+  if (!/^[\w:.\-]{20,4096}$/.test(token)) return json(res, { ok: false }, 400);
+  const plat = ['android', 'ios'].includes(b.plataforma) ? b.plataforma : '';
+  db.prepare(`INSERT INTO app_dispositivos (token, usuario_id, plataforma, ativo, atualizado_em) VALUES (?, ?, ?, 1, datetime('now'))
+    ON CONFLICT(token) DO UPDATE SET usuario_id = excluded.usuario_id, plataforma = excluded.plataforma, ativo = 1, atualizado_em = datetime('now')`).run(token, usuario.id, plat);
+  json(res, { ok: true });
+}));
+// Início do aplicativo
+rota('GET', '/app', exigeLogin(({ res, usuario }) => {
+  const m = db.prepare("SELECT * FROM monitoramentos WHERE usuario_id = ? AND status <> 'cancelado' ORDER BY CASE status WHEN 'ativo' THEN 0 ELSE 1 END, id DESC").get(usuario.id);
+  let resumo = null; try { resumo = JSON.parse(m?.ultimo_resumo || 'null'); } catch {}
+  const mon = m ? { ativo: m.status === 'ativo', status: m.status === 'aguardando' ? 'Aguardando pagamento' : m.status, ultima: m.ultima_checagem ? m.ultima_checagem.slice(0, 10).split('-').reverse().join('/') : '', resumo } : null;
+  const peds = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE usuario_id = ? AND parceiro_id IS NULL AND status NOT IN ('cancelado') ORDER BY id DESC LIMIT 10").all(usuario.id);
+  const item = (p) => ({ titulo: `${SERVICOS[p.servico] || 'Limpa Nome'} · #${p.id}`, sub: SV.STATUS_LN[p.status]?.t || p.status, link: p.servico === 'rating' ? `/rating/${p.id}` : `/limpa-nome/servico/${p.id}` });
+  pagina(res, 'Início', P.paginaAppInicio({ usuario, mon, whatsapp: lnCfg().whatsapp,
+    pedidos: { ln: peds.filter((p) => p.servico !== 'rating').map(item), rating: peds.filter((p) => p.servico === 'rating').map(item) } }), usuario);
+}));
+// Exclusão de conta pelo próprio cliente (exigida pelas lojas de aplicativos). Saldo e histórico ficam guardados (obrigação legal).
+rota('POST', '/conta/excluir', exigeLogin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  if (String(f.confirmar || '').trim().toUpperCase() !== 'EXCLUIR') return pagina(res, 'Minha conta', P.paginaConta({ usuario, erro: 'Para excluir, digite EXCLUIR no campo de confirmação.' }), usuario, 400);
+  db.prepare("UPDATE usuarios SET ativo = 0, aceita_emails = 0, exclusao_solicitada_em = datetime('now') WHERE id = ?").run(usuario.id);
+  db.prepare('UPDATE app_dispositivos SET ativo = 0 WHERE usuario_id = ?').run(usuario.id);
+  A.encerrarTodasSessoes(usuario.id);
+  registrar(null, 'Cliente pediu exclusão da conta', `${usuario.email} (#${usuario.id})`);
+  if (process.env.EMAIL_EMPRESA) enviarEmail({ para: process.env.EMAIL_EMPRESA, assunto: 'Pedido de exclusão de conta', html: `<p>${P.esc(usuario.nome)} (${P.esc(usuario.email)}, #${usuario.id}) pediu a exclusão da conta.</p>` }).catch(() => {});
+  pagina(res, 'Conta excluída', P.paginaEmBreve('Conta excluída', 'O seu acesso foi encerrado e o pedido de exclusão dos dados foi registrado. Se tiver um pedido em andamento, ele continua normalmente e você recebe as atualizações por e-mail.'), null);
+}));
 rota('POST', '/conta/senha', exigeLogin(async ({ req, res, usuario, token }) => {
   const f = await corpoForm(req);
   const erro = (m) => pagina(res, 'Minha conta', P.paginaConta({ usuario, erro: m }), usuario, 400);
@@ -1951,17 +2027,36 @@ async function entregarRaioX(id, { reenviar = false } = {}) {
 <p style="font-size:14px">Comece pelo item 1 do plano ainda hoje. Quanto antes, melhor.</p>
 <p style="font-size:12px;color:#7A7285">Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01</p></td></tr></table></td></tr></table></body></html>`,
       anexos: [{ filename: 'raio-x-soft-consultas.pdf', content: pdf.toString('base64') }] });
-    db.prepare('UPDATE raiox_pedidos SET erro = NULL WHERE id = ?').run(p.id);
+    db.prepare("UPDATE raiox_pedidos SET erro = NULL, email_enviado_em = datetime('now') WHERE id = ?").run(p.id);
+    falhasRX.delete(id);
     if (reenviar) registrar(null, 'Raio-X: e-mail reenviado', `#${p.id}`);
   } catch (e) {
     console.error('raio-x', id, e.message);
     db.prepare('UPDATE raiox_pedidos SET erro = ? WHERE id = ?').run(String(e.message).slice(0, 300), id);
     registrar(null, 'Raio-X: falha na entrega', `#${id} · ${e.message}`);
+    // Nova tentativa automática em 2, 10 e 30 minutos; na primeira falha, avisa o admin por e-mail
+    const n = (falhasRX.get(id) || 0) + 1;
+    falhasRX.set(id, n);
+    const espera = [2, 10, 30][n - 1];
+    if (espera && !reenviar) setTimeout(() => entregarRaioX(id), espera * 60 * 1000).unref();
+    if (n === 1) avisarAdminRaioX(id, e.message);
   } finally { raioxEmAndamento.delete(id); }
 }
-// Pagos e não entregues (ex.: APIFull fora do ar): tenta de novo a cada 30 min, até 5 vezes
+const falhasRX = new Map();
+function avisarAdminRaioX(id, motivo) {
+  const p = db.prepare('SELECT nome, email, documento FROM raiox_pedidos WHERE id = ?').get(id);
+  const admins = String(process.env.ADMIN_EMAIL || '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (!p || !admins.length) return;
+  const base = baseEmails();
+  enviarEmail({ para: admins[0], assunto: `⚠️ Raio-X #${id} pago e não entregue`,
+    html: `<p>O Raio-X <strong>#${id}</strong> foi pago, mas a entrega falhou.</p><p>Cliente: ${P.esc(p.nome)} · ${P.esc(p.email)}<br>Motivo: <strong>${P.esc(motivo)}</strong></p><p>O sistema tenta de novo sozinho em 2, 10 e 30 minutos. Se continuar falhando, use "Gerar de novo" em <a href="${base}/admin/raio-x/vendas">Admin → Vendas Raio-X</a>.</p>` })
+    .catch((e) => console.error('aviso admin raio-x:', e.message));
+}
+// Pagos e não entregues (ex.: APIFull fora do ar) ou com o e-mail não enviado: tenta de novo a cada 30 min, até 5 vezes
 setInterval(() => {
-  for (const p of db.prepare("SELECT id FROM raiox_pedidos WHERE status = 'paga' AND entregue_em IS NULL AND tentativas < 5").all()) entregarRaioX(p.id);
+  for (const p of db.prepare("SELECT id FROM raiox_pedidos WHERE status = 'paga' AND ((entregue_em IS NULL AND tentativas < 5) OR (entregue_em IS NOT NULL AND email_enviado_em IS NULL))").all()) {
+    if ((falhasRX.get(p.id) || 0) < 8) entregarRaioX(p.id);
+  }
 }, 30 * 60 * 1000).unref();
 
 // Página de vendas com o formulário (sem cadastro)
@@ -2066,7 +2161,7 @@ function filtroVendasRX(url) {
 rota('GET', '/admin/raio-x/vendas', exigeAdmin(({ res, usuario, url }) => {
   const { f, where, args } = filtroVendasRX(url);
   const pedidos = db.prepare(`SELECT * FROM raiox_pedidos WHERE ${where} ORDER BY id DESC LIMIT 500`).all(...args);
-  const todos = db.prepare(`SELECT status, forma, valor_centavos, entregue_em, resumo FROM raiox_pedidos WHERE ${where}`).all(...args);
+  const todos = db.prepare(`SELECT status, forma, valor_centavos, entregue_em, email_enviado_em, resumo FROM raiox_pedidos WHERE ${where}`).all(...args);
   const pagos = todos.filter((p) => p.status === 'paga');
   const custoPadrao = produtoRaioX()?.custo_centavos || 0;
   const custo = pagos.reduce((s, p) => { if (!p.entregue_em) return s; let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {} return s + (Number(r.custo) || custoPadrao); }, 0);
@@ -2074,7 +2169,7 @@ rota('GET', '/admin/raio-x/vendas', exigeAdmin(({ res, usuario, url }) => {
   const k = { pedidos: todos.length, pagos: pagos.length, receita, custo, ticket: pagos.length ? Math.round(receita / pagos.length) : 0,
     conversao: todos.length ? Math.round((pagos.length / todos.length) * 100) : 0,
     pix: pagos.filter((p) => p.forma !== 'cartao').length, cartao: pagos.filter((p) => p.forma === 'cartao').length,
-    naoEntregues: pagos.filter((p) => !p.entregue_em).length };
+    naoEntregues: pagos.filter((p) => !p.entregue_em || !p.email_enviado_em).length };
   const dias = db.prepare(`SELECT date(COALESCE(pago_em, criado_em), '-3 hours') dia, COUNT(*) vendas, SUM(valor_centavos) receita FROM raiox_pedidos WHERE ${where} AND status = 'paga' GROUP BY dia ORDER BY dia DESC LIMIT 60`).all(...args);
   pagina(res, 'Admin · Vendas Raio-X', SV.adminVendasRaioX({ menu: PD.menu('/admin/raio-x/vendas'), pedidos, f, k, dias,
     ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
@@ -2224,8 +2319,8 @@ const areaParceiro = async ({ req, res, usuario, url, parc }) => {
   const k = { total: pedidos.length, aguardando: n((p) => p.status === 'aguardando_pagamento'), pagos: n((p) => p.pago_em && p.status !== 'reembolsado'),
     andamento: n((p) => ['pago', 'em_analise', 'em_lote', 'em_andamento', 'decisao'].includes(p.status)), concluidos: n((p) => p.status === 'concluido'),
     comissoes: db.prepare("SELECT COALESCE(SUM(valor_centavos), 0) s FROM comissoes WHERE usuario_id = ? AND tipo = 'comissao' AND referencia LIKE 'ln_%'").get(usuario.id).s };
-  const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.' };
-  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
+  const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.', pref: 'Preferência salva.' };
+  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, mostrarNome: !!parc.mostrar_nome, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
 };
 // Quem ainda não é parceiro vê a página de adesão (taxa única); o preço de parceiro/atacado só aparece depois
@@ -2335,6 +2430,14 @@ rota('POST', '/parceiro/mensalidade', exigeParceiro(async ({ req, res, usuario, 
   } catch (e) { console.error('assinatura parceiro:', e.message); volta('Não foi possível gerar a mensalidade agora. Tente de novo em instantes.'); }
 }));
 
+rota('POST', '/parceiro/preferencias', exigeParceiro(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  db.prepare("UPDATE parceiros SET mostrar_nome = ?, atualizado_em = datetime('now') WHERE usuario_id = ?").run(f.mostrar_nome === '1' ? 1 : 0, usuario.id);
+  registrar(usuario, 'Parceiro: preferência de identificação', f.mostrar_nome === '1' ? 'mostra o nome ao cliente' : 'não mostra o nome ao cliente');
+  redirecionar(res, '/parceiro?ok=pref');
+}));
+// Nome do parceiro para o cliente: só quando o parceiro escolheu aparecer
+const nomeParceiroVisivel = (pid) => { const x = pid && db.prepare('SELECT p.mostrar_nome, u.nome FROM parceiros p JOIN usuarios u ON u.id = p.usuario_id WHERE p.usuario_id = ?').get(pid); return x?.mostrar_nome ? x.nome : null; };
 rota('GET', '/parceiro/novo', exigeParceiro(({ res, usuario, parc, url }) => {
   const cfg = lnCfgParceiro(usuario.id);
   if (!regrasParceiro(usuario.id, parc).some((r) => r.disponivel)) return redirecionar(res, '/parceiro');
@@ -2412,7 +2515,7 @@ rota('POST', '/parceiro/novo', exigeParceiro(async ({ req, res, usuario, parc })
   registrar(usuario, 'Parceiro: cliente cadastrado', `#${id} · ${r.nomeServico} · ${nome} · ${modelo === 'atacado' ? `atacado ${P.reais(valor)}` : `cliente paga ${P.reais(venda)} · comissão ${P.reais(comissaoPedido)}`}`);
   if (modelo === 'comissao') {
     const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
-    emailPedidoLN(p, `Falta só o pagamento do seu ${r.nomeServico}`, `O seu pedido de <strong>${P.esc(r.nomeServico)}</strong> foi cadastrado por <strong>${P.esc(usuario.nome)}</strong>. Para começar, conclua o pagamento de <strong>${P.reais(venda)}</strong> (Pix ou até ${cfg.parcelas}x no cartão) pelo botão abaixo.`);
+    emailPedidoLN(p, `Falta só o pagamento do seu ${r.nomeServico}`, `O seu pedido de <strong>${P.esc(r.nomeServico)}</strong> foi cadastrado${parc.mostrar_nome ? ` por <strong>${P.esc(usuario.nome)}</strong>` : ''}. Para começar, conclua o pagamento de <strong>${P.reais(venda)}</strong> (Pix ou até ${cfg.parcelas}x no cartão) pelo botão abaixo.`);
     return redirecionar(res, `/parceiro/cliente/${id}?novo=1`);
   }
   // Atacado: o parceiro paga agora
@@ -2479,16 +2582,16 @@ const cfgPedidoParceiro = (p) => {
 };
 const cfgPublicoLN = (p) => ({ ...cfgPedidoParceiro(p), ajudaUrl: `/ln/${p.token}/ajuda` });
 rota('GET', '/ln/:token', ({ res, usuario, params, url }) => {
-  const ficha = url.searchParams.get('ficha') ? '<div class="aviso ok" style="max-width:620px">Ficha cadastral recebida! Avisamos a cada etapa por e-mail.</div>' : '';
   const p = pedidoToken(params.token);
-  if (!p) return pagina(res, 'Pedido não encontrado', P.paginaEmBreve('Link inválido', 'Este link de pedido não existe. Confira com quem te enviou.'), usuario, 404);
+  if (!p) return paginaExterna(res, 'Pedido não encontrado', P.paginaEmBreve('Link inválido', 'Este link de pedido não existe. Confira com quem te enviou.'), 404);
   const cfg = cfgPublicoLN(p);
-  const parceiro = db.prepare('SELECT nome FROM usuarios WHERE id = ?').get(p.parceiro_id)?.nome || 'nosso parceiro';
+  const parceiro = nomeParceiroVisivel(p.parceiro_id);
+  const ficha = (url.searchParams.get('ficha') ? '<div class="aviso ok" style="max-width:620px">Ficha cadastral recebida! Avisamos a cada etapa por e-mail.</div>' : '') + (parceiro ? `<p class="muted" style="margin:-10px 0 16px">Atendimento: ${P.esc(parceiro)}</p>` : '');
   if (p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && !p.asaas_id)
-    return pagina(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pagamento`, SV.paginaPagarClienteLN({ p, cfg, parceiro, erro: url.searchParams.get('erro') || '' }), usuario);
+    return paginaExterna(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pagamento`, SV.paginaPagarClienteLN({ p, cfg, parceiro, erro: url.searchParams.get('erro') || '' }));
   const trocar = p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && p.asaas_id
     ? `<form method="post" action="/ln/${p.token}/trocar" style="max-width:520px;text-align:center;margin:0 auto 18px"><button class="btn sec" style="min-height:34px;padding:4px 14px;font-size:.85rem">Trocar a forma de pagamento</button></form>` : '';
-  pagina(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg, voltar: null, statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo === 'atacado', topo: ficha + (fichaPendente(p) ? avisoFicha(linkFicha(p)) : '') + trocar, ...relacionadosCombo(p) }), usuario);
+  paginaExterna(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg, voltar: null, statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo === 'atacado', topo: ficha + (fichaPendente(p) ? avisoFicha(linkFicha(p)) : '') + trocar, ...relacionadosCombo(p) }));
 });
 
 rota('POST', '/ln/:token/pagar', async ({ req, res, params }) => {
@@ -2775,11 +2878,13 @@ async function checarUm(m) {
   let tipo;
   if (novos.length) {
     tipo = 'alerta';
+    enviarPush(m.usuario_id, { titulo: `⚠️ ${novos.length === 1 ? 'Nova restrição' : `${novos.length} novas restrições`} no seu ${docFmt(m.documento)}`, corpo: 'Toque para ver o que apareceu e o que fazer.', link: `/consulta/${cid}` }).catch(() => {});
     await emailServico({ para: u?.email, assunto: `⚠️ Alerta: ${novos.length === 1 ? 'nova restrição' : `${novos.length} novas restrições`} no seu ${docFmt(m.documento)}`, titulo: 'Encontramos algo novo no seu documento',
       html: `<p>Olá, ${primeiroNome}. Na checagem de hoje apareceu${novos.length > 1 ? 'ram' : ''}:</p><ul>${novos.slice(0, 10).map((i) => `<li><strong>${P.esc(i.tipo)}</strong> · ${P.esc(i.credor)}${i.valor ? ` · ${P.reais(Math.round(i.valor * 100))}` : ''}${i.data ? ` · ${P.esc(i.data)}` : ''}</li>`).join('')}</ul>${resumoHtml}<p>Se você não reconhece, pode ser fraude: entre em contato com o credor e registre um boletim de ocorrência.</p>${ofertaLN}`,
       botao: { href: `/consulta/${cid}`, texto: 'Ver o relatório completo' } });
   } else if (quedaScore >= cfg.quedaScore) {
     tipo = 'score';
+    enviarPush(m.usuario_id, { titulo: `📉 Seu score caiu ${quedaScore} pontos`, corpo: `Agora ele está em ${a.score}. Toque para ver o relatório.`, link: `/consulta/${cid}` }).catch(() => {});
     await emailServico({ para: u?.email, assunto: `📉 Seu score caiu ${quedaScore} pontos`, titulo: 'Seu score caiu',
       html: `<p>Olá, ${primeiroNome}. Seu score passou de ${antes.score} para <strong>${a.score}</strong>.</p>${resumoHtml}<p>Quedas assim costumam vir de muitas consultas ao CPF em pouco tempo, atraso em contas ou uso alto do limite do cartão.</p>`,
       botao: { href: `/consulta/${cid}`, texto: 'Ver o relatório completo' } });
@@ -2842,7 +2947,7 @@ rota('GET', '/monitoramento', exigeLogin(({ res, usuario, url }) => {
   const lista = db.prepare('SELECT * FROM monitoramentos WHERE usuario_id = ? ORDER BY id DESC').all(usuario.id);
   if (!cfg.ativo && !usuario.admin && !lista.length) return pagina(res, 'Monitoramento', P.paginaEmBreve('Monitoramento de CPF', 'Em breve: monitoramento do seu CPF com alertas de negativação e queda de score.'), usuario);
   pagina(res, 'Monitoramento de CPF', (!cfg.ativo ? '<div class="aviso">Produto desligado para novos clientes (você vê por ser admin).</div>' : '') +
-    SV.paginaMonitoramento({ cfg, lista, usuario, ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+    SV.paginaMonitoramento({ cfg, lista, usuario, app: !!ctxReq.getStore()?.app, ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
 }));
 
 rota('POST', '/monitoramento', exigeLogin(async ({ req, res, usuario }) => {
@@ -3068,6 +3173,7 @@ function avisarStatusLN(p) {
   if (!f) return;
   const [t, x] = f(p);
   emailPedidoLN(p, t, x + (p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''));
+  enviarPush(p.usuario_id, { titulo: `${SERVICOS[p.servico] || 'Limpa Nome'} · ${t}`, corpo: String(x).replace(/<[^>]+>/g, '').slice(0, 200), link: p.servico === 'rating' ? `/rating/${p.id}` : `/limpa-nome/servico/${p.id}` }).catch(() => {});
   if (p.parceiro_id) emailParceiroLN(p, t, `Atualização do seu cliente: <strong>${P.esc(SV.STATUS_LN[p.status]?.t || p.status)}</strong>.${p.status === 'pago' && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos ? ` A sua comissão de <strong>${P.reais(p.parceiro_comissao_centavos)}</strong> já está no seu saldo.` : ''}${p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''}`);
 }
 // Confirma o pagamento (webhook ou consulta de status). Retorna true só na primeira vez.
@@ -3388,11 +3494,12 @@ async function salvarFicha({ req, alvo, quem }) {
   registrar(null, 'Rating: ficha cadastral enviada', `#${alvo.id} · ${alvo.nome} · por ${quem}`);
   return { ok: true };
 }
-const renderFicha = (res, usuario, { p, alvo, action, voltar, erro = '', v = null, status }) => {
+const renderFicha = (res, usuario, { p, alvo, action, voltar, erro = '', v = null, status, externo = false }) => {
   const f = fichaDe(alvo.id), d = v || { ...dadosFicha(f), _selfie: !!f?.selfie };
   if (!v && !f) Object.assign(d, { nome: alvo.nome, email: alvo.email, celular: alvo.telefone });
   const precisaDoc = !alvo.doc_frente && !(alvo.combo_de && db.prepare('SELECT doc_frente FROM limpa_nome_pedidos WHERE id = ?').get(alvo.combo_de)?.doc_frente) && !f?.doc_extra;
-  pagina(res, 'Ficha cadastral · Rating', SV.paginaFichaRating({ p: alvo, d, action, voltar, precisaDoc, temSenha: !!f?.senha_cript, erro }), usuario, status);
+  const corpo = SV.paginaFichaRating({ p: alvo, d, action, voltar, precisaDoc, temSenha: !!f?.senha_cript, erro });
+  return externo ? paginaExterna(res, 'Ficha cadastral · Rating', corpo, status) : pagina(res, 'Ficha cadastral · Rating', corpo, usuario, status);
 };
 // Cliente da venda direta
 const fichaCliente = (fn) => exigeLogin(async (ctx) => {
@@ -3412,11 +3519,11 @@ const fichaToken = (fn) => async (ctx) => {
   if (!p || !alvo || !alvo.pago_em) return redirecionar(ctx.res, p ? `/ln/${p.token}` : '/');
   return fn({ ...ctx, p, alvo, action: `/ln/${p.token}/ficha`, voltar: [`/ln/${p.token}`, '← Meu pedido'], depois: `/ln/${p.token}` });
 };
-rota('GET', '/ln/:token/ficha', fichaToken(({ res, usuario, p, alvo, action, voltar }) => renderFicha(res, usuario, { p, alvo, action, voltar })));
+rota('GET', '/ln/:token/ficha', fichaToken(({ res, usuario, p, alvo, action, voltar }) => renderFicha(res, usuario, { p, alvo, action, voltar, externo: true })));
 rota('POST', '/ln/:token/ficha', fichaToken(async ({ req, res, usuario, p, alvo, action, voltar, depois }) => {
-  if (!A.limitar(`ficha:${alvo.id}`, 20, 60)) return renderFicha(res, usuario, { p, alvo, action, voltar, erro: 'Muitas tentativas. Aguarde alguns minutos.', status: 429 });
+  if (!A.limitar(`ficha:${alvo.id}`, 20, 60)) return renderFicha(res, usuario, { p, alvo, action, voltar, erro: 'Muitas tentativas. Aguarde alguns minutos.', status: 429, externo: true });
   const r = await salvarFicha({ req, alvo, quem: 'cliente (link)' });
-  if (r.erro) return renderFicha(res, usuario, { p, alvo, action, voltar, erro: r.erro, v: r.v, status: 400 });
+  if (r.erro) return renderFicha(res, usuario, { p, alvo, action, voltar, erro: r.erro, v: r.v, status: 400, externo: true });
   redirecionar(res, `${depois}?ficha=1`);
 }));
 const fichaParceiro = (fn) => exigeParceiro(async (ctx) => {
@@ -3594,6 +3701,7 @@ rota('POST', '/admin/limpa-nome/baixas', exigeAdmin(async ({ req, res, usuario }
   }
   db.prepare("UPDATE limpa_nome_pedidos SET baixas = ?, atualizado_em = datetime('now') WHERE id = ?").run(JSON.stringify(novas), p.id);
   registrar(usuario, 'Limpa Nome: baixas', `#${p.id} · ${p.nome} · ${Object.keys(novas).join(', ') || 'nenhuma'}`);
+  if (adicionadas.length) enviarPush(p.usuario_id, { titulo: `Baixa confirmada: ${adicionadas.join(', ')}`, corpo: 'Mais um órgão tirou as negativações do seu nome. Toque para ver.', link: `/limpa-nome/servico/${p.id}` }).catch(() => {});
   if (adicionadas.length) emailPedidoLN(p, `Baixa confirmada: ${adicionadas.join(', ')}`, `Boa notícia: ${adicionadas.length > 1 ? 'os órgãos' : 'o órgão'} <strong>${P.esc(adicionadas.join(', '))}</strong> já ${adicionadas.length > 1 ? 'deram' : 'deu'} baixa nas negativações do seu ${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'}. Acompanhe os demais na página do pedido.`);
   const todas = SV.ORGAOS_LN.every(([k]) => novas[k]);
   redirecionar(res, `/admin/limpa-nome?f=ativos&ok=${encodeURIComponent(`Baixas do pedido #${p.id} salvas.${todas && p.status !== 'concluido' ? ' Todos os órgãos deram baixa: mude o status para "Concluído" para iniciar a blindagem.' : ''}`)}`);
@@ -3732,7 +3840,15 @@ rota('GET', '/privacidade', ({ res, usuario }) => pagina(res, 'Privacidade', P.p
 rota('GET', '/saude', ({ res }) => json(res, { ok: true, discoPermanente: armazenamento.persistente }));
 
 // ---------- servidor ----------
-const servidor = http.createServer(async (req, res) => {
+// ---------- Aplicativo (Android/iOS) ----------
+// O app (Capacitor) abre o site com "SoftConsultasApp" no User-Agent; nesse modo o layout é de aplicativo e
+// só ficam as áreas do próprio cliente (Meu CPF, Limpa Nome, Rating, conta), sem consultas de terceiros nem recargas.
+const ctxReq = new AsyncLocalStorage();
+const ehApp = (req) => /SoftConsultasApp/i.test(String(req.headers['user-agent'] || '')) || /(?:^|;\s*)sc_app=1/.test(String(req.headers.cookie || ''));
+P.configurarModoApp(() => !!ctxReq.getStore()?.app);
+const ROTAS_APP = /^\/(app|entrar|cadastro|sair|esqueci-senha|redefinir-senha|conta|monitoramento|limpa-nome\/(servico|ajuda)|rating|ln|consulta\/\d+|api|webhook|termos|privacidade|icone|app\.js|criativos)(\/|\.|$|\?)/;
+const servidor = http.createServer((req, res) => ctxReq.run({ app: ehApp(req) }, () => atenderRequisicao(req, res)));
+async function atenderRequisicao(req, res) {
   try {
     const url = new URL(req.url, 'http://local');
     // Subdomínio/domínio do Raio-X (ex.: raiox.softconsultas.com, softcredito.com.br): leva para a página do Raio-X
@@ -3769,6 +3885,8 @@ const servidor = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': ARQUIVOS[url.pathname], 'Cache-Control': 'public, max-age=86400' });
       return res.end(dados);
     }
+    // Dentro do app: o que não faz parte dele volta para o início do app
+    if (ctxReq.getStore()?.app && req.method === 'GET' && !ROTAS_APP.test(url.pathname + (url.pathname.endsWith('/') ? '' : '/'))) return redirecionar(res, '/app');
     const achou = acharRota(req.method, url.pathname);
     if (!achou) return pagina(res, 'Página não encontrada', P.paginaEmBreve('Página não encontrada', 'O endereço que você abriu não existe.'), null, 404);
     const { fn, params } = achou;
@@ -3806,7 +3924,7 @@ const servidor = http.createServer(async (req, res) => {
     console.error('erro:', e);
     if (!res.headersSent) pagina(res, 'Erro', P.paginaEmBreve('Algo deu errado', 'Tente de novo em instantes.'), null, 500);
   }
-});
+}
 
 const porta = process.env.PORT || 3000;
 servidor.listen(porta, () => {

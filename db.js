@@ -268,6 +268,11 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_rx_asaas ON raiox_pedidos(asaas_id);
 `);
+// Raio-X: data em que o e-mail com o PDF saiu (os já entregues antes desta coluna contam como enviados)
+if (!colunas('raiox_pedidos').includes('email_enviado_em')) {
+  db.exec('ALTER TABLE raiox_pedidos ADD COLUMN email_enviado_em TEXT');
+  db.exec('UPDATE raiox_pedidos SET email_enviado_em = entregue_em WHERE entregue_em IS NOT NULL');
+}
 // Produtos digitais (ebook)
 db.exec(`
   CREATE TABLE IF NOT EXISTS compras_digitais (
@@ -420,6 +425,7 @@ for (const [c, def] of [['forma_pagamento', "TEXT NOT NULL DEFAULT 'pix'"], ['pa
 for (const [c, def] of [['parceiro_id', 'INTEGER'], ['parceiro_modelo', 'TEXT'], ['parceiro_comissao_centavos', 'INTEGER NOT NULL DEFAULT 0'], ['token', 'TEXT'], ['preco_venda_centavos', 'INTEGER'], ['servico', "TEXT NOT NULL DEFAULT 'limpa_nome'"], ['combo_de', 'INTEGER'], ['cliente_aceite_em', 'TEXT'], ['cliente_aceite_ip', 'TEXT']]) {
   if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
 }
+if (!colunas('usuarios').includes('exclusao_solicitada_em')) db.exec('ALTER TABLE usuarios ADD COLUMN exclusao_solicitada_em TEXT');
 if (!colunas('usuarios').includes('parceiro')) db.exec('ALTER TABLE usuarios ADD COLUMN parceiro INTEGER NOT NULL DEFAULT 0');
 db.exec(`
   CREATE INDEX IF NOT EXISTS idx_lnp_parceiro ON limpa_nome_pedidos(parceiro_id);
@@ -436,7 +442,7 @@ db.exec(`
   );
 `);
 // Mensalidade do parceiro (assinatura no Asaas)
-for (const [c, def] of [['repasse_auto', 'INTEGER NOT NULL DEFAULT 0'], ['repasse_pix', 'TEXT'], ['preco_minimo_centavos', 'INTEGER'], ['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
+for (const [c, def] of [['repasse_auto', 'INTEGER NOT NULL DEFAULT 0'], ['repasse_pix', 'TEXT'], ['mostrar_nome', 'INTEGER NOT NULL DEFAULT 0'], ['preco_minimo_centavos', 'INTEGER'], ['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
 // Ficha cadastral do Rating Bancário (dados do cliente; a senha do Serasa fica criptografada)
@@ -471,6 +477,18 @@ db.exec(`
     pago_em TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_adesao_usuario ON parceiro_adesoes(usuario_id);
+`);
+// Aparelhos do aplicativo (para notificações push)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_dispositivos (
+    token TEXT PRIMARY KEY,
+    usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+    plataforma TEXT NOT NULL DEFAULT '',
+    ativo INTEGER NOT NULL DEFAULT 1,
+    criado_em TEXT NOT NULL DEFAULT (datetime('now')),
+    atualizado_em TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_appdisp_usuario ON app_dispositivos(usuario_id);
 `);
 export const pastaDocsLimpaNome = path.join(pasta, 'limpa-nome-docs');
 try { mkdirSync(pastaDocsLimpaNome, { recursive: true }); } catch {}

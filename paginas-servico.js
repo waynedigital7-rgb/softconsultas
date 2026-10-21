@@ -292,7 +292,7 @@ const etqMon = (m) => {
 const docMon = (d) => `${String(d).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(d))}`;
 const resumoMon = (m) => { try { return JSON.parse(m.ultimo_resumo || 'null'); } catch { return null; } };
 
-export function paginaMonitoramento({ cfg, lista, usuario, ok, erro }) {
+export function paginaMonitoramento({ cfg, lista, usuario, ok, erro, app = false }) {
   const economia = Math.round((1 - cfg.anual / (cfg.mensal * 12)) * 100);
   const ativos = lista.filter((m) => m.status !== 'cancelado' || m.ultima_checagem);
   return `
@@ -313,7 +313,7 @@ ${ativos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="fon
   <div class="cartao"><div style="font-size:2rem">🕵️</div><h3 style="margin:6px 0">Proteção contra fraude</h3><p class="muted" style="margin:0">Dívida que você não reconhece pode ser golpe com o seu CPF. Quanto antes souber, mais fácil resolver.</p></div>
   <div class="cartao"><div style="font-size:2rem">📄</div><h3 style="margin:6px 0">Relatório completo</h3><p class="muted" style="margin:0">A cada ${cfg.freq} dias, uma checagem completa em PDF: score, restrições, protestos e consultas ao seu documento.</p></div>
 </div>
-<form class="cartao" method="post" action="/monitoramento" style="max-width:720px;margin-bottom:18px">
+${app ? (ativos.length ? '' : '<div class="cartao" style="max-width:720px"><p class="muted" style="margin:0">Você ainda não tem o Monitoramento ativo nesta conta.</p></div>') : `<form class="cartao" method="post" action="/monitoramento" style="max-width:720px;margin-bottom:18px">
   <h2 style="font-size:1.3rem;margin-top:0">Escolha seu plano</h2>
   <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
     <label style="flex:1 1 220px;border:2px solid var(--roxo);border-radius:16px;padding:16px;cursor:pointer;display:flex;gap:12px;align-items:flex-start">
@@ -333,7 +333,7 @@ ${ativos.length ? `<div class="cartao" style="margin-bottom:18px"><h2 style="fon
   <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Autorizo as consultas periódicas do documento informado para este monitoramento e aceito os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a>. Posso cancelar a renovação a qualquer momento.</span></label>
   <button class="btn" type="submit">Ativar meu monitoramento</button>
   <p class="muted" style="margin:12px 0 0;font-size:.88rem">O monitoramento avisa sobre mudanças; ele não impede que uma empresa negative o seu nome nem garante crédito.</p>
-</form>`;
+</form>`}`;
 }
 
 export function paginaPagarMonitoramento({ m }) {
@@ -638,7 +638,7 @@ ${dias.map((d) => `<tr><td>${d.dia.split('-').reverse().join('/')}</td><td>${d.v
 ${pedidos.map((p) => { let r = {}; try { r = JSON.parse(p.resumo || '{}'); } catch {} const [st, cor] = ST_RX[p.status] || [p.status, '#555'];
   return `<tr><td>${p.id}</td><td>${dt(p.criado_em)}${p.pago_em ? `<br><span class="muted">pago ${dt(p.pago_em)}</span>` : ''}</td><td>${esc(p.nome)}<br><span class="muted">${esc(p.email)}${p.whatsapp ? ` · <a href="https://wa.me/55${esc(String(p.whatsapp).replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, ''))}" target="_blank" rel="noopener">${esc(p.whatsapp)}</a>` : ''}</span>${p.origem ? `<br><span class="muted" style="font-size:.78rem">${esc(p.origem)}</span>` : ''}</td>
   <td>${esc(formatarDoc(p.documento))}</td><td>${reais(p.valor_centavos)}<br><span class="muted">${p.forma === 'cartao' ? 'cartão' : 'pix'}</span></td>
-  <td><strong style="color:${cor}">${st}</strong>${p.status === 'paga' ? (p.entregue_em ? `<br><span class="muted">entregue ${dt(p.entregue_em)}${p.downloads ? ` · ${p.downloads} download(s)` : ''}</span>` : `<br><strong style="color:var(--erro)">não entregue</strong>${p.erro ? `<br><span class="muted">${esc(p.erro)}</span>` : ''}`) : ''}</td>
+  <td><strong style="color:${cor}">${st}</strong>${p.status === 'paga' ? (p.entregue_em && !p.email_enviado_em ? `<br><strong style="color:var(--erro)">PDF gerado, e-mail não enviado</strong>${p.erro ? `<br><span class="muted">${esc(p.erro)}</span>` : ''}` : p.entregue_em ? `<br><span class="muted">entregue ${dt(p.entregue_em)}${p.downloads ? ` · ${p.downloads} download(s)` : ''}</span>` : `<br><strong style="color:var(--erro)">não entregue</strong>${p.erro ? `<br><span class="muted">${esc(p.erro)}</span>` : ''}`) : ''}</td>
   <td>${r.titulo ? `${esc(r.titulo)}<br><span class="muted">${r.score != null ? `score ${r.score} · ` : ''}${r.qtd || 0} restrição(ões)${r.total ? ` · ${reais(Math.round(r.total * 100))}` : ''}</span>` : '<span class="muted">—</span>'}</td>
   <td><form method="post" action="/admin/raio-x" style="display:flex;gap:6px;flex-wrap:wrap;margin:0"><input type="hidden" name="id" value="${p.id}"><input type="hidden" name="volta" value="/admin/raio-x/vendas?${esc(qs)}">
     ${p.status === 'pendente' && p.asaas_id ? `<button class="btn sec" name="acao" value="conferir" style="${btnP}">Conferir no Asaas</button>` : ''}
@@ -655,7 +655,7 @@ const ehReais = (t) => t === 'fixo' || t === 'nossa_parte';
 const optNossa = (sel) => `<option value="nossa_parte" ${sel === 'nossa_parte' ? 'selected' : ''}>Nossa parte fixa (R$): o resto é do parceiro</option>`;
 const txtTipo = (t, v) => (t === 'nossa_parte' ? `nossa parte ${reais(v)}` : t === 'fixo' ? reais(v) : `${v}%`);
 
-export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro, repasse = null }) {
+export function paginaParceiro({ usuario, r, regras = [r], cfg, pedidos, k, saldo, base, ok, erro, repasse = null, mostrarNome = false }) {
   const disp = regras.filter((x) => x.disponivel);
   const linkCliente = (p) => `${base}/ln/${p.token}`;
   const wpp = (p) => {
@@ -682,6 +682,9 @@ ${!disp.length ? '<div class="aviso">Os serviços estão pausados para novos ped
   </div>
   ${disp.length ? '<a class="btn" href="/parceiro/novo" style="flex:none">+ Cadastrar cliente</a>' : ''}
 </div>
+<form class="cartao" method="post" action="/parceiro/preferencias" style="margin-bottom:18px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+  <label style="display:flex;gap:10px;align-items:flex-start;flex:1 1 320px"><input type="checkbox" name="mostrar_nome" value="1" ${mostrarNome ? 'checked' : ''} style="width:20px;height:20px;margin-top:3px"> <span><strong>Mostrar o meu nome para os clientes</strong><br><span class="muted">Ligado: a página de pagamento, o acompanhamento e o e-mail mostram "Atendimento: ${esc(usuario.nome)}". Desligado: o cliente vê só a Soft Consultas.</span></span></label>
+  <button class="btn sec" style="${btnPeq}">Salvar</button></form>
 <div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Meus clientes</h2><div class="rolar"><table class="tabela"><tr><th>#</th><th>Cliente</th><th>Modelo</th><th>Valor</th><th>Status</th><th>Baixas</th><th>Ações</th></tr>
 ${pedidos.map((p) => { const b = Object.keys(lerBaixas(p)).length; const pend = p.status === 'aguardando_pagamento';
   return `<tr><td>${p.id}</td><td><strong>${esc(p.nome)}</strong>${tagServico(p.servico)}${p.combo_de ? ` <span class="muted" style="font-size:.78rem">(do combo #${p.combo_de})</span>` : ''}<br><span class="muted">${esc(formatarDoc(p.cpf))}${p.telefone ? ` · ${esc(p.telefone)}` : ''}</span></td>
@@ -745,7 +748,7 @@ export function paginaPagarClienteLN({ p, cfg, parceiro, erro = '' }) {
   return `<div style="max-width:640px;margin:0 auto">
 <span class="tag">Limpa Nome · pedido #${p.id}</span>
 <h1 style="font-size:1.7rem;margin:10px 0 6px">${esc(String(p.nome).split(' ')[0])}, falta só o pagamento</h1>
-<p class="muted" style="margin:0 0 16px">Cadastro feito por ${esc(parceiro)} · ${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(p.cpf))}</p>
+<p class="muted" style="margin:0 0 16px">${String(p.cpf).length === 14 ? 'CNPJ' : 'CPF'} ${esc(formatarDoc(p.cpf))}${parceiro ? ` · Atendimento: ${esc(parceiro)}` : ''}</p>
 ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 <div class="cartao" style="margin-bottom:16px">
   <h2 style="font-size:1.15rem;margin-top:0">O que você está contratando: ${esc(SERVICOS[p.servico] || 'Limpa Nome')}</h2>
