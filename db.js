@@ -450,6 +450,16 @@ db.exec(`
 for (const [c, def] of [['repasse_auto', 'INTEGER NOT NULL DEFAULT 0'], ['repasse_pix', 'TEXT'], ['mostrar_nome', 'INTEGER NOT NULL DEFAULT 0'], ['preco_minimo_centavos', 'INTEGER'], ['preco_centavos', 'INTEGER'], ['valores_servicos', "TEXT NOT NULL DEFAULT '{}'"], ['mensalidade_centavos', 'INTEGER'], ['isento', 'INTEGER NOT NULL DEFAULT 0'], ['assinatura_id', 'TEXT'], ['assinatura_forma', 'TEXT'], ['assinatura_link', 'TEXT'], ['pago_ate', 'TEXT'], ['ultimo_pagamento', 'TEXT']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
+// White label do parceiro: marca própria, página de vendas e recebimento na subconta Asaas dele (com split da nossa parte)
+for (const [c, def] of [['marca_ativa', 'INTEGER NOT NULL DEFAULT 0'], ['marca_nome', 'TEXT'], ['marca_logo', 'TEXT'], ['marca_cor', 'TEXT'], ['marca_whatsapp', 'TEXT'], ['marca_email', 'TEXT'],
+  ['marca_slug', 'TEXT'], ['marca_precos', "TEXT NOT NULL DEFAULT '{}'"], ['marca_texto', 'TEXT'],
+  ['sub_dados', 'TEXT'], ['sub_id', 'TEXT'], ['sub_wallet', 'TEXT'], ['sub_chave', 'TEXT'], ['sub_status', 'TEXT'], ['sub_criada_em', 'TEXT'], ['sub_aprovada_em', 'TEXT'], ['sub_erro', 'TEXT'], ['sub_webhook', 'INTEGER NOT NULL DEFAULT 0']]) {
+  if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
+}
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_parc_slug ON parceiros(marca_slug) WHERE marca_slug IS NOT NULL');
+for (const [c, def] of [['asaas_sub', 'INTEGER'], ['split_centavos', 'INTEGER'], ['origem_pagina', 'INTEGER NOT NULL DEFAULT 0']]) {
+  if (!colunas('limpa_nome_pedidos').includes(c)) db.exec(`ALTER TABLE limpa_nome_pedidos ADD COLUMN ${c} ${def}`);
+}
 // Ficha cadastral do Rating Bancário (dados do cliente; a senha do Serasa fica criptografada)
 db.exec(`
   CREATE TABLE IF NOT EXISTS rating_fichas (

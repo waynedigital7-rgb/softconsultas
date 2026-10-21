@@ -1,5 +1,5 @@
 // Serviço de Limpa Nome: páginas do cliente e do Admin
-import { esc, reais, dt } from './paginas.js';
+import { esc, reais, dt, campoRobo } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 export const STATUS_LN = {
@@ -744,7 +744,7 @@ ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
 }
 
 // Página pública do cliente (link enviado pelo parceiro): escolher a forma de pagamento
-export function paginaPagarClienteLN({ p, cfg, parceiro, erro = '' }) {
+export function paginaPagarClienteLN({ p, cfg, parceiro, erro = '', recebedor = '' }) {
   return `<div style="max-width:640px;margin:0 auto">
 <span class="tag">Limpa Nome · pedido #${p.id}</span>
 <h1 style="font-size:1.7rem;margin:10px 0 6px">${esc(String(p.nome).split(' ')[0])}, falta só o pagamento</h1>
@@ -767,6 +767,7 @@ ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
   </fieldset>
   <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Sou o titular (ou responsável pela empresa), confirmo os dados acima e autorizo ${p.servico === 'rating' ? 'a análise do meu histórico de crédito para o Rating Bancário' : `a minha inclusão, como associado(a), na ação judicial coletiva${cfg.executor ? ` conduzida por ${esc(cfg.executor)}` : ''}${p.servico === 'combo' ? ' e a análise do meu histórico de crédito para o Rating Bancário' : ''}`}, conforme os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a>.</span></label>
   <button class="btn largo" type="submit">Continuar para o pagamento</button>
+  ${recebedor ? `<p class="muted" style="margin:12px 0 0;font-size:.88rem;text-align:center">Pagamento seguro processado pelo Asaas, em nome de <strong>${esc(recebedor)}</strong>.</p>` : ''}
 </form></div>`;
 }
 
@@ -1099,4 +1100,142 @@ export function paginaPagarAdesao({ a }) {
   <button class="btn" type="button" id="copiar" style="margin:12px 0">Copiar código Pix</button>` : ''}
   ${a.link_pagamento ? `<p><a href="${esc(a.link_pagamento)}" target="_blank" rel="noopener">${a.pix_imagem ? 'Prefiro pagar pela página do Asaas' : 'Abrir página de pagamento'}</a></p>` : ''}
   <p class="muted pulsando" aria-live="polite">Aguardando pagamento… a área de parceiro libera sozinha.</p></div>`;
+}
+
+
+// ===================== WHITE LABEL DO PARCEIRO =====================
+const SUB_STATUS = { pausada: ['Pausado: recebendo pela nossa conta', '#9A6B00'], pendente: ['Em análise no Asaas', '#9A6B00'], aprovada: ['Aprovada · recebendo no seu nome', '#1E7B4D'], reprovada: ['Reprovada pelo Asaas', '#B3261E'] };
+export function blocoMarcaAtalho({ x }) {
+  const ativa = x.marca_ativa && x.marca_nome;
+  const sub = SUB_STATUS[x.sub_status];
+  return `<div class="cartao" style="margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+  <div style="flex:1 1 300px"><strong>Sua marca (white label)</strong><br><span class="muted">${ativa ? `Ativa como <strong>${esc(x.marca_nome)}</strong>: o cliente só vê a sua marca.` : 'Venda Limpa Nome e Rating com o nome e o logo da sua empresa, com página de vendas própria.'}${sub ? ` · Recebimento: <strong style="color:${sub[1]}">${sub[0]}</strong>` : ''}</span></div>
+  <a class="btn${ativa ? ' sec' : ''}" href="/parceiro/marca">${ativa ? 'Configurar minha marca' : 'Ativar minha marca'}</a></div>`;
+}
+
+export function paginaMarcaParceiro({ x, regras = [], base, docs = [], ok = '', erro = '' }) {
+  const v = (k) => esc(x[k] ?? '');
+  let precos = {}; try { precos = JSON.parse(x.marca_precos || '{}') || {}; } catch {}
+  const rs = (c) => (c ? (c / 100).toFixed(2).replace('.', ',') : '');
+  const link = x.marca_slug ? `${base}/p/${x.marca_slug}` : '';
+  const sub = SUB_STATUS[x.sub_status];
+  let d = {}; try { d = JSON.parse(x.sub_dados || '{}') || {}; } catch {}
+  const recebimento = !x.sub_id ? `
+  <p>Hoje o cliente paga pela nossa conta e você recebe a comissão por Pix. Ativando o recebimento, <strong>a cobrança sai no nome da sua empresa</strong> (é o nome que aparece no Pix e no cartão do cliente) e <strong>a sua parte cai direto na sua conta</strong>. A nossa parte fixa é separada automaticamente na hora do pagamento.</p>
+  <ul class="muted" style="margin:0 0 14px;padding-left:20px;font-size:.92rem"><li>Criamos uma conta Asaas no seu nome (CPF ou CNPJ). O Asaas manda um e-mail para você criar a senha e enviar os documentos (documento com foto e selfie; contrato social se for empresa).</li><li>As taxas do Pix e do cartão são descontadas da sua parte, e você saca para o seu banco quando quiser.</li><li>Até a aprovação, tudo continua funcionando como hoje.</li></ul>
+  <form method="post" action="/parceiro/marca/recebimento">
+    <fieldset style="border:1.5px solid #D6CCE0;border-radius:14px;padding:10px 16px;margin:0 0 14px"><legend style="font-weight:700;padding:0 6px">Tipo</legend>
+      <label style="margin-right:18px"><input type="radio" name="tipo" value="pj" ${d.tipo !== 'pf' ? 'checked' : ''}> Empresa (CNPJ)</label> <label><input type="radio" name="tipo" value="pf" ${d.tipo === 'pf' ? 'checked' : ''}> Pessoa física (CPF)</label></fieldset>
+    <div class="campo"><label for="sb-nome">Razão social (ou nome completo, se CPF)</label><input type="text" id="sb-nome" name="nome" required maxlength="120" value="${esc(d.nome || '')}"></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="campo" style="flex:1 1 200px"><label for="sb-doc">CNPJ ou CPF</label><input type="text" id="sb-doc" name="documento" required inputmode="numeric" maxlength="18" value="${esc(d.documento || '')}"></div>
+      <div class="campo" style="flex:1 1 200px"><label for="sb-emp">Tipo de empresa</label><select id="sb-emp" name="empresa" style="min-height:46px"><option value="MEI">MEI</option><option value="LIMITED" ${d.empresa === 'LIMITED' ? 'selected' : ''}>Limitada (LTDA)</option><option value="INDIVIDUAL" ${d.empresa === 'INDIVIDUAL' ? 'selected' : ''}>Individual (EI/SLU)</option><option value="ASSOCIATION" ${d.empresa === 'ASSOCIATION' ? 'selected' : ''}>Associação</option></select><small class="muted">Só para CNPJ.</small></div>
+      <div class="campo" style="flex:1 1 180px"><label for="sb-nasc">Nascimento (só CPF)</label><input id="sb-nasc" name="nascimento" type="date" value="${esc(d.nascimento || '')}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="campo" style="flex:1 1 240px"><label for="sb-email">E-mail da conta Asaas (não pode já ter conta no Asaas)</label><input id="sb-email" name="email" type="email" required maxlength="120" value="${esc(d.email || '')}"></div>
+      <div class="campo" style="flex:1 1 180px"><label for="sb-tel">Celular</label><input type="text" id="sb-tel" name="telefone" required inputmode="tel" maxlength="20" value="${esc(d.telefone || '')}"></div>
+      <div class="campo" style="flex:1 1 180px"><label for="sb-renda">Faturamento mensal (R$)</label><input type="text" id="sb-renda" name="renda" required inputmode="decimal" value="${esc(d.renda || '')}"></div>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="campo" style="flex:0 1 150px"><label for="sb-cep">CEP</label><input type="text" id="sb-cep" name="cep" required inputmode="numeric" maxlength="9" value="${esc(d.cep || '')}"></div>
+      <div class="campo" style="flex:1 1 260px"><label for="sb-end">Endereço (rua)</label><input type="text" id="sb-end" name="endereco" required maxlength="120" value="${esc(d.endereco || '')}"></div>
+      <div class="campo" style="flex:0 1 110px"><label for="sb-num">Número</label><input type="text" id="sb-num" name="numero" required maxlength="10" value="${esc(d.numero || '')}"></div>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div class="campo" style="flex:1 1 200px"><label for="sb-comp">Complemento</label><input type="text" id="sb-comp" name="complemento" maxlength="60" value="${esc(d.complemento || '')}"></div>
+      <div class="campo" style="flex:1 1 200px"><label for="sb-bairro">Bairro</label><input type="text" id="sb-bairro" name="bairro" required maxlength="60" value="${esc(d.bairro || '')}"></div>
+    </div>
+    <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:14px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Os dados são da minha empresa (ou meus) e autorizo a criação da conta no Asaas com divisão automática do pagamento: a nossa parte fixa de cada venda vai para a Soft Consultas e o restante fica na minha conta.</span></label>
+    <button class="btn" type="submit">Criar minha conta de recebimento</button>
+  </form>` : `
+  <p style="margin:0 0 10px">Situação: <strong style="color:${sub ? sub[1] : 'inherit'}">${sub ? sub[0] : esc(x.sub_status || '')}</strong>${d.nome ? ` · ${esc(d.nome)}` : ''}</p>
+  ${x.sub_status === 'aprovada' ? `<p>As cobranças dos seus clientes saem no nome de <strong>${esc(d.nome || '')}</strong> e a sua parte cai direto na sua conta Asaas. Para sacar, entre no app ou no site do Asaas com o e-mail <strong>${esc(d.email || '')}</strong>.</p>` : ''}
+  ${x.sub_status === 'pendente' ? `<p>Falta a aprovação do Asaas. Procure o e-mail do Asaas em <strong>${esc(d.email || '')}</strong> (veja também o spam), crie a senha e envie os documentos pedidos.</p>
+  ${docs.length ? `<ul style="padding-left:20px">${docs.map((o) => `<li>${esc(o.titulo)}${o.status ? ` · <span class="muted">${esc(o.status)}</span>` : ''}${o.link ? ` · <a href="${esc(o.link)}" target="_blank" rel="noopener">enviar agora</a>` : ''}</li>`).join('')}</ul>` : ''}
+  <form method="post" action="/parceiro/marca/status"><button class="btn sec" type="submit">Atualizar situação</button></form>` : ''}
+  ${x.sub_status === 'reprovada' ? '<p>O Asaas não aprovou a conta. Fale com a gente pelo WhatsApp para resolver. Enquanto isso, as vendas continuam pela nossa conta, com a sua comissão por Pix.</p>' : ''}
+  ${x.sub_erro ? `<p class="muted" style="font-size:.85rem">Último aviso do Asaas: ${esc(x.sub_erro)}</p>` : ''}`;
+  return `<p><a href="/parceiro">← Área do parceiro</a></p>
+<h1 style="font-size:1.6rem">Sua marca (white label)</h1>
+${ok ? `<div class="aviso ok">${esc(ok)}</div>` : ''}${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+<form class="cartao" method="post" action="/parceiro/marca" enctype="multipart/form-data" style="max-width:760px;margin-bottom:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">1. Marca e página de vendas</h2>
+  <p class="muted" style="margin-top:0">Com a marca ativa, a página de pagamento, o acompanhamento do pedido, a ficha do Rating e os e-mails do cliente saem com o nome e o logo da sua empresa. O atendimento (botão de ajuda) vai para o seu WhatsApp.</p>
+  <label style="display:flex;gap:10px;align-items:center;margin-bottom:14px"><input type="checkbox" name="ativa" value="1" ${x.marca_ativa ? 'checked' : ''} style="width:20px;height:20px"> <strong>Usar a minha marca com os meus clientes</strong></label>
+  <div class="campo"><label for="mc-nome">Nome da empresa (como o cliente vê)</label><input type="text" id="mc-nome" name="nome" required maxlength="60" value="${v('marca_nome')}"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+    <div class="campo" style="flex:1 1 260px"><label for="mc-logo">Logo (PNG, JPG ou WEBP, até 1 MB)</label><input id="mc-logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp"></div>
+    ${x.marca_logo ? `<div class="campo" style="flex:0 1 auto"><img src="/marca-logo/${x.usuario_id}?v=${esc(String(x.marca_logo).slice(-8))}" alt="Logo atual" style="max-height:48px;max-width:160px;display:block;margin-bottom:6px"><label style="font-weight:400"><input type="checkbox" name="remover_logo" value="1"> remover</label></div>` : ''}
+    <div class="campo" style="flex:0 1 120px"><label for="mc-cor">Cor</label><input id="mc-cor" name="cor" type="color" value="${esc(/^#[0-9a-f]{6}$/i.test(x.marca_cor || '') ? x.marca_cor : '#9F31D3')}" style="width:100%;min-height:46px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="mc-wpp">WhatsApp de atendimento</label><input type="text" id="mc-wpp" name="whatsapp" inputmode="tel" maxlength="20" value="${v('marca_whatsapp')}" placeholder="47 99999-9999"></div>
+    <div class="campo" style="flex:1 1 240px"><label for="mc-email">E-mail de atendimento (respostas dos e-mails)</label><input id="mc-email" name="email" type="email" maxlength="120" value="${v('marca_email')}"></div>
+  </div>
+  <div class="campo"><label for="mc-slug">Endereço da sua página de vendas</label><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="muted">${esc(base)}/p/</span><input type="text" id="mc-slug" name="slug" maxlength="40" value="${v('marca_slug')}" placeholder="sua-empresa" style="flex:1 1 180px"></div><small class="muted">Letras minúsculas, números e hífen. Vazio = criado a partir do nome.</small></div>
+  <div class="campo"><label for="mc-texto">Texto de apresentação da página (opcional)</label><textarea id="mc-texto" name="texto" maxlength="400" rows="3" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px;width:100%">${v('marca_texto')}</textarea></div>
+  <h3 style="font-size:1.05rem;margin:6px 0 8px">Preços na sua página de vendas</h3>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">${regras.filter((r) => r.disponivel).map((r) => `<div class="campo" style="flex:1 1 200px"><label for="mc-p-${r.servico}">${esc(r.nomeServico)} (R$)</label><input type="text" id="mc-p-${r.servico}" name="preco_${r.servico}" inputmode="decimal" value="${rs(precos[r.servico])}" placeholder="${rs(r.preco)}"><small class="muted">De ${reais(r.precoMinimo)} a ${reais(r.precoMaximo)}. Vazio = ${reais(r.preco)}. Sua parte: o que passar de ${reais(r.nossaParte)}.</small></div>`).join('')}</div>
+  <button class="btn" type="submit">Salvar minha marca</button>
+  ${link && x.marca_ativa ? `<div class="campo" style="margin:16px 0 0"><label for="mc-link">Sua página de vendas (divulgue este link)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" id="mc-link" readonly value="${esc(link)}" style="flex:1 1 260px"><button class="btn sec" type="button" data-copiar-texto="${esc(link)}">Copiar</button><a class="btn sec" href="${esc(link)}" target="_blank" rel="noopener">Abrir</a></div></div>` : ''}
+</form>
+<div class="cartao" style="max-width:760px">
+  <h2 style="font-size:1.2rem;margin-top:0">2. Receber no nome da sua empresa</h2>
+  ${recebimento}
+</div>`;
+}
+
+// Página de vendas pública do parceiro (white label): o cliente escolhe o serviço, preenche os dados e vai para o pagamento
+export function paginaVendasMarca({ marca, servicos = [], v = {}, erro = '', executor = '' }) {
+  const f = (k) => esc(v[k] ?? '');
+  const sel = servicos.find((x) => x.servico === v.servico) || servicos[0];
+  const desc = { limpa_nome: 'Retirada das negativações (Serasa, SPC, Boa Vista e protestos) por ação judicial coletiva, com acompanhamento de cada etapa.', rating: 'Análise do seu histórico no Banco Central (Registrato/SCR), score e Cadastro Positivo, ajustes cadastrais e estratégia com os bancos.', combo: 'Limpa Nome e, logo depois, o Rating Bancário: o caminho completo para voltar a ter crédito.' };
+  return `<div style="max-width:820px;margin:0 auto">
+<h1 style="font-size:1.9rem;margin:6px 0 8px">Volte a ter crédito com a ${esc(marca.nome)}</h1>
+<p style="font-size:1.08rem;margin:0 0 20px">${esc(marca.texto || 'Limpe o seu nome e melhore o seu perfil nos bancos, com acompanhamento de cada etapa pelo seu link e por e-mail.')}</p>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:22px">
+${servicos.map((x) => `<div class="cartao" style="margin:0"><h2 style="font-size:1.15rem;margin:0 0 6px">${esc(x.nome)}</h2><p class="muted" style="margin:0 0 10px;font-size:.92rem">${esc(desc[x.servico] || '')}</p><div style="font-family:Montserrat;font-weight:800;font-size:1.5rem">${reais(x.preco)}</div><div class="muted" style="font-size:.88rem">no Pix ou até ${x.parcelas}x no cartão</div></div>`).join('')}
+</div>
+${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+<form class="cartao" method="post" enctype="multipart/form-data">
+  <h2 style="font-size:1.2rem;margin-top:0">Contratar agora</h2>
+  <div class="campo"><label for="pv-svc">Serviço</label><select id="pv-svc" name="servico" style="min-height:46px">${servicos.map((x) => `<option value="${x.servico}" ${x.servico === sel?.servico ? 'selected' : ''}>${esc(x.nome)} · ${reais(x.preco)}</option>`).join('')}</select></div>
+  <div class="campo"><label for="pv-nome">Nome completo do titular (ou razão social)</label><input type="text" id="pv-nome" name="nome" required maxlength="120" value="${f('nome')}"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="pv-cpf">CPF ou CNPJ</label><input type="text" id="pv-cpf" name="cpf" required inputmode="numeric" maxlength="18" value="${f('cpf')}"></div>
+    <div class="campo" style="flex:1 1 180px"><label for="pv-nasc">Nascimento (titular ou sócio)</label><input id="pv-nasc" name="nascimento" type="date" required value="${f('nascimento')}" style="font:inherit;padding:11px 13px;border:1.5px solid #D6CCE0;border-radius:12px"></div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 200px"><label for="pv-tel">WhatsApp</label><input id="pv-tel" type="tel" name="telefone" required inputmode="tel" maxlength="20" value="${f('telefone')}"></div>
+    <div class="campo" style="flex:1 1 240px"><label for="pv-email">E-mail (recebe as atualizações)</label><input id="pv-email" name="email" type="email" required maxlength="120" value="${f('email')}"></div>
+  </div>
+  <div class="campo"><label for="pv-tipo">Documento com foto</label><select id="pv-tipo" name="doc_tipo" style="min-height:46px"><option value="RG">RG</option><option value="CNH" ${v.doc_tipo === 'CNH' ? 'selected' : ''}>CNH</option></select></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <div class="campo" style="flex:1 1 220px"><label for="pv-frente">Foto da frente</label><input id="pv-frente" name="doc_frente" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" required></div>
+    <div class="campo" style="flex:1 1 220px"><label for="pv-verso">Foto do verso</label><input id="pv-verso" name="doc_verso" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></div>
+  </div>
+  <small class="muted" style="display:block;margin:-6px 0 14px">JPG, PNG ou PDF, até 5 MB cada.</small>
+  <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:16px"><input type="checkbox" name="aceite" value="1" required style="width:20px;height:20px;margin-top:3px"> <span>Sou o titular (ou responsável pela empresa), confirmo os dados e autorizo o serviço escolhido (no Limpa Nome, a minha inclusão como associado(a) na ação judicial coletiva${executor ? ` conduzida por ${esc(executor)}` : ''}), conforme os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a>. Entendo que o Limpa Nome retira as negativações, mas a dívida continua com o credor, e que nenhum serviço garante aprovação de crédito.</span></label>
+  ${campoRobo()}
+  <button class="btn largo" type="submit">Continuar para o pagamento</button>
+</form></div>`;
+}
+
+export function adminMarcaParceiro({ x, base, vendasSub = {} }) {
+  if (!x) return '';
+  let d = {}; try { d = JSON.parse(x.sub_dados || '{}') || {}; } catch {}
+  const st = { pendente: 'em análise no Asaas', aprovada: 'aprovada (cobranças no nome dele, com split)', reprovada: 'reprovada', pausada: 'pausada pelo admin (cobranças voltam para a nossa conta)' };
+  const btn = (acao, txt) => `<button class="btn sec" name="acao" value="${acao}" style="min-height:36px;padding:6px 14px;font-size:.9rem">${txt}</button>`;
+  return `<div class="cartao" style="margin-top:18px">
+  <h2 style="font-size:1.2rem;margin-top:0">White label</h2>
+  <p style="margin:0 0 6px"><strong>Marca:</strong> ${x.marca_ativa && x.marca_nome ? `${esc(x.marca_nome)} · <a href="${esc(base)}/p/${esc(x.marca_slug || '')}" target="_blank" rel="noopener">/p/${esc(x.marca_slug || '')}</a>` : 'desligada'}${x.marca_whatsapp ? ` · WhatsApp ${esc(x.marca_whatsapp)}` : ''}</p>
+  <p style="margin:0 0 6px"><strong>Recebimento:</strong> ${x.sub_id ? `${esc(st[x.sub_status] || x.sub_status || '')} · ${esc(d.nome || '')} (${String(d.documento || '').length === 14 ? 'CNPJ' : 'CPF'} final ${esc(String(d.documento || '').slice(-4))}) · ${esc(d.email || '')} · subconta ${esc(x.sub_id || '')}${x.sub_webhook ? ' · webhook ok' : ' · sem webhook (conferência a cada 10 min)'}` : 'pela nossa conta (sem subconta)'}</p>
+  ${x.sub_erro ? `<p class="muted" style="margin:0 0 6px">Último aviso do Asaas: ${esc(x.sub_erro)}</p>` : ''}
+  <p class="muted" style="margin:0 0 10px">Vendas pagas na subconta: ${vendasSub.n || 0} · ${reais(vendasSub.v || 0)} cobrados · nossa parte por split ${reais(vendasSub.s || 0)}</p>
+  <form method="post" action="/admin/parceiros/${x.usuario_id}/marca" style="display:flex;gap:8px;flex-wrap:wrap">
+    ${x.sub_id ? btn('atualizar', 'Conferir situação no Asaas') : ''}
+    ${x.sub_status === 'aprovada' ? btn('pausar_sub', 'Pausar recebimento na subconta') : ''}${x.sub_status === 'pausada' ? btn('retomar_sub', 'Retomar recebimento na subconta') : ''}
+    ${x.marca_ativa ? btn('desligar_marca', 'Desligar a marca') : ''}
+  </form></div>`;
 }

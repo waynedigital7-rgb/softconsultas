@@ -1,5 +1,6 @@
 // Envio de e-mails pelo Resend
-export async function enviarEmail({ para, assunto, html, cabecalhos, anexos }) {
+// nomeRemetente: troca só o nome que aparece (white label do parceiro); responder: reply-to próprio
+export async function enviarEmail({ para, assunto, html, cabecalhos, anexos, nomeRemetente, responder }) {
   if (!process.env.RESEND_API_KEY) {
     console.log(`[e-mail não enviado: RESEND_API_KEY ausente] Para: ${para} | ${assunto}\n${html}`);
     return;
@@ -7,10 +8,17 @@ export async function enviarEmail({ para, assunto, html, cabecalhos, anexos }) {
   const r = await fetch(process.env.RESEND_URL || 'https://api.resend.com/emails', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.RESEND_API_KEY}` },
-    body: JSON.stringify({ from: process.env.EMAIL_REMETENTE, to: [para], subject: assunto, html,
-      ...(process.env.EMAIL_RESPOSTA ? { reply_to: process.env.EMAIL_RESPOSTA } : {}), ...(cabecalhos ? { headers: cabecalhos } : {}), ...(anexos ? { attachments: anexos } : {}) }),
+    body: JSON.stringify({ from: remetente(nomeRemetente), to: [para], subject: assunto, html,
+      ...(responder ? { reply_to: responder } : process.env.EMAIL_RESPOSTA ? { reply_to: process.env.EMAIL_RESPOSTA } : {}), ...(cabecalhos ? { headers: cabecalhos } : {}), ...(anexos ? { attachments: anexos } : {}) }),
   });
   if (!r.ok) throw new Error(`Erro no e-mail: ${r.status} ${await r.text()}`);
+}
+
+function remetente(nome) {
+  const base = String(process.env.EMAIL_REMETENTE || '');
+  if (!nome) return base;
+  const end = (base.match(/<([^>]+)>/) || [])[1] || base.trim();
+  return `${String(nome).replace(/["<>\r\n]/g, '').slice(0, 60)} <${end}>`;
 }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));

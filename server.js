@@ -20,7 +20,7 @@ import * as P from './paginas.js';
 import { enviarEmail, emailRedefinicao, emailBoasVindas } from './email.js';
 import { montarEmail, perfilDo, ETAPAS, PERFIS, CAMPANHAS, montarCampanha } from './emails-marketing.js';
 import { createHmac, randomBytes, createHash, createCipheriv, createDecipheriv, scryptSync, createSign } from 'node:crypto';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { TERMOS, PRIVACIDADE } from './textos.js';
 import { PUBLICOS, paginaLanding } from './landings.js';
 
@@ -231,7 +231,7 @@ const avisoGeral = (usuario) => {
   return t ? `<div class="aviso" role="status" style="background:#FFF6E0;border-color:#F0C24B;color:#5A4300">${P.esc(t)}</div>` : '';
 };
 // Página do link do cliente (sem login): sem menu, sem botões de conta
-const paginaExterna = (res, titulo, corpo, status) => html(res, P.layout({ titulo, corpo, usuario: null, externo: true }), status, { 'X-Robots-Tag': 'noindex' });
+const paginaExterna = (res, titulo, corpo, status, marca = null) => html(res, P.layout({ titulo, corpo, usuario: null, externo: true, marca }), status, { 'X-Robots-Tag': 'noindex' });
 const pagina = (res, titulo, corpo, usuario, status, extra) =>
   html(res, P.layout({ titulo, corpo: (usuario?.admin && !armazenamento.persistente ? AVISO_DISCO : '') + avisoGeral(usuario) + corpo, usuario }), status, extra);
 
@@ -833,9 +833,10 @@ async function expirarCobrancasAbertas() {
   for (const p of peds) {
     try {
       if (p.asaas_id) {
-        const c = await AS.buscarCobranca(p.asaas_id).catch(() => null);
+        const k = chaveDoPedido(p);
+        const c = await AS.buscarCobranca(p.asaas_id, k).catch(() => null);
         if (c && AS.STATUS_PAGO.includes(c.status)) { confirmarPedidoLN(p.id); continue; }
-        if (c && !c.deleted && c.status === 'PENDING') await AS.cancelarCobranca(p.asaas_id);
+        if (c && !c.deleted && c.status === 'PENDING') await AS.cancelarCobranca(p.asaas_id, k);
       }
       db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Pagamento não realizado no prazo', atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(p.id);
     } catch (e) { console.warn('expirar pedido LN', p.id, e.message); }
@@ -2363,7 +2364,7 @@ const areaParceiro = async ({ req, res, usuario, url, parc }) => {
     andamento: n((p) => ['pago', 'em_analise', 'em_lote', 'em_andamento', 'decisao'].includes(p.status)), concluidos: n((p) => p.status === 'concluido'),
     comissoes: db.prepare("SELECT COALESCE(SUM(valor_centavos), 0) s FROM comissoes WHERE usuario_id = ? AND tipo = 'comissao' AND referencia LIKE 'ln_%'").get(usuario.id).s };
   const msgs = { cad: 'Cliente cadastrado.', cancel: 'Pedido cancelado.', mens: 'Mensalidade cancelada. Seu acesso continua até a data já paga.', pref: 'Preferência salva.' };
-  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.paginaParceiro({ usuario, mostrarNome: !!parc.mostrar_nome, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
+  pagina(res, 'Área do parceiro', SV.blocoMensalidadeParceiro({ m: mensalidadeParceiro(parc) }) + SV.blocoMarcaAtalho({ x: parc }) + SV.paginaParceiro({ usuario, mostrarNome: !!parc.mostrar_nome, repasse: parc.repasse_auto ? parc.repasse_pix : null, r: regraParceiro(usuario.id, parc), regras: regrasParceiro(usuario.id, parc), cfg: lnCfgParceiro(usuario.id), pedidos, k, saldo: saldoComissao(usuario.id), base: urlBase(req),
     ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
 };
 // Quem ainda não é parceiro vê a página de adesão (taxa única); o preço de parceiro/atacado só aparece depois
@@ -2482,6 +2483,265 @@ rota('POST', '/parceiro/preferencias', exigeParceiro(async ({ req, res, usuario 
 }));
 // Nome do parceiro para o cliente: só quando o parceiro escolheu aparecer
 const nomeParceiroVisivel = (pid) => { const x = pid && db.prepare('SELECT p.mostrar_nome, u.nome FROM parceiros p JOIN usuarios u ON u.id = p.usuario_id WHERE p.usuario_id = ?').get(pid); return x?.mostrar_nome ? x.nome : null; };
+// ===================== WHITE LABEL DO PARCEIRO =====================
+// Marca própria (nome, logo, cor, WhatsApp), página de vendas /p/:slug e recebimento na subconta Asaas dele, com split da nossa parte.
+const pastaMarcas = path.join(path.dirname(pastaAnuncios), 'marcas');
+mkdirSync(pastaMarcas, { recursive: true });
+function marcaDe(x) {
+  if (typeof x === 'number') x = parceiroRow(x);
+  if (!x?.ativo || !x.marca_ativa || !x.marca_nome) return null;
+  return { uid: x.usuario_id, nome: x.marca_nome, logo: x.marca_logo ? `/marca-logo/${x.usuario_id}?v=${String(x.marca_logo).slice(-8)}` : null, cor: x.marca_cor,
+    whatsapp: x.marca_whatsapp, email: x.marca_email, slug: x.marca_slug, texto: x.marca_texto };
+}
+const marcaPedido = (p) => (p?.parceiro_id ? marcaDe(p.parceiro_id) : null);
+const chaveSub = (x) => { try { return x?.sub_chave ? decifrar(x.sub_chave) : null; } catch { return null; } };
+const subAtiva = (x) => !!(x && x.sub_status === 'aprovada' && x.sub_wallet && chaveSub(x));
+const dadosSub = (x) => { try { return JSON.parse(x?.sub_dados || '{}') || {}; } catch { return {}; } };
+// Chave do Asaas para mexer na cobrança do pedido (subconta do parceiro ou a conta principal)
+function chaveDoPedido(p) {
+  if (!p?.asaas_sub) return undefined;
+  const k = chaveSub(parceiroRow(p.asaas_sub));
+  if (!k) throw new Error('chave da subconta do parceiro indisponível');
+  return k;
+}
+async function nossaCarteira() {
+  let w = lerConfig('asaas_wallet_id');
+  if (w) return w;
+  const r = await AS.minhasCarteiras();
+  w = r?.data?.[0]?.id || r?.id || null;
+  if (w) gravarConfig('asaas_wallet_id', w);
+  return w;
+}
+// Nossa parte fixa do pedido (o que o split manda para a nossa conta)
+const nossaParteDo = (p) => Math.max(0, (p.preco_venda_centavos || cfgPedidoParceiro(p).preco) - (p.parceiro_comissao_centavos || 0));
+async function atualizarSubconta(x, quem = null) {
+  const k = chaveSub(x);
+  if (!k) return x;
+  try {
+    const st = await AS.statusConta(k);
+    const g = String(st?.general || '').toUpperCase();
+    const novo = g === 'APPROVED' ? 'aprovada' : g === 'REJECTED' ? 'reprovada' : 'pendente';
+    if (novo !== x.sub_status) {
+      db.prepare("UPDATE parceiros SET sub_status = ?, sub_aprovada_em = CASE WHEN ? = 'aprovada' THEN datetime('now') ELSE sub_aprovada_em END, sub_erro = NULL, atualizado_em = datetime('now') WHERE usuario_id = ?").run(novo, novo, x.usuario_id);
+      const u = db.prepare('SELECT email FROM usuarios WHERE id = ?').get(x.usuario_id);
+      registrar(quem, `Parceiro: subconta ${novo}`, `${u?.email} · ${dadosSub(x).nome || ''}`);
+      if (novo === 'aprovada') emailServico({ para: u?.email, assunto: 'Recebimento no nome da sua empresa liberado', titulo: 'Sua conta de recebimento foi aprovada!',
+        html: `<p>A partir de agora, as cobranças dos seus clientes saem no nome de <strong>${P.esc(dadosSub(x).nome || '')}</strong> e a sua parte cai direto na sua conta Asaas. A nossa parte fixa é separada automaticamente em cada pagamento.</p>`,
+        botao: { href: `${baseEmails()}/parceiro/marca`, texto: 'Ver minha marca' }, rodape: RODAPE_PARC });
+    } else if (x.sub_erro) db.prepare('UPDATE parceiros SET sub_erro = NULL WHERE usuario_id = ?').run(x.usuario_id);
+  } catch (e) { db.prepare('UPDATE parceiros SET sub_erro = ? WHERE usuario_id = ?').run(String(e.message).slice(0, 300), x.usuario_id); }
+  // Webhook da subconta: os pagamentos dela avisam o nosso sistema (sem ele, a conferência periódica cobre)
+  if (!x.sub_webhook && process.env.ASAAS_WEBHOOK_TOKEN) {
+    try {
+      await AS.criarWebhook(k, { url: `${baseEmails()}/webhook/asaas`, email: String(process.env.ADMIN_EMAIL || '').split(',')[0].trim() || undefined, token: process.env.ASAAS_WEBHOOK_TOKEN });
+      db.prepare('UPDATE parceiros SET sub_webhook = 1 WHERE usuario_id = ?').run(x.usuario_id);
+    } catch (e) { console.warn('webhook subconta:', x.usuario_id, e.message); }
+  }
+  return parceiroRow(x.usuario_id);
+}
+async function documentosSub(x) {
+  const k = chaveSub(x);
+  if (!k || x.sub_status !== 'pendente') return [];
+  try {
+    const r = await AS.documentosConta(k);
+    const st = { NOT_SENT: 'falta enviar', PENDING: 'em análise', APPROVED: 'aprovado', REJECTED: 'recusado', AWAITING_APPROVAL: 'em análise' };
+    return (r?.data || []).map((d) => ({ titulo: d.title || d.type || 'Documento', status: st[d.status] || d.status || '', link: /^https:\/\//.test(d.onboardingUrl || '') && d.status !== 'APPROVED' ? d.onboardingUrl : null }));
+  } catch (e) { return []; }
+}
+const slugDe = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+const precosMarca = (x) => { try { return JSON.parse(x?.marca_precos || '{}') || {}; } catch { return {}; } };
+
+rota('GET', '/parceiro/marca', exigeParceiro(async ({ req, res, usuario, parc, url }) => {
+  if (parc.sub_status === 'pendente' && A.limitar(`subst:${usuario.id}`, 6, 10)) parc = await atualizarSubconta(parc);
+  const docs = await documentosSub(parc);
+  const msgs = { marca: 'Marca salva.', sub: 'Conta de recebimento criada! Agora siga o e-mail do Asaas para enviar os documentos.', st: 'Situação atualizada.' };
+  pagina(res, 'Minha marca', SV.paginaMarcaParceiro({ x: parc, regras: regrasParceiro(usuario.id, parc), base: urlBase(req), docs, ok: msgs[url.searchParams.get('ok')] || '', erro: url.searchParams.get('erro') || '' }), usuario);
+}));
+rota('POST', '/parceiro/marca', exigeParceiro(async ({ req, res, usuario, parc }) => {
+  const volta = (m) => redirecionar(res, `/parceiro/marca?erro=${encodeURIComponent(m)}`);
+  let form;
+  try { form = await corpoMultipart(req, 2 * 1024 * 1024); } catch (e) { return volta(e.message === 'arquivo grande demais' ? 'O logo pode ter até 1 MB.' : 'Não foi possível ler o formulário.'); }
+  const f = form.campos;
+  const nome = String(f.nome || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  if (nome.length < 2) return volta('Informe o nome da empresa.');
+  const slug = slugDe(f.slug || nome);
+  if (slug.length < 3) return volta('O endereço da página precisa ter pelo menos 3 letras ou números.');
+  if (db.prepare('SELECT 1 FROM parceiros WHERE marca_slug = ? AND usuario_id <> ?').get(slug, usuario.id)) return volta(`O endereço "${slug}" já está em uso. Escolha outro.`);
+  const cor = /^#[0-9a-f]{6}$/i.test(f.cor || '') ? f.cor : null;
+  let wpp = A.soNumeros(f.whatsapp);
+  if (wpp && (wpp.length < 10 || wpp.length > 13)) return volta('WhatsApp inválido: use DDD + número.');
+  if (wpp && wpp.length <= 11) wpp = '55' + wpp;
+  const email = String(f.email || '').trim().toLowerCase().slice(0, 120);
+  if (email && !A.emailValido(email)) return volta('E-mail de atendimento inválido.');
+  const precos = {};
+  for (const r of regrasParceiro(usuario.id, parc).filter((r) => r.disponivel)) {
+    const t = String(f[`preco_${r.servico}`] || '').trim();
+    if (!t) continue;
+    const c = centavos(t);
+    if (!Number.isFinite(c) || c < r.precoMinimo || c > r.precoMaximo) return volta(`${r.nomeServico}: o preço precisa ficar entre ${P.reais(r.precoMinimo)} e ${P.reais(r.precoMaximo)}.`);
+    precos[r.servico] = c;
+  }
+  let logo = parc.marca_logo;
+  const a = form.arquivos.logo;
+  if (a) {
+    if (a.dados.length > 1024 * 1024) return volta('O logo pode ter até 1 MB.');
+    const t = tipoImagem(a.dados);
+    if (!t) return volta('O logo precisa ser PNG, JPG ou WEBP.');
+    const arq = `${usuario.id}-${randomBytes(6).toString('hex')}.${t}`;
+    await writeFile(path.join(pastaMarcas, arq), a.dados);
+    if (logo) await unlink(path.join(pastaMarcas, path.basename(logo))).catch(() => {});
+    logo = arq;
+  } else if (f.remover_logo === '1' && logo) { await unlink(path.join(pastaMarcas, path.basename(logo))).catch(() => {}); logo = null; }
+  db.prepare("UPDATE parceiros SET marca_ativa = ?, marca_nome = ?, marca_logo = ?, marca_cor = ?, marca_whatsapp = ?, marca_email = ?, marca_slug = ?, marca_texto = ?, marca_precos = ?, atualizado_em = datetime('now') WHERE usuario_id = ?")
+    .run(f.ativa === '1' ? 1 : 0, nome, logo, cor, wpp || null, email || null, slug, String(f.texto || '').trim().slice(0, 400) || null, JSON.stringify(precos), usuario.id);
+  registrar(usuario, 'Parceiro: marca salva', `${nome} · /p/${slug} · ${f.ativa === '1' ? 'ativa' : 'desligada'}`);
+  redirecionar(res, '/parceiro/marca?ok=marca');
+}));
+rota('GET', '/marca-logo/:uid', async ({ res, params }) => {
+  const x = parceiroRow(Number(params.uid));
+  if (!x?.marca_logo) { res.writeHead(404); return res.end(); }
+  try {
+    const dados = await readFile(path.join(pastaMarcas, path.basename(x.marca_logo)));
+    const ext = x.marca_logo.split('.').pop();
+    res.writeHead(200, { 'Content-Type': ext === 'jpg' ? 'image/jpeg' : `image/${ext}`, 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+    res.end(dados);
+  } catch { res.writeHead(404); res.end(); }
+});
+// Cria a subconta Asaas no nome do parceiro (a apiKey só vem agora: guardamos criptografada)
+rota('POST', '/parceiro/marca/recebimento', exigeParceiro(async ({ req, res, usuario, parc }) => {
+  const f = await corpoForm(req);
+  const volta = (m) => redirecionar(res, `/parceiro/marca?erro=${encodeURIComponent(m)}`);
+  if (parc.sub_id) return volta('Você já tem uma conta de recebimento.');
+  if (!A.limitar(`subc:${usuario.id}`, 3, 60)) return volta('Muitas tentativas. Aguarde alguns minutos.');
+  const pf = f.tipo === 'pf';
+  const d = { tipo: pf ? 'pf' : 'pj', nome: String(f.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120), documento: A.soNumeros(f.documento), email: String(f.email || '').trim().toLowerCase().slice(0, 120),
+    telefone: A.soNumeros(f.telefone), renda: String(f.renda || '').trim(), cep: A.soNumeros(f.cep), endereco: String(f.endereco || '').trim().slice(0, 120), numero: String(f.numero || '').trim().slice(0, 10),
+    complemento: String(f.complemento || '').trim().slice(0, 60), bairro: String(f.bairro || '').trim().slice(0, 60), nascimento: String(f.nascimento || ''), empresa: ['MEI', 'LIMITED', 'INDIVIDUAL', 'ASSOCIATION'].includes(f.empresa) ? f.empresa : 'MEI' };
+  const renda = centavos(d.renda);
+  if (d.nome.length < 3) return volta('Informe a razão social ou o nome completo.');
+  if (!(pf ? d.documento.length === 11 : d.documento.length === 14) || !A.documentoValido(d.documento)) return volta(pf ? 'CPF inválido.' : 'CNPJ inválido.');
+  if (!A.emailValido(d.email)) return volta('E-mail inválido.');
+  if (d.telefone.length < 10 || d.telefone.length > 11) return volta('Celular inválido: use DDD + número.');
+  if (!Number.isFinite(renda) || renda <= 0) return volta('Informe o faturamento mensal.');
+  if (d.cep.length !== 8 || !d.endereco || !d.numero || !d.bairro) return volta('Preencha o endereço completo.');
+  if (pf && !/^\d{4}-\d{2}-\d{2}$/.test(d.nascimento)) return volta('Informe a data de nascimento.');
+  if (f.aceite !== '1') return volta('Confirme a autorização para criar a conta.');
+  const corpo = { name: d.nome, email: d.email, cpfCnpj: d.documento, mobilePhone: d.telefone, incomeValue: renda / 100, address: d.endereco, addressNumber: d.numero,
+    complement: d.complemento || undefined, province: d.bairro, postalCode: d.cep, ...(pf ? { birthDate: d.nascimento } : { companyType: d.empresa }) };
+  try {
+    const r = await AS.criarSubconta(corpo);
+    if (!r?.apiKey || !r?.walletId) throw new Error('O Asaas não devolveu a chave da conta.');
+    db.prepare("UPDATE parceiros SET sub_dados = ?, sub_id = ?, sub_wallet = ?, sub_chave = ?, sub_status = 'pendente', sub_criada_em = datetime('now'), sub_erro = NULL, sub_webhook = 0, atualizado_em = datetime('now') WHERE usuario_id = ?")
+      .run(JSON.stringify(d), r.id || null, r.walletId, cifrar(r.apiKey), usuario.id);
+    registrar(usuario, 'Parceiro: subconta Asaas criada', `${d.nome} · ${d.documento.length === 14 ? 'CNPJ' : 'CPF'} final ${d.documento.slice(-4)} · ${d.email}`);
+    await atualizarSubconta(parceiroRow(usuario.id), usuario).catch(() => {});
+    redirecionar(res, '/parceiro/marca?ok=sub');
+  } catch (e) {
+    console.error('subconta parceiro:', e.message);
+    db.prepare('UPDATE parceiros SET sub_dados = ? WHERE usuario_id = ?').run(JSON.stringify(d), usuario.id);
+    registrar(usuario, 'Parceiro: falha ao criar subconta', `${d.nome} · ${e.message}`);
+    volta(`O Asaas recusou: ${e.message}`);
+  }
+}));
+rota('POST', '/parceiro/marca/status', exigeParceiro(async ({ req, res, usuario, parc }) => {
+  await corpoForm(req);
+  if (A.limitar(`subst2:${usuario.id}`, 10, 10)) await atualizarSubconta(parc, usuario);
+  redirecionar(res, '/parceiro/marca?ok=st');
+}));
+// A cada 2 h: atualiza subcontas em análise; a cada 10 min: confere pedidos pendentes cobrados em subconta (se o webhook falhar)
+setInterval(() => {
+  for (const x of db.prepare("SELECT * FROM parceiros WHERE sub_status = 'pendente' OR (sub_status = 'aprovada' AND sub_webhook = 0)").all()) atualizarSubconta(x).catch(() => {});
+}, 2 * 3600 * 1000).unref();
+setInterval(async () => {
+  for (const p of db.prepare("SELECT * FROM limpa_nome_pedidos WHERE status = 'aguardando_pagamento' AND asaas_sub IS NOT NULL AND asaas_id IS NOT NULL ORDER BY id DESC LIMIT 40").all()) {
+    try {
+      const c = await AS.buscarCobranca(p.asaas_id, chaveDoPedido(p));
+      if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) confirmarPedidoLN(p.id);
+    } catch (e) { console.warn('conferir subconta', p.id, e.message); }
+  }
+}, 10 * 60 * 1000).unref();
+
+// Página de vendas pública do parceiro
+function servicosDaPagina(x) {
+  const precos = precosMarca(x);
+  return regrasParceiro(x.usuario_id, x).filter((r) => r.disponivel).map((r) => {
+    const c = cfgServico(r.servico);
+    const preco = precos[r.servico] && precos[r.servico] >= r.precoMinimo && precos[r.servico] <= r.precoMaximo ? precos[r.servico] : r.preco;
+    return { servico: r.servico, nome: r.nomeServico, preco, parcelas: c.parcelas || 1, regra: r };
+  });
+}
+const parceiroDoSlug = (slug) => { const x = /^[a-z0-9-]{3,40}$/.test(String(slug)) ? db.prepare('SELECT * FROM parceiros WHERE marca_slug = ?').get(slug) : null; return x && marcaDe(x) && mensalidadeParceiro(x).emDia ? x : null; };
+rota('GET', '/p/:slug', ({ res, params, url }) => {
+  const x = parceiroDoSlug(params.slug);
+  if (!x) return paginaExterna(res, 'Página indisponível', P.paginaEmBreve('Página indisponível', 'Esta página não está no ar no momento.'), 404);
+  const servicos = servicosDaPagina(x);
+  if (!servicos.length) return paginaExterna(res, 'Página indisponível', P.paginaEmBreve('Em breve', 'Os serviços desta página voltam em breve.'), 200, marcaDe(x));
+  paginaExterna(res, 'Limpa Nome e Rating Bancário', SV.paginaVendasMarca({ marca: marcaDe(x), servicos, v: { servico: url.searchParams.get('s') || '' }, executor: lnCfg().executor }), 200, marcaDe(x));
+});
+rota('POST', '/p/:slug', async ({ req, res, params }) => {
+  const x = parceiroDoSlug(params.slug);
+  if (!x) return redirecionar(res, `/p/${encodeURIComponent(params.slug)}`);
+  const marca = marcaDe(x), servicos = servicosDaPagina(x);
+  let v = {};
+  const erro = (m) => paginaExterna(res, 'Limpa Nome e Rating Bancário', SV.paginaVendasMarca({ marca, servicos, v, erro: m, executor: lnCfg().executor }), 400, marca);
+  let form;
+  try { form = await corpoMultipart(req, 11 * 1024 * 1024); } catch (e) { return erro(e.message === 'arquivo grande demais' ? 'Arquivos grandes demais (até 5 MB cada).' : 'Não foi possível ler o formulário.'); }
+  v = form.campos;
+  if (!(await passouNoRobo(req, v))) return erro('Confirme que você não é um robô e envie de novo.');
+  const s = servicos.find((y) => y.servico === v.servico);
+  if (!s) return erro('Escolha um serviço.');
+  const r = s.regra;
+  const nome = String(v.nome || '').trim().replace(/\s+/g, ' ').slice(0, 120);
+  const cpf = A.soNumeros(v.cpf);
+  const nasc = String(v.nascimento || '');
+  const tel = A.soNumeros(v.telefone);
+  const email = String(v.email || '').trim().toLowerCase().slice(0, 120);
+  const docTipo = v.doc_tipo === 'CNH' ? 'CNH' : 'RG';
+  if (nome.split(' ').length < 2) return erro('Informe o nome completo do titular.');
+  if (!((cpf.length === 11 || cpf.length === 14) && A.documentoValido(cpf))) return erro('CPF ou CNPJ inválido.');
+  const anos = (Date.now() - Date.parse(nasc)) / (365.25 * 86400000);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nasc) || !(anos >= 18 && anos < 120)) return erro('Informe uma data de nascimento válida (o titular ou sócio precisa ser maior de idade).');
+  if (tel.length < 10 || tel.length > 13) return erro('Informe um WhatsApp válido com DDD.');
+  if (!A.emailValido(email)) return erro('Informe um e-mail válido.');
+  if (v.aceite !== '1') return erro('É preciso aceitar a autorização para continuar.');
+  if (db.prepare(`SELECT 1 FROM limpa_nome_pedidos WHERE cpf = ? AND servico IN ${familiaServico(s.servico)} AND status IN ('pago','em_analise','em_lote','em_andamento','decisao')`).get(cpf)) return erro('Já existe um pedido em andamento para este CPF/CNPJ.');
+  // Mesmo CPF já aguardando pagamento nesta página: leva para o pedido aberto (sem duplicar)
+  const aberto = db.prepare("SELECT token FROM limpa_nome_pedidos WHERE cpf = ? AND parceiro_id = ? AND servico = ? AND status = 'aguardando_pagamento' AND origem_pagina = 1").get(cpf, x.usuario_id, s.servico);
+  if (aberto) return redirecionar(res, `/ln/${aberto.token}`);
+  const docs = {};
+  for (const lado of ['doc_frente', 'doc_verso']) {
+    const a = form.arquivos[lado];
+    if (!a) continue;
+    if (a.dados.length > 5 * 1024 * 1024) return erro('Cada arquivo pode ter até 5 MB.');
+    const t = tipoDoc(a.dados);
+    if (!t) return erro('Envie o documento em JPG, PNG, WEBP ou PDF.');
+    docs[lado] = { t, dados: a.dados };
+  }
+  if (!docs.doc_frente) return erro('Envie a foto da frente do documento.');
+  if (!A.limitar(`pv:${ipDe(req)}`, 6, 60)) return erro('Muitos pedidos em pouco tempo. Aguarde alguns minutos.');
+  const venda = s.preco, comissao = Math.max(0, venda - r.nossaParte);
+  const token = randomBytes(16).toString('hex');
+  const id = Number(db.prepare(`INSERT INTO limpa_nome_pedidos (usuario_id, nome, cpf, nascimento, telefone, email, doc_tipo, titular_proprio, aceite_em, aceite_ip, valor_centavos, forma_pagamento, parcelas, juros_centavos,
+      parceiro_id, parceiro_modelo, parceiro_comissao_centavos, token, preco_venda_centavos, servico, origem_pagina) VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), ?, ?, 'pix', 1, 0, ?, 'comissao', ?, ?, ?, ?, 1)`)
+    .run(x.usuario_id, nome, cpf, nasc, tel, email, docTipo, ipDe(req), venda, x.usuario_id, comissao, token, venda, s.servico).lastInsertRowid);
+  try {
+    const nomes = {};
+    for (const [lado, d] of Object.entries(docs)) {
+      const arq = `${id}-${lado.slice(4)}-${randomBytes(8).toString('hex')}.${d.t}`;
+      await writeFile(path.join(pastaDocsLimpaNome, arq), d.dados, { mode: 0o600 });
+      nomes[lado] = arq;
+    }
+    db.prepare('UPDATE limpa_nome_pedidos SET doc_frente = ?, doc_verso = ? WHERE id = ?').run(nomes.doc_frente || null, nomes.doc_verso || null, id);
+  } catch (e) {
+    db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Falha ao salvar os documentos', atualizado_em = datetime('now') WHERE id = ?").run(id);
+    return erro('Não foi possível salvar os documentos. Tente de novo.');
+  }
+  registrar(null, 'Parceiro: venda pela página própria', `#${id} · ${marca.nome} · ${r.nomeServico} · ${nome} · ${P.reais(venda)} · comissão ${P.reais(comissao)}`);
+  const p = db.prepare('SELECT * FROM limpa_nome_pedidos WHERE id = ?').get(id);
+  emailParceiroLN(p, 'Novo cliente pela sua página', `Um cliente se cadastrou pela sua página de vendas: <strong>${P.esc(r.nomeServico)}</strong> por ${P.reais(venda)}. Ele já está na tela de pagamento.`);
+  redirecionar(res, `/ln/${token}`);
+});
+
 rota('GET', '/parceiro/novo', exigeParceiro(({ res, usuario, parc, url }) => {
   const cfg = lnCfgParceiro(usuario.id);
   if (!regrasParceiro(usuario.id, parc).some((r) => r.disponivel)) return redirecionar(res, '/parceiro');
@@ -2607,9 +2867,10 @@ rota('POST', '/parceiro/cliente/:id/cancelar', exigeParceiro(async ({ req, res, 
   const p = db.prepare("SELECT * FROM limpa_nome_pedidos WHERE id = ? AND parceiro_id = ? AND status = 'aguardando_pagamento'").get(Number(params.id), usuario.id);
   if (!p) return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Este pedido não pode mais ser cancelado.')}`);
   if (p.asaas_id) {
-    const c = await AS.buscarCobranca(p.asaas_id).catch(() => null);
+    let k; try { k = chaveDoPedido(p); } catch { return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Não foi possível conferir a cobrança agora. Tente de novo.')}`); }
+    const c = await AS.buscarCobranca(p.asaas_id, k).catch(() => null);
     if (c && AS.STATUS_PAGO.includes(c.status)) { confirmarPedidoLN(p.id); return redirecionar(res, `/parceiro?erro=${encodeURIComponent('Este pedido já foi pago, não dá para cancelar.')}`); }
-    if (c && !c.deleted) await AS.cancelarCobranca(p.asaas_id).catch(() => {});
+    if (c && !c.deleted) await AS.cancelarCobranca(p.asaas_id, k).catch(() => {});
   }
   db.prepare("UPDATE limpa_nome_pedidos SET status = 'cancelado', obs_admin = 'Cancelado pelo parceiro', atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(p.id);
   registrar(usuario, 'Parceiro: cancelou pedido', `#${p.id} · ${p.nome}`);
@@ -2629,13 +2890,16 @@ rota('GET', '/ln/:token', ({ res, usuario, params, url }) => {
   const p = pedidoToken(params.token);
   if (!p) return paginaExterna(res, 'Pedido não encontrado', P.paginaEmBreve('Link inválido', 'Este link de pedido não existe. Confira com quem te enviou.'), 404);
   const cfg = cfgPublicoLN(p);
-  const parceiro = nomeParceiroVisivel(p.parceiro_id);
+  const marca = marcaPedido(p);
+  const parceiro = marca ? null : nomeParceiroVisivel(p.parceiro_id);
   const ficha = (url.searchParams.get('ficha') ? '<div class="aviso ok" style="max-width:620px">Ficha cadastral recebida! Avisamos a cada etapa por e-mail.</div>' : '') + (parceiro ? `<p class="muted" style="margin:-10px 0 16px">Atendimento: ${P.esc(parceiro)}</p>` : '');
-  if (p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && !p.asaas_id)
-    return paginaExterna(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pagamento`, SV.paginaPagarClienteLN({ p, cfg, parceiro, erro: url.searchParams.get('erro') || '' }));
+  if (p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && !p.asaas_id) {
+    const xs = parceiroRow(p.parceiro_id);
+    return paginaExterna(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pagamento`, SV.paginaPagarClienteLN({ p, cfg, parceiro, erro: url.searchParams.get('erro') || '', recebedor: subAtiva(xs) ? dadosSub(xs).nome : '' }), 200, marca);
+  }
   const trocar = p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && p.asaas_id
     ? `<form method="post" action="/ln/${p.token}/trocar" style="max-width:520px;text-align:center;margin:0 auto 18px"><button class="btn sec" style="min-height:34px;padding:4px 14px;font-size:.85rem">Trocar a forma de pagamento</button></form>` : '';
-  paginaExterna(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg, voltar: null, statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo === 'atacado', topo: ficha + (fichaPendente(p) ? avisoFicha(linkFicha(p)) : '') + trocar, ...relacionadosCombo(p) }));
+  paginaExterna(res, `${SERVICOS[p.servico] || 'Limpa Nome'} · pedido #${p.id}`, SV.paginaPedidoLN({ p, cfg, voltar: null, statusUrl: `/api/ln/${p.token}/status`, semPagamento: p.parceiro_modelo === 'atacado', topo: ficha + (fichaPendente(p) ? avisoFicha(linkFicha(p)) : '') + trocar, ...relacionadosCombo(p) }), undefined, marca);
 });
 
 rota('POST', '/ln/:token/pagar', async ({ req, res, params }) => {
@@ -2651,13 +2915,23 @@ rota('POST', '/ln/:token/pagar', async ({ req, res, params }) => {
   const parcelas = forma === 'cartao' ? Math.min(cfg.parcelas, Math.max(1, Math.floor(Number(f.parcelas) || 1))) : 1;
   const total = forma === 'cartao' ? cfg.tabela[parcelas - 1].total : cfg.preco;
   try {
-    const clienteId = (await AS.criarCliente({ nome: p.nome, documento: p.cpf, email: p.email, telefone: p.telefone })).id;
-    const cob = await AS.criarCobrancaServico({ clienteId, valorCentavos: total, pedidoId: p.id, forma, parcelas });
+    // White label com subconta aprovada: a cobrança sai no nome do parceiro e o split manda a nossa parte para a nossa conta
+    const xs = parceiroRow(p.parceiro_id), marca = marcaDe(xs);
+    let chave, split = null, sub = null;
+    if (subAtiva(xs)) {
+      const w = await nossaCarteira().catch((e) => { console.warn('carteira asaas:', e.message); return null; });
+      const parte = nossaParteDo(p);
+      if (w && parte > 0) { chave = chaveSub(xs); split = { walletId: w, centavos: parte }; sub = xs.usuario_id; }
+    }
+    const descricao = marca || sub ? `${SERVICOS[p.servico] || 'Limpa Nome'}${marca ? ` - ${marca.nome}` : ''} #${p.id}` : undefined;
+    const clienteId = (await AS.criarCliente({ nome: p.nome, documento: p.cpf, email: p.email, telefone: p.telefone }, chave)).id;
+    const cob = await AS.criarCobrancaServico({ clienteId, valorCentavos: total, pedidoId: p.id, forma, parcelas, descricao, chave, split });
     let pix = null;
-    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id, chave); } catch (e) { console.warn('Pix indisponível:', e.message); } }
     db.prepare(`UPDATE limpa_nome_pedidos SET valor_centavos = ?, forma_pagamento = ?, parcelas = ?, juros_centavos = ?, asaas_id = ?, asaas_parcelamento = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ?,
-      cliente_aceite_em = datetime('now'), cliente_aceite_ip = ?, atualizado_em = datetime('now') WHERE id = ? AND asaas_id IS NULL`)
-      .run(total, forma, parcelas, total - cfg.preco, cob.id, cob.installment || null, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, ipDe(req), p.id);
+      cliente_aceite_em = datetime('now'), cliente_aceite_ip = ?, asaas_sub = ?, split_centavos = ?, atualizado_em = datetime('now') WHERE id = ? AND asaas_id IS NULL`)
+      .run(total, forma, parcelas, total - cfg.preco, cob.id, cob.installment || null, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, ipDe(req), sub, split ? split.centavos : null, p.id);
+    if (sub) registrar(null, 'Limpa Nome: cobrança na subconta do parceiro', `#${p.id} · ${P.reais(total)} · nossa parte ${P.reais(split.centavos)} (split)`);
     if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
     volta();
   } catch (e) { console.error('link cliente LN:', e.message); volta('Não foi possível gerar o pagamento agora. Tente de novo em instantes.'); }
@@ -2668,11 +2942,12 @@ rota('POST', '/ln/:token/trocar', async ({ req, res, params }) => {
   if (!p) return redirecionar(res, '/');
   await corpoForm(req);
   if (p.status === 'aguardando_pagamento' && p.parceiro_modelo === 'comissao' && p.asaas_id && A.limitar(`lnx:${p.id}`, 5, 60)) {
-    const c = await AS.buscarCobranca(p.asaas_id).catch(() => null);
+    let k; try { k = chaveDoPedido(p); } catch { return redirecionar(res, `/ln/${p.token}`); }
+    const c = await AS.buscarCobranca(p.asaas_id, k).catch(() => null);
     if (c && AS.STATUS_PAGO.includes(c.status)) confirmarPedidoLN(p.id);
     else {
-      if (c && !c.deleted) await AS.cancelarCobranca(p.asaas_id).catch(() => {});
-      db.prepare("UPDATE limpa_nome_pedidos SET asaas_id = NULL, asaas_parcelamento = NULL, pix_codigo = NULL, pix_imagem = NULL, link_pagamento = NULL, valor_centavos = ?, juros_centavos = 0, atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(cfgPedidoParceiro(p).preco, p.id);
+      if (c && !c.deleted) await AS.cancelarCobranca(p.asaas_id, k).catch(() => {});
+      db.prepare("UPDATE limpa_nome_pedidos SET asaas_id = NULL, asaas_parcelamento = NULL, pix_codigo = NULL, pix_imagem = NULL, link_pagamento = NULL, asaas_sub = NULL, split_centavos = NULL, valor_centavos = ?, juros_centavos = 0, atualizado_em = datetime('now') WHERE id = ? AND status = 'aguardando_pagamento'").run(cfgPedidoParceiro(p).preco, p.id);
     }
   }
   redirecionar(res, `/ln/${p.token}`);
@@ -2684,7 +2959,7 @@ rota('GET', '/api/ln/:token/status', async ({ res, params }) => {
   if (p.status !== 'aguardando_pagamento') return json(res, { pago: true, valor: p.valor_centavos / 100, eid: `ln-${p.id}` });
   if (p.asaas_id && A.limitar(`stln:${p.id}`, 30, 5)) {
     try {
-      const c = await AS.buscarCobranca(p.asaas_id);
+      const c = await AS.buscarCobranca(p.asaas_id, chaveDoPedido(p));
       if (AS.STATUS_PAGO.includes(c.status) && (p.asaas_parcelamento || Math.round(Number(c.value) * 100) >= p.valor_centavos)) { confirmarPedidoLN(p.id); return json(res, { pago: true, valor: p.valor_centavos / 100, eid: `ln-${p.id}` }); }
     } catch (e) { console.warn('status LN token:', e.message); }
   }
@@ -2693,10 +2968,15 @@ rota('GET', '/api/ln/:token/status', async ({ res, params }) => {
 
 rota('GET', '/ln/:token/ajuda', ({ res, params, url }) => {
   const p = pedidoToken(params.token), cfg = lnCfg();
+  const marca = marcaPedido(p);
+  if (p && marca?.whatsapp) {
+    registrar(null, 'Limpa Nome: cliente chamou o atendimento do parceiro', `pedido #${p.id} (${p.status}) · ${marca.nome}`);
+    return redirecionar(res, `https://wa.me/${marca.whatsapp}?text=${encodeURIComponent(`Olá! Preciso de ajuda com o meu pedido #${p.id} (${SERVICOS[p.servico] || 'Limpa Nome'}).`)}`);
+  }
   if (!p || !cfg.whatsapp) return redirecionar(res, p ? `/ln/${p.token}` : '/');
   const etapa = String(url.searchParams.get('e') || '').replace(/[^\w-]/g, '').slice(0, 30);
   registrar(null, 'Limpa Nome: cliente chamou o atendimento', `link do parceiro · pedido #${p.id} (${p.status})${etapa ? ` · na etapa: ${etapa}` : ''}`);
-  redirecionar(res, `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(`Olá! Preciso de ajuda com o Limpa Nome da Soft Consultas. Meu pedido é o #${p.id}.`)}`);
+  redirecionar(res, `https://wa.me/${cfg.whatsapp}?text=${encodeURIComponent(marca ? `Olá! Preciso de ajuda com o meu pedido #${p.id}.` : `Olá! Preciso de ajuda com o Limpa Nome da Soft Consultas. Meu pedido é o #${p.id}.`)}`);
 });
 
 // ---------- Admin ----------
@@ -2792,7 +3072,18 @@ rota('GET', '/admin/parceiros/:id', exigeAdmin(({ res, usuario, url, params }) =
   const x = listaParceirosAdmin().find((p) => p.usuario_id === Number(params.id));
   if (!x) return voltaParc(res, 'Parceiro não encontrado.');
   const pedidos = db.prepare('SELECT id, nome, cpf, status, servico, parceiro_modelo, valor_centavos, parceiro_comissao_centavos, criado_em, pago_em FROM limpa_nome_pedidos WHERE parceiro_id = ? ORDER BY id DESC LIMIT 200').all(x.usuario_id);
-  pagina(res, 'Admin · Parceiro', SV.adminParceiroEditar({ menu: PD.menu('/admin/parceiros'), x, padrao: padraoParceiro(), cfg: lnCfg(), pedidos, ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' }), usuario);
+  pagina(res, 'Admin · Parceiro', SV.adminParceiroEditar({ menu: PD.menu('/admin/parceiros'), x, padrao: padraoParceiro(), cfg: lnCfg(), pedidos, ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '' })
+    + SV.adminMarcaParceiro({ x: parceiroRow(x.usuario_id), base: baseEmails(), vendasSub: db.prepare("SELECT COUNT(*) n, COALESCE(SUM(valor_centavos), 0) v, COALESCE(SUM(split_centavos), 0) s FROM limpa_nome_pedidos WHERE asaas_sub = ? AND pago_em IS NOT NULL").get(x.usuario_id) }), usuario);
+}));
+rota('POST', '/admin/parceiros/:id/marca', exigeAdmin(async ({ req, res, usuario, params }) => {
+  const f = await corpoForm(req);
+  const x = parceiroRow(Number(params.id));
+  if (!x) return voltaParc(res, 'Parceiro não encontrado.');
+  if (f.acao === 'atualizar' && x.sub_id) { await atualizarSubconta(x, usuario); registrar(usuario, 'Admin: conferiu subconta do parceiro', `#${x.usuario_id}`); }
+  if (f.acao === 'desligar_marca') { db.prepare("UPDATE parceiros SET marca_ativa = 0, atualizado_em = datetime('now') WHERE usuario_id = ?").run(x.usuario_id); registrar(usuario, 'Admin: desligou a marca do parceiro', `#${x.usuario_id} · ${x.marca_nome || ''}`); }
+  if (f.acao === 'pausar_sub') { db.prepare("UPDATE parceiros SET sub_status = 'pausada', atualizado_em = datetime('now') WHERE usuario_id = ? AND sub_status = 'aprovada'").run(x.usuario_id); registrar(usuario, 'Admin: pausou o recebimento na subconta', `#${x.usuario_id}`); }
+  if (f.acao === 'retomar_sub') { db.prepare("UPDATE parceiros SET sub_status = 'pendente', atualizado_em = datetime('now') WHERE usuario_id = ? AND sub_status = 'pausada'").run(x.usuario_id); await atualizarSubconta(parceiroRow(x.usuario_id), usuario); registrar(usuario, 'Admin: retomou o recebimento na subconta', `#${x.usuario_id}`); }
+  redirecionar(res, `/admin/parceiros/${x.usuario_id}?ok=${encodeURIComponent('Feito.')}`);
 }));
 rota('POST', '/admin/parceiros/salvar', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
@@ -3179,16 +3470,21 @@ const MIME_DOC = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', 
 function emailPedidoLN(p, titulo, texto) {
   if (!process.env.RESEND_API_KEY || !p.email) return;
   const base = baseEmails();
+  const marca = marcaPedido(p);
+  const cor = /^#[0-9a-f]{6}$/i.test(marca?.cor || '') ? marca.cor : '#9F31D3';
+  const topo = marca
+    ? `<tr><td style="background:#fff;border-bottom:1px solid #EEE7F4;padding:18px 28px;font-weight:bold;font-size:18px">${marca.logo ? `<img src="${base}${marca.logo}" alt="${P.esc(marca.nome)}" style="max-height:44px;max-width:200px">` : P.esc(marca.nome)}</td></tr>`
+    : `<tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span> · ${P.esc(SERVICOS[p.servico] || 'Limpa Nome')}</td></tr>`;
   const html = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#F4F1F7;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden">
-<tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span> · ${P.esc(SERVICOS[p.servico] || 'Limpa Nome')}</td></tr>
+${topo}
 <tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">${P.esc(titulo)}</h1>
 <p>Olá, ${P.esc(String(p.nome).split(/\s+/)[0])}! ${texto}</p>
-<p style="margin:24px 0"><a href="${base}${linkPedidoCliente(p)}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">${p.token && p.status === 'aguardando_pagamento' ? 'Pagar e acompanhar meu pedido' : 'Acompanhar meu pedido'}</a></p>
+<p style="margin:24px 0"><a href="${base}${linkPedidoCliente(p)}" style="display:inline-block;background:${cor};color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">${p.token && p.status === 'aguardando_pagamento' ? 'Pagar e acompanhar meu pedido' : 'Acompanhar meu pedido'}</a></p>
 <p style="font-size:14px">Dúvidas? <a href="${p.token ? `${base}/ln/${p.token}/ajuda?e=email` : `${base}/limpa-nome/ajuda?p=${p.id}&e=email`}" style="color:#1FA855;font-weight:bold">Fale com a gente no WhatsApp</a></p>
 <p style="font-size:13px;color:#7A7285">Pedido #${p.id} · documento final ${P.esc(String(p.cpf).slice(-4))}</p></td></tr></table></td></tr></table></body></html>`;
-  enviarEmail({ para: p.email, assunto: `${titulo} · Pedido #${p.id}`, html }).catch((e) => console.error('e-mail limpa nome:', e.message));
+  enviarEmail({ para: p.email, assunto: `${titulo} · Pedido #${p.id}`, html, nomeRemetente: marca?.nome, responder: marca?.email || undefined }).catch((e) => console.error('e-mail limpa nome:', e.message));
 }
 const TEXTO_STATUS_LN = {
   pago: (p) => [`Pagamento confirmado`, `Recebemos o seu pagamento. O seu nome será incluído na ação coletiva de <strong>${P.esc(p.lote?.split('-').reverse().join('/') || '')}</strong>.`],
@@ -3219,7 +3515,7 @@ function avisarStatusLN(p) {
   const [t, x] = f(p);
   emailPedidoLN(p, t, x + (p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''));
   enviarPush(p.usuario_id, { titulo: `${SERVICOS[p.servico] || 'Limpa Nome'} · ${t}`, corpo: String(x).replace(/<[^>]+>/g, '').slice(0, 200), link: p.servico === 'rating' ? `/rating/${p.id}` : `/limpa-nome/servico/${p.id}` }).catch(() => {});
-  if (p.parceiro_id) emailParceiroLN(p, t, `Atualização do seu cliente: <strong>${P.esc(SV.STATUS_LN[p.status]?.t || p.status)}</strong>.${p.status === 'pago' && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos ? ` A sua comissão de <strong>${P.reais(p.parceiro_comissao_centavos)}</strong> já está no seu saldo.` : ''}${p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''}`);
+  if (p.parceiro_id) emailParceiroLN(p, t, `Atualização do seu cliente: <strong>${P.esc(SV.STATUS_LN[p.status]?.t || p.status)}</strong>.${p.status === 'pago' && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos ? (p.asaas_sub ? ` A sua parte de <strong>${P.reais(p.parceiro_comissao_centavos)}</strong> (antes das taxas do Asaas) caiu na sua conta de recebimento.` : ` A sua comissão de <strong>${P.reais(p.parceiro_comissao_centavos)}</strong> já está no seu saldo.`) : ''}${p.obs_admin ? `<br><br><strong>Mensagem da equipe:</strong> ${P.esc(p.obs_admin)}` : ''}`);
 }
 // Confirma o pagamento (webhook ou consulta de status). Retorna true só na primeira vez.
 // Repasse automático: parceiros com chave Pix cadastrada recebem a comissão sozinhos.
@@ -3291,12 +3587,13 @@ function confirmarPedidoLN(id) {
     avisarStatusLN(p);
     if (!p.parceiro_id && !p.combo_de) capiCompra({ eid: `ln-${p.id}`, valor: p.valor_centavos, email: p.email, telefone: p.telefone || p.whatsapp, nome: p.nome, usuarioId: p.usuario_id, conteudo: p.servico || 'limpa-nome' });
     // Parceiro: comissão quando o cliente paga (uma vez por pedido)
-    if (p.parceiro_id && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos > 0) {
+    if (p.asaas_sub) registrar(null, 'Parceiro: parte recebida direto na subconta', `#${p.id} · comissão ${P.reais(p.parceiro_comissao_centavos)} · nossa parte ${P.reais(p.split_centavos || 0)} pelo split`);
+    if (p.parceiro_id && p.parceiro_modelo === 'comissao' && p.parceiro_comissao_centavos > 0 && !p.asaas_sub) {
       const ins = db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'comissao', ?, ?, ?)")
         .run(p.parceiro_id, p.parceiro_comissao_centavos, `Limpa Nome #${p.id} · ${String(p.nome).slice(0, 60)}`, `ln_${p.id}`);
       if (ins.changes) { registrar(null, 'Parceiro: comissão creditada', `#${p.id} · ${P.reais(p.parceiro_comissao_centavos)}`); agendarRepasse(p); }
     }
-    if (p.forma_pagamento === 'cartao' && lnCfg().antecipar) anteciparPedidoLN(p.id).catch((e) => console.error('antecipação:', e.message));
+    if (p.forma_pagamento === 'cartao' && lnCfg().antecipar && !p.asaas_sub) anteciparPedidoLN(p.id).catch((e) => console.error('antecipação:', e.message));
   }
   return ok;
 }
@@ -3545,7 +3842,7 @@ const renderFicha = (res, usuario, { p, alvo, action, voltar, erro = '', v = nul
   if (!v && !f) Object.assign(d, { nome: alvo.nome, email: alvo.email, celular: alvo.telefone });
   const precisaDoc = !alvo.doc_frente && !(alvo.combo_de && db.prepare('SELECT doc_frente FROM limpa_nome_pedidos WHERE id = ?').get(alvo.combo_de)?.doc_frente) && !f?.doc_extra;
   const corpo = SV.paginaFichaRating({ p: alvo, d, action, voltar, precisaDoc, temSenha: !!f?.senha_cript, erro });
-  return externo ? paginaExterna(res, 'Ficha cadastral · Rating', corpo, status) : pagina(res, 'Ficha cadastral · Rating', corpo, usuario, status);
+  return externo ? paginaExterna(res, 'Ficha cadastral · Rating', corpo, status, marcaPedido(p) || marcaPedido(alvo)) : pagina(res, 'Ficha cadastral · Rating', corpo, usuario, status);
 };
 // Cliente da venda direta
 const fichaCliente = (fn) => exigeLogin(async (ctx) => {

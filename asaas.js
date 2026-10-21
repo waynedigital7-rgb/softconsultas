@@ -1,10 +1,11 @@
 // Asaas: cobranças Pix para recarga de créditos
 const URL = () => process.env.ASAAS_URL || 'https://api-sandbox.asaas.com/v3';
 
-async function asaas(caminho, opcoes = {}) {
+// opcoes.chave: chave de API de uma subconta (white label do parceiro); sem ela usa a conta principal
+async function asaas(caminho, { chave, ...opcoes } = {}) {
   const r = await fetch(URL() + caminho, {
     ...opcoes,
-    headers: { 'Content-Type': 'application/json', 'User-Agent': 'softconsultas', access_token: process.env.ASAAS_API_KEY },
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'softconsultas', access_token: chave || process.env.ASAAS_API_KEY },
     signal: AbortSignal.timeout(30000),
   });
   const dados = await r.json().catch(() => ({}));
@@ -14,8 +15,8 @@ async function asaas(caminho, opcoes = {}) {
 
 export const PREFIXO = 'screc_'; // identifica recargas da Soft Consultas (o site da Soft Crédito ignora)
 
-export const criarCliente = ({ nome, documento, email, telefone }) =>
-  asaas('/customers', { method: 'POST', body: JSON.stringify({ name: nome, cpfCnpj: documento, email, mobilePhone: telefone, notificationDisabled: true }) });
+export const criarCliente = ({ nome, documento, email, telefone }, chave) =>
+  asaas('/customers', { method: 'POST', chave, body: JSON.stringify({ name: nome, cpfCnpj: documento, email, mobilePhone: telefone, notificationDisabled: true }) });
 
 export function criarCobranca({ clienteId, valorCentavos, recargaId }) {
   const venc = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
@@ -32,8 +33,8 @@ export function criarCobranca({ clienteId, valorCentavos, recargaId }) {
   });
 }
 
-export const pixQrCode = (id) => asaas(`/payments/${id}/pixQrCode`);
-export const buscarCobranca = (id) => asaas(`/payments/${id}`);
+export const pixQrCode = (id, chave) => asaas(`/payments/${id}/pixQrCode`, { chave });
+export const buscarCobranca = (id, chave) => asaas(`/payments/${id}`, { chave });
 export const STATUS_PAGO = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'];
 
 // ---------- Transferência Pix (pagamento de saques de comissão) ----------
@@ -73,14 +74,16 @@ export const saldoConta = () => asaas('/finance/balance');
 // Cobrança Pix do serviço de Limpa Nome (referência própria, separada das recargas)
 export const PREFIXO_LIMPA_NOME = 'sclnp_';
 export const PREFIXO_ADESAO = 'scade_';
-export function criarCobrancaServico({ clienteId, valorCentavos, pedidoId, descricao, forma = 'pix', parcelas = 1, prefixo = PREFIXO_LIMPA_NOME }) {
+// split: { walletId, centavos } → a parte fixa que vai para essa carteira (usado na subconta do parceiro: a nossa parte)
+export function criarCobrancaServico({ clienteId, valorCentavos, pedidoId, descricao, forma = 'pix', parcelas = 1, prefixo = PREFIXO_LIMPA_NOME, chave, split }) {
   const venc = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
   const base = { customer: clienteId, dueDate: venc, description: descricao || `Serviço Limpa Nome - Soft Consultas #${pedidoId}`, externalReference: `${prefixo}${pedidoId}` };
   // Cartão: o cliente digita os dados na página segura do Asaas (invoiceUrl); nada de cartão passa pelo nosso site
   const corpo = forma === 'cartao'
     ? (parcelas > 1 ? { ...base, billingType: 'CREDIT_CARD', installmentCount: parcelas, totalValue: valorCentavos / 100 } : { ...base, billingType: 'CREDIT_CARD', value: valorCentavos / 100 })
     : { ...base, billingType: 'PIX', value: valorCentavos / 100 };
-  return asaas('/payments', { method: 'POST', body: JSON.stringify(corpo) });
+  if (split?.walletId && split.centavos > 0) corpo.split = [forma === 'cartao' && parcelas > 1 ? { walletId: split.walletId, totalFixedValue: split.centavos / 100 } : { walletId: split.walletId, fixedValue: split.centavos / 100 }];
+  return asaas('/payments', { method: 'POST', chave, body: JSON.stringify(corpo) });
 }
 
 // Antecipação de recebíveis do cartão (o dinheiro cai antes, em vez de mês a mês)
@@ -91,7 +94,17 @@ export const solicitarAntecipacao = ({ payment, installment }) =>
 export const buscarAntecipacao = (id) => asaas(`/anticipations/${id}`);
 
 // Cancela (remove) uma cobrança ainda não paga
-export const cancelarCobranca = (id) => asaas(`/payments/${id}`, { method: 'DELETE' });
+export const cancelarCobranca = (id, chave) => asaas(`/payments/${id}`, { method: 'DELETE', chave });
+
+// ---------- Subcontas (white label do parceiro) ----------
+// Cria a subconta no nome da empresa do parceiro. A apiKey só vem nesta resposta: guardar (criptografada) na hora.
+export const criarSubconta = (d) => asaas('/accounts', { method: 'POST', body: JSON.stringify(d) });
+export const minhasCarteiras = () => asaas('/wallets');
+export const statusConta = (chave) => asaas('/myAccount/status', { chave });
+export const documentosConta = (chave) => asaas('/myAccount/documents', { chave });
+export const criarWebhook = (chave, { url, email, token }) => asaas('/webhooks', { method: 'POST', chave, body: JSON.stringify({
+  name: 'Soft Consultas', url, email, enabled: true, interrupted: false, authToken: token, sendType: 'SEQUENTIALLY',
+  events: ['PAYMENT_CREATED', 'PAYMENT_CONFIRMED', 'PAYMENT_RECEIVED', 'PAYMENT_REFUNDED', 'PAYMENT_DELETED'] }) });
 
 // ---------- Assinaturas (Monitoramento de CPF/CNPJ) ----------
 export const PREFIXO_MONITORAMENTO = 'scmon_';

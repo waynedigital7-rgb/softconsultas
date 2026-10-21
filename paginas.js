@@ -14,6 +14,7 @@ export const configurarRastreio = (v) => { rastreioAtivo = !!v; };
 // Widget "Não sou um robô" (Cloudflare Turnstile)
 let chaveRobo = '';
 export const configurarRobo = (k) => { chaveRobo = k; };
+export const campoRobo = () => robo();
 const robo = () => (chaveRobo ? `<div class="cf-turnstile" data-sitekey="${chaveRobo}" data-language="pt-br" style="margin:4px 0 16px"></div>` : '');
 const scriptRobo = () => (chaveRobo ? '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>' : '');
 
@@ -177,7 +178,9 @@ a.cartao:hover{transform:translateY(-4px);box-shadow:0 14px 30px -18px rgba(159,
 .hero h1 em{font-style:normal;color:var(--roxo)}
 `;
 
-export function layout({ titulo, corpo, usuario, descricao = '', minimo = false, externo = false }) {
+// marca: white label do parceiro ({ nome, logo, cor }): a página externa sai só com a marca dele
+export function layout({ titulo, corpo, usuario, descricao = '', minimo = false, externo = false, marca = null }) {
+  if (marca && externo) return layoutMarca({ titulo, corpo, marca, descricao });
   if (ehModoApp()) return layoutApp({ titulo, corpo, usuario });
   const nav = usuario
     ? `<a href="/painel">Painel</a><a href="/consultas">Consultas</a><a href="/limpa-nome">Limpa Nome</a><a href="/rating">Rating</a><a href="/monitoramento">Monitoramento</a><a href="/historico">Histórico</a><a href="/recarregar">Recarregar</a><a href="/indicacoes">Indicações</a>${usuario.parceiro ? '<a href="/parceiro">Parceiro</a>' : '<a href="/parceiro">Seja parceiro</a>'}<a href="/conta">Minha conta</a>${usuario.admin ? '<a href="/admin">Admin</a>' : ''}
@@ -395,6 +398,30 @@ const ICONES_APP = {
   conta: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
 };
 const ABAS_APP = [['/app', 'Início', 'inicio'], ['/monitoramento', 'Meu CPF', 'cpf'], ['/limpa-nome/servico', 'Limpa Nome', 'limpa'], ['/rating', 'Rating', 'rating'], ['/conta', 'Conta', 'conta']];
+const corMarca = (c) => (/^#[0-9a-f]{6}$/i.test(String(c || '')) ? c : '#9F31D3');
+export function layoutMarca({ titulo, corpo, marca, descricao = '' }) {
+  const cor = corMarca(marca.cor);
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(titulo)} · ${esc(marca.nome)}</title>
+${descricao ? `<meta name="description" content="${esc(descricao)}">` : ''}<meta property="og:title" content="${esc(marca.nome)}">
+${marca.logo ? `<link rel="icon" href="${esc(marca.logo)}"><meta property="og:image" content="${esc(marca.logo)}">` : ''}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700;800&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>${CSS}
+:root{--roxo:${cor}}
+.topo-marca{background:#fff;border-bottom:1px solid var(--borda)}
+.topo-marca .in{max-width:1100px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;gap:12px}
+.topo-marca img{max-height:44px;max-width:180px;object-fit:contain}
+.topo-marca b{font-family:Montserrat,sans-serif;font-size:1.15rem;color:var(--preto)}
+.btn:not(.sec){background:${cor}}
+</style><script src="/app.js?v=${VERSAO_APP}" defer></script>${scriptRobo()}</head><body>
+<header class="topo-marca"><div class="in">${marca.logo ? `<img src="${esc(marca.logo)}" alt="${esc(marca.nome)}">` : ''}<b>${marca.logo ? '' : esc(marca.nome)}</b></div></header>
+<main>${corpo}</main>
+<footer>${esc(marca.nome)}${marca.whatsapp ? ` · <a href="https://wa.me/${esc(marca.whatsapp)}" target="_blank" rel="noopener">WhatsApp</a>` : ''}${marca.email ? ` · <a href="mailto:${esc(marca.email)}">${esc(marca.email)}</a>` : ''} · <a href="/privacidade" target="_blank" rel="noopener">Privacidade</a></footer>
+</body></html>`;
+}
+
 export function layoutApp({ titulo, corpo, usuario }) {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
