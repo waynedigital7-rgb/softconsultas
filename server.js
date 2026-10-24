@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { db, saldoCentavos, saldoComissao, lerConfig, gravarConfig, precoDe, recalcularPrecos, pastaPdfs, armazenamento, fazerBackup, listarBackups, pastaBackups, registrar, pastaAnuncios, pastaDocsLimpaNome, pastaProdutos } from './db.js';
 import { writeFile, access, unlink } from 'node:fs/promises';
 import * as AS from './asaas.js';
-import { consultarApiFull, analisar, achatar, obterPdf, saldoApiFull, limparCacheSaldo, gerarRecargaApiFull } from './apifull.js';
+import { consultarApiFull, analisar, achatar, obterPdf, acharPdf, saldoApiFull, limparCacheSaldo, gerarRecargaApiFull } from './apifull.js';
 import { pdfGenerico } from './pdf.js';
 import { montarResumo as montarResumoRX } from './raiox-resumo.js';
 import { montarDiagnostico as montarDiagnosticoRX } from './raiox-diagnostico.js';
@@ -171,6 +171,34 @@ const CAPI = { token: process.env.META_CAPI_TOKEN || '', teste: process.env.META
 // ===== Aviso de venda para o admin: e-mail, push no app (contas admin) e Telegram (opcional) =====
 // Liga/desliga em Admin → Configurações (config notif_vendas, padrão ligado). Telegram: TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no Render.
 const notifCfg = () => ({ vendas: lerConfig('notif_vendas') !== '0', email: lerConfig('notif_vendas_email') !== '0', telegram: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) });
+// Aviso para o admin pelos mesmos canais do aviso de vendas (e-mail, push no app e Telegram)
+function avisarAdmin({ titulo, texto = '', link = '/admin', assuntoEmail }) {
+  try {
+    const admins = String(process.env.ADMIN_EMAIL || '').split(',').map((x) => x.trim()).filter(Boolean);
+    if (admins.length) enviarEmail({ para: admins[0], assunto: assuntoEmail || titulo,
+      html: `<div style="font-family:Arial,sans-serif;font-size:16px;color:#0F0C14"><p style="font-size:19px;margin:0 0 8px"><strong>${P.esc(titulo)}</strong></p>${texto ? `<p style="margin:0 0 12px;white-space:pre-line">${P.esc(texto)}</p>` : ''}<a href="${baseEmails()}${link}" style="color:#9F31D3;font-weight:bold">Abrir no admin</a></div>` })
+      .catch((e) => console.error('aviso admin (e-mail):', e.message));
+    for (const a of db.prepare('SELECT id FROM usuarios WHERE admin = 1 AND ativo = 1').all()) enviarPush(a.id, { titulo, corpo: texto.split('\n')[0] || titulo, link: '/app' }).catch(() => {});
+    const tg = process.env.TELEGRAM_BOT_TOKEN, chat = process.env.TELEGRAM_CHAT_ID;
+    if (tg && chat) fetch(`https://api.telegram.org/bot${tg}/sendMessage`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(10000),
+      body: JSON.stringify({ chat_id: chat, text: `${titulo}${texto ? `\n${texto}` : ''}` }) }).catch((e) => console.error('aviso admin (telegram):', e.message));
+  } catch (e) { console.error('aviso admin:', e.message); }
+}
+// Consulta cara: avisa quando um cliente pede uma consulta com custo alto na APIFull (para controlar o saldo de lá)
+const limiteConsultaCara = () => Number(lerConfig('alerta_consulta_cara_centavos') ?? 5000);
+async function avisarConsultaCara({ usuario, produto, cid, documento }) {
+  try {
+    const lim = limiteConsultaCara();
+    if (!lim || usuario.interno || !(produto.custo_centavos >= lim)) return;
+    let saldo = null; try { saldo = await saldoApiFull({ forcar: true }); } catch {}
+    const falta = saldo !== null && saldo < produto.custo_centavos;
+    const doc = String(documento || ''); const docTxt = doc.length > 4 ? `final ${doc.slice(-4)}` : doc;
+    registrar(null, 'Consulta cara pedida', `#${cid} · ${produto.nome} · custo ${P.reais(produto.custo_centavos)} · cliente ${usuario.email} · saldo APIFull ${saldo === null ? '?' : P.reais(saldo)}`);
+    avisarAdmin({ titulo: `${falta ? '🚨 SALDO APIFULL INSUFICIENTE' : '⚠️ Consulta cara'}: ${produto.nome}`,
+      texto: `Custo na APIFull: ${P.reais(produto.custo_centavos)} · cliente paga ${P.reais(produto.preco_centavos)}\nCliente: ${usuario.nome} (${usuario.email}) · documento ${docTxt}\nSaldo da APIFull agora: ${saldo === null ? 'não consegui ler' : P.reais(saldo)}${falta ? '\nA consulta deve falhar por falta de saldo (o cliente é estornado). Recarregue a APIFull.' : ''}`,
+      link: '/admin/consultas' });
+  } catch (e) { console.error('aviso consulta cara:', e.message); }
+}
 function notificarVenda({ produto, valor, cliente = '', detalhe = '', link = '/admin' }) {
   try {
     if (lerConfig('notif_vendas') === '0') return;
@@ -1056,6 +1084,7 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 
+  avisarConsultaCara({ usuario, produto, cid, documento: val.v }); // sem esperar: não atrasa a consulta do cliente
   try {
     const dados = await consultarApiFull(produto, val.v);
     const a = analisar(dados);
@@ -1078,6 +1107,9 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
       db.prepare("INSERT OR IGNORE INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'estorno', ?, ?, ?)")
         .run(usuario.id, produto.preco_centavos, `Estorno: ${produto.nome}`, `est_${cid}`);
     }
+    // Avisa o admin de cada consulta que falhou (com o motivo da APIFull), para agir rápido (ex.: saldo acabou)
+    if (lerConfig('notif_falhas') !== '0') avisarAdmin({ titulo: `❌ Consulta falhou: ${produto.nome}`,
+      texto: `Motivo: ${String(e.message).slice(0, 300)}\nCliente: ${usuario.nome} (${usuario.email})${usuario.interno ? ' · conta interna' : ` · estornado ${P.reais(produto.preco_centavos)}`}`, link: '/admin/consultas' });
   }
   limparCacheSaldo();
   // Consulta concluída: abre direto o PDF. Se falhou, mostra o aviso de estorno.
@@ -1636,13 +1668,13 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
-  maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), notif: notifCfg(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
+  maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), alertaCara: limiteConsultaCara(), primeira: bonusPrimeira(), notif: notifCfg(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
 
 rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = centavos(f.minimo), markup = Number(String(f.markup || '').replace(',', '.'));
-  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), primeira: bonusPrimeira(), notif: notifCfg(), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), alertaCara: limiteConsultaCara(), primeira: bonusPrimeira(), notif: notifCfg(), erro: m }), usuario, 400);
   const dias = Number(f.dias);
   if (!Number.isInteger(dias) || dias < 1 || dias > 365) return erro('O prazo do histórico precisa ser entre 1 e 365 dias.');
   const comissaoMax = Number(f.comissao_maxima), saqueMin = centavos(f.saque_minimo);
@@ -1655,6 +1687,8 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const bpTeto = centavos(f.primeira_teto || '0'), bpDias = Math.floor(Number(f.primeira_dias || 0));
   if (!Number.isFinite(bpTeto) || bpTeto < 0 || !Number.isFinite(bpDias) || bpDias < 0 || bpDias > 365) return erro('Bônus máximo ou prazo da primeira recarga inválido.');
   const alerta = centavos(f.alerta_apifull);
+  const alertaCara = centavos(f.alerta_cara || '0');
+  if (!Number.isFinite(alertaCara) || alertaCara < 0) return erro('Valor do aviso de consulta cara inválido.');
   if (!Number.isFinite(alerta) || alerta < 0) return erro('Valor de alerta do saldo APIFull inválido.');
   if (!Number.isFinite(minimo) || minimo < 500) return erro('A recarga mínima precisa ser de pelo menos R$ 5,00.');
   const maximo = centavos(f.maximo);
@@ -1675,6 +1709,7 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('saque_minimo_centavos', saqueMin);
   gravarConfig('saque_taxa_percentual', taxaS);
   gravarConfig('alerta_saldo_apifull_centavos', alerta);
+  gravarConfig('alerta_consulta_cara_centavos', alertaCara);
   gravarConfig('bonus_primeira_percentual', bpPct);
   gravarConfig('bonus_primeira_minimo_centavos', bpMin);
   gravarConfig('bonus_primeira_ate', bpAte);
@@ -2094,6 +2129,8 @@ const raioxCfg = () => ({
 });
 const produtoRaioX = () => db.prepare("SELECT * FROM produtos WHERE slug = ? AND endpoint <> ''").get(raioxCfg().produto);
 const arquivoRaioX = (id) => path.join(pastaProdutos, `raiox-${Number(id)}.pdf`);
+// PDF oficial da consulta (o mesmo da Cred Completa Plus), enviado junto com o nosso diagnóstico
+const arquivoRaioXOficial = (id) => path.join(pastaProdutos, `raiox-${Number(id)}-oficial.pdf`);
 const pedidoRX = (token) => (/^[a-f0-9]{32}$/.test(String(token)) ? db.prepare('SELECT * FROM raiox_pedidos WHERE token = ?').get(token) : null);
 const raioxEmAndamento = new Set();
 
@@ -2124,6 +2161,7 @@ async function entregarRaioX(id, { reenviar = false } = {}) {
       db.prepare('UPDATE raiox_pedidos SET tentativas = tentativas + 1 WHERE id = ?').run(p.id);
       const dados = await consultarApiFull(produto, p.documento);
       limparCacheSaldo();
+      try { const of = await obterPdf(acharPdf(dados)); if (of) await writeFile(arquivoRaioXOficial(p.id), of); else console.warn('raio-x', p.id, 'sem PDF oficial na resposta'); } catch (e) { console.warn('raio-x pdf oficial:', e.message); }
       const resumo = montarResumoRX(dados);
       const diag = montarDiagnosticoRX(resumo, p.documento, { limpaNome: lnCfg().ativo ? lnCfg() : null });
       pdf = await gerarRaioXPDF({ nome: resumo.cadastro?.nome || p.nome, documento: p.documento, resumo, diagnostico: diag, fonte: 'Boa Vista (SCPC)' });
@@ -2134,17 +2172,18 @@ async function entregarRaioX(id, { reenviar = false } = {}) {
     }
     const r = JSON.parse(db.prepare('SELECT resumo FROM raiox_pedidos WHERE id = ?').get(p.id).resumo || '{}');
     const base = baseEmails();
+    const oficial = await readFile(arquivoRaioXOficial(p.id)).catch(() => null);
     await enviarEmail({ para: p.email, assunto: `🩺 Seu Raio-X do ${String(p.documento).length === 14 ? 'CNPJ' : 'CPF'} está pronto`,
       html: `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#F4F1F7;font-family:Arial,Helvetica,sans-serif;color:#0F0C14">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:24px 12px"><tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:18px;overflow:hidden">
 <tr><td style="background:#0F0C14;padding:20px 28px;color:#fff;font-weight:bold;font-size:18px">Soft <span style="color:#C98BEB;font-weight:normal">Consultas</span> · Raio-X</td></tr>
 <tr><td style="padding:28px;font-size:16px;line-height:1.55"><h1 style="font-size:21px;margin:0 0 12px">Seu Raio-X está pronto 🩺</h1>
-<p>Olá, ${P.esc(String(p.nome).split(' ')[0])}! ${r.titulo ? `<strong>${P.esc(r.titulo)}.</strong> ` : ''}O relatório completo está <strong>em anexo</strong>: o diagnóstico, tudo o que aparece no seu documento e o <strong>plano de ação</strong> para agora, 30 e 90 dias.</p>
+<p>Olá, ${P.esc(String(p.nome).split(' ')[0])}! ${r.titulo ? `<strong>${P.esc(r.titulo)}.</strong> ` : ''}O relatório completo está <strong>em anexo</strong>: o diagnóstico, tudo o que aparece no seu documento e o <strong>plano de ação</strong> para agora, 30 e 90 dias.${oficial ? ' Junto vai também o <strong>relatório oficial da consulta</strong> (Boa Vista), com todos os detalhes da fonte.' : ''}</p>
 <p style="margin:24px 0"><a href="${base}/raio-x/r/${p.token}" style="display:inline-block;background:#9F31D3;color:#fff;padding:14px 28px;border-radius:999px;text-decoration:none;font-weight:bold">Abrir meu Raio-X</a></p>
 <p style="font-size:14px">Comece pelo item 1 do plano ainda hoje. Quanto antes, melhor.</p>
 <p style="font-size:12px;color:#7A7285">Soft Consultas · Soft Solutions Technology Ltda · CNPJ 20.801.827/0001-01</p></td></tr></table></td></tr></table></body></html>`,
-      anexos: [{ filename: 'raio-x-soft-consultas.pdf', content: pdf.toString('base64') }] });
+      anexos: [{ filename: 'raio-x-soft-consultas.pdf', content: pdf.toString('base64') }, ...(oficial ? [{ filename: 'relatorio-oficial-da-consulta.pdf', content: oficial.toString('base64') }] : [])] });
     db.prepare("UPDATE raiox_pedidos SET erro = NULL, email_enviado_em = datetime('now') WHERE id = ?").run(p.id);
     falhasRX.delete(id);
     if (reenviar) registrar(null, 'Raio-X: e-mail reenviado', `#${p.id}`);
@@ -2227,7 +2266,7 @@ rota('POST', '/raio-x', async ({ req, res, usuario }) => {
 rota('GET', '/raio-x/r/:token', ({ res, usuario, params }) => {
   const p = pedidoRX(params.token);
   if (!p) return redirecionar(res, '/raio-x');
-  pagina(res, 'Meu Raio-X', SV.paginaPedidoRaioX({ p }), usuario);
+  pagina(res, 'Meu Raio-X', SV.paginaPedidoRaioX({ p, oficial: existsSync(arquivoRaioXOficial(p.id)) }), usuario);
 });
 rota('GET', '/api/raio-x/:token/status', async ({ res, params }) => {
   const p = pedidoRX(params.token);
@@ -2240,6 +2279,15 @@ rota('GET', '/api/raio-x/:token/status', async ({ res, params }) => {
     } catch (e) { console.warn('status raio-x:', e.message); }
   }
   json(res, { pago: false });
+});
+rota('GET', '/raio-x/r/:token/oficial', async ({ res, params }) => {
+  const p = pedidoRX(params.token);
+  if (!p || p.status !== 'paga' || !p.entregue_em) return redirecionar(res, p ? `/raio-x/r/${p.token}` : '/raio-x');
+  try {
+    const pdf = await readFile(arquivoRaioXOficial(p.id));
+    res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="consulta-oficial-${p.id}.pdf"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex' });
+    res.end(pdf);
+  } catch { redirecionar(res, `/raio-x/r/${p.token}`); }
 });
 rota('GET', '/raio-x/r/:token/pdf', async ({ res, params }) => {
   const p = pedidoRX(params.token);
@@ -2317,7 +2365,7 @@ rota('POST', '/admin/raio-x', exigeAdmin(async ({ req, res, usuario }) => {
       catch (e) { return volta(`Falhou: ${e.message}`); }
     }
     if (p.status !== 'paga') return volta('Esse pedido não está pago.');
-    if (f.acao === 'refazer') { db.prepare('UPDATE raiox_pedidos SET entregue_em = NULL, erro = NULL WHERE id = ?').run(p.id); await unlink(arquivoRaioX(p.id)).catch(() => {}); }
+    if (f.acao === 'refazer') { db.prepare('UPDATE raiox_pedidos SET entregue_em = NULL, erro = NULL WHERE id = ?').run(p.id); await unlink(arquivoRaioX(p.id)).catch(() => {}); await unlink(arquivoRaioXOficial(p.id)).catch(() => {}); }
     await entregarRaioX(p.id, { reenviar: true });
     registrar(usuario, f.acao === 'refazer' ? 'Raio-X: refeito pelo admin' : 'Raio-X: reenviado pelo admin', `#${p.id}`);
     const d = db.prepare('SELECT erro FROM raiox_pedidos WHERE id = ?').get(p.id);

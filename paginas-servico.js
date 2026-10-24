@@ -562,7 +562,7 @@ export function paginaVendaRaioX({ cfg, v = {}, erro = '' }) {
 </div>`;
 }
 
-export function paginaPedidoRaioX({ p }) {
+export function paginaPedidoRaioX({ p, oficial = false }) {
   if (p.status === 'expirada') return `<div class="cartao estreito" style="max-width:520px;text-align:center"><h1 style="font-size:1.4rem">Esse pagamento expirou</h1><p class="muted">O Pix não foi pago no prazo. É só fazer um novo pedido.</p><p><a class="btn" href="/raio-x">Fazer meu Raio-X</a></p></div>`;
   if (p.status !== 'paga') return `<div class="cartao estreito" style="max-width:520px;text-align:center" data-raiox="${esc(p.token)}">
   <h1 style="font-size:1.4rem;margin-top:0">Pague ${reais(p.valor_centavos)} e receba seu Raio-X</h1>
@@ -582,7 +582,7 @@ export function paginaPedidoRaioX({ p }) {
   <span class="tag">Raio-X #${p.id}</span>
   <h1 style="font-size:1.6rem;margin:10px 0 6px;color:${cor}">${esc(r.titulo || 'Seu Raio-X está pronto')}</h1>
   <p class="muted">${r.score != null ? `Score ${r.score} · ` : ''}${r.qtd ? `${r.qtd} restrição(ões)` : 'Sem restrições'} · enviado para ${esc(p.email)}</p>
-  <p><a class="btn" href="/raio-x/r/${esc(p.token)}/pdf" target="_blank" rel="noopener">Abrir o relatório completo (PDF)</a></p>
+  <p style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn" href="/raio-x/r/${esc(p.token)}/pdf" target="_blank" rel="noopener">Abrir o Raio-X com o diagnóstico (PDF)</a>${oficial ? `<a class="btn sec" href="/raio-x/r/${esc(p.token)}/oficial" target="_blank" rel="noopener">Relatório oficial da consulta (PDF)</a>` : ''}</p>
   <p class="muted" style="font-size:.9rem">O PDF tem o diagnóstico, tudo o que aparece no seu documento e o plano de ação para agora, 30 e 90 dias.</p>
   <div class="aviso" style="margin-top:14px">Quer acompanhar a evolução do seu CPF? Conheça o <a href="/monitoramento">Monitoramento da Soft Consultas</a>.</div>
 </div>`;

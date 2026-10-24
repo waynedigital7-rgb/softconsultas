@@ -79,7 +79,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
 </form>`;
 }
 
-export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, primeira = { pct: 0, min: 0, ate: '' }, notif = { vendas: true, email: true, telegram: false }, ok, erro }) {
+export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, alertaCara = 5000, primeira = { pct: 0, min: 0, ate: '' }, notif = { vendas: true, email: true, telegram: false }, ok, erro }) {
   return `<h1 style="font-size:1.7rem">Configurações</h1>${menu('/admin/config')}${aviso(ok, erro)}
 <form class="cartao" method="post" action="/admin/config" style="max-width:640px">
   <div class="campo"><label for="markup">Margem sobre o custo APIFull (%)</label><input id="markup" name="markup" type="text" inputmode="numeric" value="${markup}">
@@ -107,6 +107,8 @@ export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10
   <div class="campo"><label for="comissao_maxima">Comissão máxima de indicação (%)</label><input id="comissao_maxima" name="comissao_maxima" type="text" inputmode="numeric" value="${comissaoMax}">
     <small class="muted">Limite que cada usuário pode somar ao preço das consultas dos indicados.</small></div>
   <div class="campo"><label for="alerta_apifull">Avisar quando o saldo da APIFull ficar abaixo de (R$)</label><input id="alerta_apifull" name="alerta_apifull" type="text" inputmode="decimal" value="${(alerta / 100).toFixed(2).replace('.', ',')}"></div>
+  <div class="campo"><label for="alerta_cara">Avisar quando um cliente pedir uma consulta com custo na APIFull a partir de (R$, 0 = não avisar)</label><input id="alerta_cara" name="alerta_cara" type="text" inputmode="decimal" value="${(alertaCara / 100).toFixed(2).replace('.', ',')}">
+    <small class="muted">Chega por e-mail, Telegram e no app (como o aviso de vendas), com o saldo atual da APIFull.</small></div>
   <div class="campo"><label for="saque_minimo">Saque mínimo de comissões (R$)</label><input id="saque_minimo" name="saque_minimo" type="text" inputmode="decimal" value="${(saqueMin / 100).toFixed(2).replace('.', ',')}"></div>
   <div class="campo"><label for="saque_taxa">Taxa sobre saque de comissões (%)</label><input id="saque_taxa" name="saque_taxa" type="text" inputmode="decimal" value="${taxaSaque}">
     <small class="muted">Descontada do valor sacado: num saque de R$ 100 com 5%, o Pix enviado é de R$ 95. Recargas (depósitos) nunca podem ser sacadas, só comissões.</small></div>
@@ -143,7 +145,7 @@ export function adminConsultas({ consultas, ok, erro }) {
     <td>${c.interno ? '<span class="muted">interna</span>' : reais(c.preco_centavos)}</td><td>${reais(c.custo_centavos || 0)}</td>
     <td>${c.comissao_centavos ? reais(c.comissao_centavos) : '—'}</td>
     <td>${c.status === 'concluida' && !c.interno ? `<strong style="color:var(--ok)">${reais(c.preco_centavos - (c.comissao_centavos || 0) - (c.custo_centavos || 0))}</strong>` : '—'}</td>
-    <td>${c.status === 'concluida' ? (c.estornada ? '<span class="muted">Concluída · estornada</span>' : `Concluída${c.interno ? '' : `<form method="post" action="/admin/consultas/estornar" style="margin:6px 0 0;display:flex;gap:4px;flex-wrap:wrap"><input type="hidden" name="id" value="${c.id}"><input type="text" name="motivo" placeholder="Motivo" aria-label="Motivo do estorno" style="width:110px;min-height:32px;padding:4px 8px"><button class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.8rem" data-confirmar="Devolver ${reais(c.preco_centavos)} ao cliente?">Estornar</button></form>`}`) : c.status === 'falhou' ? `<span style="color:var(--erro)" title="${esc(c.erro || '')}">Falhou · estornada</span>` : 'Processando'}</td></tr>`).join('')}
+    <td>${c.status === 'concluida' ? (c.estornada ? '<span class="muted">Concluída · estornada</span>' : `Concluída${c.interno ? '' : `<form method="post" action="/admin/consultas/estornar" style="margin:6px 0 0;display:flex;gap:4px;flex-wrap:wrap"><input type="hidden" name="id" value="${c.id}"><input type="text" name="motivo" placeholder="Motivo" aria-label="Motivo do estorno" style="width:110px;min-height:32px;padding:4px 8px"><button class="btn sec" style="min-height:32px;padding:4px 10px;font-size:.8rem" data-confirmar="Devolver ${reais(c.preco_centavos)} ao cliente?">Estornar</button></form>`}`) : c.status === 'falhou' ? `<span style="color:var(--erro)">Falhou · estornada</span>${c.erro ? `<br><small class="muted" style="display:block;max-width:260px">${esc(String(c.erro).slice(0, 160))}</small>` : ''}` : 'Processando'}</td></tr>`).join('')}
 </table></div></div>`;
 }
 
