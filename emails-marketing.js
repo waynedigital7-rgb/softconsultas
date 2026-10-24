@@ -153,6 +153,8 @@ export const CAMPANHAS = {
   'cpf-credplus': { nome: 'Consulte seu CPF · Cred Completa Plus', produto: 'cred-completa-plus' },
   // Semanal: pode ser reenviada a cada lote; quem já tem pedido em andamento não recebe
   'limpa-nome-servico': { nome: 'Limpa Nome · lote da semana', produto: null, semanal: true },
+  // Rating Bancário: para quem já tem (ou vai ter) o nome limpo e ainda não consegue crédito
+  'rating-servico': { nome: 'Rating Bancário · nome limpo e sem crédito', produto: null },
   // Preços novos (margem menor): uma por segmento; cada cliente recebe só a do seu perfil
   'precos-limpa-nome': { nome: 'Preços novos · perfil Limpa Nome / CPF', produto: null, promo: true, perfil: 'limpa-nome' },
   'precos-veiculos': { nome: 'Preços novos · perfil Veículos', produto: null, promo: true, perfil: 'veiculos' },
@@ -239,6 +241,29 @@ export function montarCampanha({ chave, nome, produto, bonus, base, sair, podeRe
         ${sv.video ? `<p><a href="${link}" style="color:#9F31D3;font-weight:bold">▶ Assista ao vídeo explicativo</a></p>` : ''}
         ${botao(link, 'Quero limpar meu nome')}
         <p style="font-size:13px;color:#5B5366">Garantimos a retirada das negativações; não garantimos aprovação de crédito, que depende de cada empresa. A dívida em si continua com o credor.${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
+    };
+  }
+  if (chave === 'rating-servico') {
+    const sv = servico || {};
+    const link = `${base}/rating${utm}`;
+    const ult = sv.tabela?.at(-1);
+    const parc = sv.parcelas > 1 && ult ? ` ou em até ${sv.parcelas}x de ${reais(ult.parcela)} no cartão` : '';
+    return {
+      assunto: `${primeiro}, nome limpo e não consegue crédito? Tá aqui a solução`,
+      html: moldura({ base, sair, preheader: 'Os bancos olham muito mais que o Serasa. O Rating Bancário trabalha exatamente nisso.', corpo: `
+        <div style="display:inline-block;background:#F6ECFC;color:#5B2D8E;font-weight:bold;font-size:12px;letter-spacing:1px;border-radius:999px;padding:6px 14px">RATING BANCÁRIO</div>
+        <h1 style="font-size:24px;margin:12px 0 12px;line-height:1.25">Nome limpo e não consegue crédito?<br><span style="color:#9F31D3">Tá aqui a solução.</span></h1>
+        <p>${primeiro}, você limpou o nome, mas o cartão continua negado e o financiamento não sai? Isso acontece porque <strong>os bancos não olham só o Serasa</strong>. Eles consultam o seu histórico no <strong>Banco Central (SCR)</strong>, o <strong>Cadastro Positivo</strong> e o seu score, e qualquer ponto fraco ali derruba a aprovação.</p>
+        <p>O <strong>Rating Bancário</strong> trabalha exatamente nisso:</p>
+        ${lista(['Análise do seu histórico no Banco Central (Registrato/SCR)', 'Revisão do score e do Cadastro Positivo', 'Ajustes cadastrais que derrubam a sua nota sem você saber', 'Estratégia de relacionamento com os bancos, passo a passo', 'Acompanhamento de cada etapa por e-mail'])}
+        <div style="background:#0F0C14;color:#ffffff;border-radius:14px;padding:18px 20px;margin:20px 0">
+          <div style="font-size:13px;color:#C98BEB;font-weight:bold;letter-spacing:.5px">RATING BANCÁRIO</div>
+          <div style="font-size:15px;margin-top:6px"><span style="font-size:26px;font-weight:bold">${reais(sv.preco || 0)}</span> <span style="color:#C9BFD4">no Pix${esc(parc)}</span></div>
+          ${sv.prazo ? `<div style="font-size:14px;color:#E3C6F4;margin-top:8px">${esc(sv.prazo)}</div>` : ''}
+        </div>
+        ${botao(link, 'Quero voltar a ter crédito')}
+        ${sv.combo ? `<p style="background:#F6ECFC;border-radius:12px;padding:12px 14px;font-size:15px">Ainda tem negativação no nome? Faça o <strong>combo Limpa Nome + Rating Bancário</strong> por <strong>${reais(sv.combo)}</strong>: primeiro limpamos o nome, depois trabalhamos o seu perfil nos bancos. <a href="${base}/limpa-nome/servico${utm}" style="color:#9F31D3;font-weight:bold">Ver o combo</a></p>` : ''}
+        <p style="font-size:13px;color:#5B5366">Nenhum serviço garante aprovação de crédito: a decisão é sempre de cada banco. O Rating trabalha para deixar o seu perfil o mais forte possível na hora da análise.${podeResponder ? ' Dúvidas? É só responder este e-mail.' : ''}</p>` }),
     };
   }
   throw new Error('Campanha desconhecida');

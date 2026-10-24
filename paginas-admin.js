@@ -26,7 +26,7 @@ ${baixo ? `<div class="aviso erro" role="alert"><strong>Saldo da APIFull baixo: 
   ${num('Saldo em carteiras', reais(m.saldos), 'créditos ainda não usados')}
 </div>
 <div class="grade">
-  ${num('Consultas concluídas', m.consultas, `${m.falhas} falharam e foram estornadas`)}
+  ${num('Consultas concluídas', m.consultas, m.falhas ? `<a href="/admin/consultas?falhas=1">${m.falhas} falharam e foram estornadas · ver motivos</a>` : 'nenhuma falha')}
   ${num('Faturamento com consultas', reais(m.faturamento), 'sem as comissões de indicação')}
   ${num('Custo APIFull', reais(m.custo), `Margem: ${reais(m.faturamento - m.custo)}`)}
 </div>
@@ -136,8 +136,9 @@ export function adminClientes({ clientes, busca = '', ok, erro }) {
 </table></div></div>`;
 }
 
-export function adminConsultas({ consultas, ok, erro }) {
+export function adminConsultas({ consultas, ok, erro, soFalhas = false }) {
   return `<h1 style="font-size:1.7rem">Consultas feitas</h1>${menu('/admin/consultas')}${aviso(ok, erro)}
+  <p>${soFalhas ? '<strong>Mostrando só as que falharam</strong> (com o motivo) · <a href="/admin/consultas">ver todas</a>' : '<a href="/admin/consultas?falhas=1">Ver só as que falharam, com o motivo</a>'}</p>
 <div class="cartao"><div class="rolar"><table class="tabela">
   <tr><th>#</th><th>Data</th><th>Cliente</th><th>Consulta</th><th>Documento</th><th>Finalidade</th><th>Cliente pagou</th><th>Custo APIFull</th><th>Comissão</th><th>Seu lucro</th><th>Status</th></tr>
   ${consultas.map((c) => `<tr><td>${c.id}</td><td>${dt(c.criado_em)}</td><td>${esc(c.cliente)}</td><td>${esc(c.produto)}</td><td>${esc(formatarDoc(c.parametro))}</td>

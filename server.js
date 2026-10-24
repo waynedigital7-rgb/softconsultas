@@ -1364,7 +1364,8 @@ const PUBLICOS_CAMPANHA = {
 // Campanha semanal: a "etapa" leva a data do próximo lote, então pode ser reenviada uma vez por semana
 const etapaCampanha = (chave) => (CAMPANHAS[chave].semanal ? `camp:${chave}:${proximoLoteLN()}` : `camp:${chave}`);
 const filtroCampanha = (chave) => (chave === 'limpa-nome-servico'
-  ? ` AND NOT EXISTS (SELECT 1 FROM limpa_nome_pedidos lp WHERE lp.usuario_id = u.id AND lp.status IN ('pago','em_analise','em_lote','em_andamento','decisao','concluido'))` : '');
+  ? ` AND NOT EXISTS (SELECT 1 FROM limpa_nome_pedidos lp WHERE lp.usuario_id = u.id AND lp.status IN ('pago','em_analise','em_lote','em_andamento','decisao','concluido'))`
+  : chave === 'rating-servico' ? ` AND NOT EXISTS (SELECT 1 FROM limpa_nome_pedidos lp WHERE lp.usuario_id = u.id AND lp.servico IN ('rating','combo') AND lp.pago_em IS NOT NULL)` : '');
 const listaCampanha = (chave, publico, limite = 100000) => {
   const lista = db.prepare(`SELECT u.* FROM usuarios u
   WHERE u.ativo = 1 AND u.admin = 0 AND u.interno = 0 AND u.aceita_emails = 1 AND (${PUBLICOS_CAMPANHA[publico].sql})${filtroCampanha(chave)}
@@ -1391,7 +1392,8 @@ function promoCampanha(chave) {
   const desconto = Math.max(0, ...itens.filter((i) => i.antes).map((i) => Math.floor((1 - i.preco / i.antes) * 100)));
   return { itens, desconto };
 }
-const servicoCampanha = (chave) => (chave === 'limpa-nome-servico' ? { ...lnCfgComTabela(), lote: proximoLoteLN() } : null);
+const servicoCampanha = (chave) => (chave === 'limpa-nome-servico' ? { ...lnCfgComTabela(), lote: proximoLoteLN() }
+  : chave === 'rating-servico' ? { ...cfgServicoComTabela('rating'), combo: cfgServico('combo').ativo ? cfgServico('combo').preco : 0 } : null);
 const produtoCampanha = (chave) => (CAMPANHAS[chave].produto ? db.prepare('SELECT * FROM produtos WHERE slug = ?').get(CAMPANHAS[chave].produto) : null);
 const campanhaRodando = new Set();
 // Fila de campanhas: o que não couber na cota de hoje continua sozinho nos próximos dias
@@ -1449,6 +1451,7 @@ rota('POST', '/admin/emails/campanha', exigeAdmin(async ({ req, res, usuario }) 
   const volta = (m, ok) => redirecionar(res, `/admin/operacao?${ok ? 'ok' : 'erro'}=${encodeURIComponent(m)}`);
   if (!chave) return volta('Campanha inválida.');
   if (chave === 'limpa-nome-servico' && !lnCfg().ativo) return volta('Ligue o serviço Limpa Nome (Admin → Limpa Nome) antes de disparar esta campanha.');
+  if (chave === 'rating-servico' && !cfgServico('rating').ativo) return volta('Ligue o Rating (Admin → Rating, com o preço) antes de disparar esta campanha.');
   if (!process.env.RESEND_API_KEY) return volta('Falta a RESEND_API_KEY no Render: sem ela nenhum e-mail sai.');
   if (f.acao === 'teste') {
     try {
@@ -1766,8 +1769,8 @@ rota('POST', '/admin/clientes/sensivel', exigeAdmin(async ({ req, res, usuario }
 rota('GET', '/admin/consultas', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Consultas feitas', PD.adminConsultas({
   consultas: db.prepare(`SELECT c.*, u.nome AS cliente, (u.admin OR u.interno) AS interno,
     EXISTS (SELECT 1 FROM transacoes t WHERE t.tipo = 'estorno' AND t.referencia = 'est_' || c.id) AS estornada
-    FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ORDER BY c.id DESC LIMIT 300`).all(),
-  ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '',
+    FROM consultas c JOIN usuarios u ON u.id = c.usuario_id ${url.searchParams.get('falhas') === '1' ? "WHERE c.status = 'falhou'" : ''} ORDER BY c.id DESC LIMIT 300`).all(),
+  ok: url.searchParams.get('ok') || '', erro: url.searchParams.get('erro') || '', soFalhas: url.searchParams.get('falhas') === '1',
 }), usuario)));
 
 rota('GET', '/admin/recargas', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Recargas', PD.adminRecargas({
