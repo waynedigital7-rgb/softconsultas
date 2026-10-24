@@ -3,7 +3,7 @@ import { esc, reais, dt } from './paginas.js';
 import { formatarDoc } from './pdf.js';
 
 export const menu = (ativo) => `<nav style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px" aria-label="Administração">
-  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/operacao', 'Operação'], ['/admin/limpa-nome', 'Limpa Nome (serviço)'], ['/admin/rating', 'Rating Bancário'], ['/admin/parceiros', 'Parceiros'], ['/admin/monitoramento', 'Monitoramento'], ['/admin/ebook', 'Ebook'], ['/admin/raio-x/vendas', 'Vendas Raio-X'], ['/admin/raio-x', 'Raio-X (config.)'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
+  ${[['/admin', 'Resumo'], ['/admin/financeiro', 'Financeiro'], ['/admin/produtos', 'Consultas e preços'], ['/admin/clientes', 'Clientes'], ['/admin/rede', 'Rede de clientes'], ['/admin/consultas', 'Consultas feitas'], ['/admin/recargas', 'Recargas'], ['/admin/funil', 'Funil'], ['/admin/operacao', 'Operação'], ['/admin/limpa-nome', 'Limpa Nome (serviço)'], ['/admin/rating', 'Rating Bancário'], ['/admin/parceiros', 'Parceiros'], ['/admin/monitoramento', 'Monitoramento'], ['/admin/ebook', 'Ebook'], ['/admin/raio-x/vendas', 'Vendas Raio-X'], ['/admin/raio-x', 'Raio-X (config.)'], ['/admin/saques', 'Saques de comissão'], ['/admin/campanhas', 'Campanhas'], ['/admin/anuncios', 'Anúncios'], ['/admin/backups', 'Backups'], ['/admin/registro', 'Registro'], ['/admin/config', 'Configurações']]
     .map(([h, t]) => `<a class="btn ${h === ativo ? '' : 'sec'}" style="min-height:40px;padding:8px 18px" href="${h}">${t}</a>`).join('')}
 </nav>`;
 const num = (rot, val, sub = '') => `<div class="cartao"><div class="muted">${rot}</div><div style="font-family:Montserrat,sans-serif;font-size:1.8rem;font-weight:800">${val}</div>${sub ? `<div class="muted" style="font-size:.85rem">${sub}</div>` : ''}</div>`;
@@ -560,4 +560,26 @@ ${(emails.campanhas || []).map((c) => `<form class="cartao" method="post" action
   <p class="muted" style="margin-top:-6px">Use se a APIFull estiver fora do ar ou sem saldo: ninguém é cobrado e o cliente vê uma mensagem de manutenção. Recargas continuam funcionando.</p>
   <button class="btn" type="submit">Salvar</button>
 </form>`;
+}
+
+export function adminFunil({ dias, porDia, porOrigem, total, pix, emailsLigados }) {
+  const pc = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '—');
+  const linha = (r, rot) => `<tr><td>${rot}</td><td><strong>${r.cad}</strong></td><td>${r.viu} <span class="muted">${pc(r.viu, r.cad)}</span></td><td>${r.pix} <span class="muted">${pc(r.pix, r.cad)}</span></td>
+    <td><strong style="color:var(--ok)">${r.pagou}</strong> <span class="muted">${pc(r.pagou, r.cad)}</span></td><td>${reais(r.receita)}</td></tr>`;
+  const cab = (t) => `<tr><th>${t}</th><th>Cadastros</th><th>Abriu a recarga</th><th>Gerou Pix</th><th>Pagou</th><th>Recargas pagas</th></tr>`;
+  const naoPagos = pix.n - pix.pagos;
+  return `<h1 style="font-size:1.7rem">Funil: cadastro → recarga</h1>${menu('/admin/funil')}
+<p class="muted">Cadastros dos últimos <strong>${dias} dias</strong> (sem admin e contas internas) e o que cada um fez depois. ${[7, 14, 30].map((d) => `<a href="/admin/funil?dias=${d}">${d} dias</a>`).join(' · ')}<br>"Abriu a recarga" começou a ser medido em 24/10: cadastros anteriores aparecem com menos.</p>
+${emailsLigados ? '' : '<div class="aviso erro">Os <strong>e-mails automáticos</strong> para quem não recarregou estão <strong>desligados</strong>. Ligue em Operação → E-mails automáticos.</div>'}
+<div class="grade" style="margin-bottom:18px">
+  ${num('Cadastros', total.cad, `últimos ${dias} dias`)}
+  ${num('Abriram a recarga', pc(total.viu, total.cad), `${total.viu} pessoas`)}
+  ${num('Geraram Pix', pc(total.pix, total.cad), `${total.pix} pessoas`)}
+  ${num('Pagaram', pc(total.pagou, total.cad), `${total.pagou} pessoas · ${reais(total.receita)}`)}
+  ${num('Pix gerados e não pagos', naoPagos, `de ${pix.n} · lembrete enviado em ${pix.l1 || 0} · ${pix.l1pagos || 0} pagaram depois do lembrete`)}
+</div>
+<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.15rem;margin-top:0">Onde está a perda</h2>
+<p style="margin:0">${total.cad ? (total.viu / total.cad < 0.4 ? '<strong>A maioria nem abre a recarga.</strong> O problema é o valor percebido logo depois do cadastro: mostre a oferta, o que a consulta revela e o preço antes de pedir dinheiro.' : total.pix / Math.max(1, total.viu) < 0.5 ? '<strong>Abrem a recarga mas não geram o Pix.</strong> O valor ou o pedido de CPF pode estar travando: teste valores menores e deixe clara a oferta.' : total.pagou / Math.max(1, total.pix) < 0.5 ? '<strong>Geram o Pix e não pagam.</strong> Lembretes e facilidade de pagamento resolvem a maior parte (o lembrete automático já está ligado).' : 'O funil está equilibrado: o próximo passo é trazer mais cadastros com o mesmo custo.') : 'Ainda sem cadastros no período.'}</p></div>
+<div class="cartao" style="margin-bottom:18px"><h2 style="font-size:1.15rem;margin-top:0">Por campanha / origem</h2><div class="rolar"><table class="tabela">${cab('Origem')}${porOrigem.map((r) => linha(r, esc(r.chave))).join('')}</table></div></div>
+<div class="cartao"><h2 style="font-size:1.15rem;margin-top:0">Por dia de cadastro</h2><div class="rolar"><table class="tabela">${cab('Dia')}${porDia.map((r) => linha(r, String(r.chave).split('-').reverse().join('/'))).join('')}</table></div></div>`;
 }

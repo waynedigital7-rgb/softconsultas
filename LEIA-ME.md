@@ -78,3 +78,5 @@ Os textos em `/termos` e `/privacidade` são uma minuta. Peça para um advogado 
 - Telegram: crie um bot no @BotFather, mande uma mensagem para ele e coloque `TELEGRAM_BOT_TOKEN` e `TELEGRAM_CHAT_ID` no Render.
 - Liga/desliga em Admin → Configurações → "Aviso de cada venda".
 - Consulta cara: quando um cliente pede uma consulta com custo na APIFull a partir do valor definido em Admin → Configurações (padrão R$ 50), chega um aviso (e-mail, Telegram e app) com o saldo atual da APIFull. Se o saldo não cobre, o aviso vem como "SALDO APIFULL INSUFICIENTE".
+- Lembrete de Pix de recarga não pago: e-mail 1 h depois e outro perto de expirar (40 h), com o código Pix e o bônus. Só para quem não pagou outra recarga depois. Desliga com a config `lembrete_pix` = 0.
+- Admin → Funil: cadastros → abriu a recarga → gerou Pix → pagou, por dia e por campanha, com o diagnóstico de onde está a perda.

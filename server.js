@@ -778,7 +778,71 @@ rota('GET', '/emails/sair', ({ res, url }) => {
 
 const dadosRecarga = (usuario) => ({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(),
   primeira: ofertaPrimeira(usuario.id), pedirDocumento: !usuario.documento });
-rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => pagina(res, 'Recarregar', PA.paginaRecarregar(dadosRecarga(usuario)), usuario)));
+rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => {
+  // Funil: marca a primeira vez que o cliente abriu a página de recarga
+  db.prepare("UPDATE usuarios SET viu_recarga_em = datetime('now') WHERE id = ? AND viu_recarga_em IS NULL").run(usuario.id);
+  pagina(res, 'Recarregar', PA.paginaRecarregar(dadosRecarga(usuario)), usuario);
+}));
+
+// ===== Lembrete do Pix de recarga não pago: 1 h depois e perto de expirar (48 h) =====
+// E-mail de serviço (sobre um pagamento que o próprio cliente iniciou). Desliga em Admin → Configurações (config lembrete_pix = 0).
+let lembrandoPix = false;
+async function lembrarPixAbertos() {
+  if (lembrandoPix || lerConfig('lembrete_pix') === '0' || !process.env.RESEND_API_KEY) return;
+  lembrandoPix = true;
+  try {
+    const etapas = [
+      ['lembrete1_em', "r.criado_em <= datetime('now', '-60 minutes') AND r.criado_em > datetime('now', '-30 hours')"],
+      ['lembrete2_em', "r.criado_em <= datetime('now', '-40 hours') AND r.criado_em > datetime('now', '-47 hours')"],
+    ];
+    for (const [col, janela] of etapas) {
+      const lista = db.prepare(`SELECT r.*, u.nome, u.email FROM recargas r JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.status = 'pendente' AND r.asaas_id IS NOT NULL AND r.${col} IS NULL AND ${janela} AND u.ativo = 1
+          AND NOT EXISTS (SELECT 1 FROM recargas r2 WHERE r2.usuario_id = r.usuario_id AND r2.status = 'paga' AND r2.criado_em >= r.criado_em)
+          AND NOT EXISTS (SELECT 1 FROM recargas r3 WHERE r3.usuario_id = r.usuario_id AND r3.id > r.id)
+        ORDER BY r.id LIMIT 40`).all();
+      for (const r of lista) {
+        // Reserva antes de enviar (nunca manda duas vezes) e confere no Asaas se já não foi pago
+        if (db.prepare(`UPDATE recargas SET ${col} = datetime('now') WHERE id = ? AND ${col} IS NULL`).run(r.id).changes !== 1) continue;
+        try {
+          const c = await AS.buscarCobranca(r.asaas_id).catch(() => null);
+          if (c && AS.STATUS_PAGO.includes(c.status)) { if (creditarRecarga(r.id)) processarRepasse().catch(() => {}); continue; }
+          if (c && (c.deleted || !['PENDING', 'OVERDUE'].includes(c.status))) continue;
+          const total = r.valor_centavos + (r.bonus_centavos || 0);
+          const ultimo = col === 'lembrete2_em';
+          const primeiro = String(r.nome || '').trim().split(/\s+/)[0] || 'tudo bem';
+          await emailServico({ para: r.email,
+            assunto: ultimo ? `Última chance: seu Pix de ${P.reais(r.valor_centavos)} expira hoje` : `${primeiro}, seu Pix de ${P.reais(r.valor_centavos)} ainda está esperando`,
+            titulo: ultimo ? 'Seu Pix expira em poucas horas' : 'Falta só pagar o Pix',
+            html: `<p>Olá, ${P.esc(primeiro)}! Você gerou um Pix de <strong>${P.reais(r.valor_centavos)}</strong> para recarregar a sua conta${r.bonus_centavos ? ` e vai receber <strong>${P.reais(total)} em créditos</strong> (bônus de ${P.reais(r.bonus_centavos)})` : ''}.</p>
+<p>${ultimo ? 'Ele expira nas próximas horas. Depois disso é preciso gerar outro.' : 'É só pagar pelo app do seu banco: o saldo cai na hora e você já pode consultar.'}</p>
+${r.pix_codigo ? `<p style="font-size:13px;color:#5B5366;margin:0 0 4px">Pix copia e cola:</p><p style="font-family:monospace;font-size:12px;word-break:break-all;background:#F4F1F7;border-radius:10px;padding:10px">${P.esc(r.pix_codigo)}</p>` : ''}`,
+            botao: { href: `${baseEmails()}/recarga/${r.id}`, texto: 'Ver o Pix e pagar' },
+            rodape: 'Você recebe este e-mail porque gerou um Pix de recarga na Soft Consultas. Se já pagou, pode ignorar.' });
+        } catch (e) { console.warn('lembrete pix', r.id, e.message); }
+      }
+    }
+  } finally { lembrandoPix = false; }
+}
+setInterval(() => { lembrarPixAbertos().catch((e) => console.error('lembrete pix:', e.message)); }, 10 * 60 * 1000).unref();
+setTimeout(() => { lembrarPixAbertos().catch(() => {}); }, 60 * 1000).unref();
+
+// ===== Funil cadastro → recarga (Admin → Funil) =====
+rota('GET', '/admin/funil', exigeAdmin(({ res, usuario, url }) => {
+  const dias = Math.min(60, Math.max(3, Number(url.searchParams.get('dias')) || 14));
+  const base = `FROM usuarios u WHERE u.admin = 0 AND u.interno = 0 AND u.criado_em >= datetime('now', '-${dias} days')`;
+  const col = `COUNT(*) cad,
+    SUM(CASE WHEN u.viu_recarga_em IS NOT NULL THEN 1 ELSE 0 END) viu,
+    SUM(CASE WHEN EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id) THEN 1 ELSE 0 END) pix,
+    SUM(CASE WHEN EXISTS (SELECT 1 FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga') THEN 1 ELSE 0 END) pagou,
+    COALESCE(SUM((SELECT COALESCE(SUM(r.valor_centavos), 0) FROM recargas r WHERE r.usuario_id = u.id AND r.status = 'paga')), 0) receita`;
+  const porDia = db.prepare(`SELECT date(u.criado_em, '-3 hours') chave, ${col} ${base} GROUP BY chave ORDER BY chave DESC`).all();
+  const porOrigem = db.prepare(`SELECT COALESCE(NULLIF(u.utm_campaign, ''), NULLIF(u.origem, ''), '(direto / sem origem)') chave, ${col} ${base} GROUP BY chave ORDER BY cad DESC LIMIT 30`).all();
+  const total = db.prepare(`SELECT ${col} ${base}`).get();
+  const pix = db.prepare(`SELECT COUNT(*) n, SUM(CASE WHEN status = 'paga' THEN 1 ELSE 0 END) pagos, SUM(CASE WHEN lembrete1_em IS NOT NULL THEN 1 ELSE 0 END) l1,
+    SUM(CASE WHEN lembrete1_em IS NOT NULL AND status = 'paga' AND pago_em > lembrete1_em THEN 1 ELSE 0 END) l1pagos FROM recargas WHERE criado_em >= datetime('now', '-${dias} days')`).get();
+  pagina(res, 'Admin · Funil', PD.adminFunil({ dias, porDia, porOrigem, total, pix, emailsLigados: emailsCfg().ativo }), usuario);
+}));
 
 rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);

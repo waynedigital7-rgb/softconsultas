@@ -456,6 +456,11 @@ for (const [c, def] of [['marca_ativa', 'INTEGER NOT NULL DEFAULT 0'], ['marca_n
   ['sub_dados', 'TEXT'], ['sub_id', 'TEXT'], ['sub_wallet', 'TEXT'], ['sub_chave', 'TEXT'], ['sub_status', 'TEXT'], ['sub_criada_em', 'TEXT'], ['sub_aprovada_em', 'TEXT'], ['sub_erro', 'TEXT'], ['sub_webhook', 'INTEGER NOT NULL DEFAULT 0']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
 }
+// Lembretes do Pix de recarga não pago e funil (quando o cliente abriu a página de recarga pela 1ª vez)
+for (const [c, def] of [['lembrete1_em', 'TEXT'], ['lembrete2_em', 'TEXT']]) {
+  if (!colunas('recargas').includes(c)) db.exec(`ALTER TABLE recargas ADD COLUMN ${c} ${def}`);
+}
+if (!colunas('usuarios').includes('viu_recarga_em')) db.exec('ALTER TABLE usuarios ADD COLUMN viu_recarga_em TEXT');
 // Vendedor que aparece para o cliente: nome da empresa e CNPJ (opcional)
 for (const [c, def] of [['vendedor_nome', 'TEXT'], ['vendedor_cnpj', 'TEXT'], ['mostrar_cnpj', 'INTEGER NOT NULL DEFAULT 0']]) {
   if (!colunas('parceiros').includes(c)) db.exec(`ALTER TABLE parceiros ADD COLUMN ${c} ${def}`);
