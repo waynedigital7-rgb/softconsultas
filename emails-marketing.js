@@ -9,7 +9,7 @@ export function perfilDo(u) {
   if (/limpa|negativ|serasa|nome/.test(t)) return 'limpa-nome';
   if (/veicul|placa|carro|leil/.test(t)) return 'veiculos';
   if (/advog|devedor|jur/.test(t)) return 'advogados';
-  if (/empresa|cnpj|credito|crédito/.test(t)) return 'empresas';
+  if (/empresa|cnpj|mei|credito|crédito/.test(t)) return 'empresas';
   return 'geral';
 }
 

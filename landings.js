@@ -60,6 +60,27 @@ export const PUBLICOS = {
       ['Serve para lojas e revendas?', 'Sim. Consulte cada carro que entra no estoque e guarde o PDF para mostrar ao comprador.'],
     ],
   },
+  // MEI: perdão das dívidas federais (Lei de out/2026) não cobre Serasa, SPC, protestos nem bancos
+  mei: {
+    titulo: 'Perdão das dívidas do MEI: consulte o que continua no seu CNPJ',
+    descricaoMeta: 'O perdão das dívidas do MEI vale só para impostos federais. Veja o que continua no seu CNPJ: Serasa, SPC, protestos e CADIN. Cadastro grátis, relatório em PDF.',
+    selo: 'Para MEI e pequenas empresas',
+    h1: 'O governo perdoou o imposto do MEI. E o resto da',
+    destaque: 'dívida do seu CNPJ?',
+    sub: 'O perdão das dívidas do MEI cobre só os débitos tributários federais. Empréstimo, cartão, fornecedor, protesto e negativação no Serasa e SPC continuam no CNPJ. Consulte agora e saiba exatamente o que sobra.',
+    dores: [
+      ['"Vão perdoar tudo?" Não.', 'A remissão vale para impostos federais do MEI constituídos até 13/10/2026, a partir de janeiro de 2027. Dívida com banco, cartão e fornecedor fica de fora.'],
+      ['CNPJ negativado trava o negócio', 'Protesto ou negativação no CNPJ bloqueia empréstimo, maquininha e compra a prazo com fornecedor.'],
+      ['O perdão tem condição', 'É preciso pagar o DAS em dia por 6 meses depois que a lei valer. Organize o caixa sabendo tudo o que o seu CNPJ deve.'],
+    ],
+    consultas: ['cnpj', 'cadin', 'protesto-nacional', 'pj-quod-consulta', 'serasa-premium', 'spc-brasil', 'e-boavista', 'cert-pj-debitos-trabalhistas'],
+    extra: 'Encontrou negativação no CNPJ? O Limpa Nome da Soft Consultas também atende empresas.',
+    faq: [
+      ['A consulta mostra a dívida com a Receita?', 'A situação com a Receita e a dívida ativa você confere de graça no Regularize (PGFN) e no e-CAC, com a conta gov.br. Aqui você vê o que o perdão não cobre: Serasa, SPC, Boa Vista, protestos e CADIN.'],
+      ['O perdão é automático?', 'Segundo o governo, sim: começa em 1º de janeiro de 2027, sem pedido, mas exige o DAS em dia por 6 meses. Confira as regras no site da PGFN.'],
+      ['O cadastro é pago? Tem mensalidade?', 'Não. O cadastro e o acesso são gratuitos. Você recarrega por Pix e paga só as consultas que fizer, com relatório em PDF na hora.'],
+    ],
+  },
   empresas: {
     titulo: 'Consulta de crédito para empresas',
     descricaoMeta: 'Cadastro grátis. Consulte CPF e CNPJ antes de vender a prazo: score, restrições, protestos e dados da empresa. Sem mensalidade, relatório na hora.',
@@ -84,6 +105,8 @@ export const PUBLICOS = {
 
 // Conteúdo visual igual aos criativos (dados fictícios)
 const VISUAL = {
+  mei: { doc: '11.222.333/0001-81', titulo: 'Consulta do CNPJ (MEI)', valor: '2 dívidas fora do perdão', linhas: [['Serasa', '1 registro', 0], ['Protestos', '1 registro', 0], ['SPC', 'Nada consta', 1], ['CADIN', 'Nada consta', 1]],
+    notif: [['Atenção ⚠️', 'Protesto de fornecedor: não entra no perdão do MEI.', 'agora'], ['Relatório pronto ✅', 'PDF do seu CNPJ disponível para baixar.', '1 min']], frase: 'O perdão não limpa tudo. <em>Saiba o que sobra.</em>' },
   'limpa-nome': { doc: '529.982.247-25', titulo: 'Diagnóstico completo', valor: '3 restrições', linhas: [['Serasa', '2 registros', 0], ['SPC', '1 registro', 0], ['Boa Vista', 'Nada consta', 1], ['Banco Central', 'Nada consta', 1]],
     notif: [['Diagnóstico pronto ✅', '3 restrições em 2 bases. PDF pronto para a reunião.', 'agora'], ['Triagem concluída', 'Nada consta no Banco Central.', '2 min']], frase: 'Feche mais clientes com o <em>diagnóstico na mão.</em>' },
   empresas: { doc: '11.222.333/0001-81', titulo: 'Consulta de cliente', valor: 'Score 412 · risco alto', linhas: [['Pendências', '2 registros', 0], ['Protestos', 'Nada consta', 1], ['Cheques sem fundo', 'Nada consta', 1], ['Situação do CNPJ', 'Ativa', 1]],
