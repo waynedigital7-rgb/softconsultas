@@ -118,7 +118,7 @@ export function paginaCategoria({ categoria, produtos, saldo, busca = '' }) {
  + (lista.length ? listaProdutos(lista) : '<div class="cartao vazio">Nenhuma consulta encontrada nesta categoria.</div>');
 }
 
-export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, bloqueada = false }) {
+export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, bloqueada = false, pago = false, pedirDocumento = false }) {
   const falta = saldo === null ? 0 : Math.max(0, produto.preco_centavos - saldo);
   return `
 <div class="cartao estreito" style="max-width:560px">
@@ -132,7 +132,16 @@ export function paginaConsultar({ produto, saldo, erro, v = {}, admin = false, b
   ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
   ${bloqueada ? `<div class="aviso erro" role="alert"><strong>Consulta com dados sensíveis.</strong> Por segurança e exigência da LGPD, esta consulta é liberada para contas de empresa (CNPJ) ou após análise. Fale com o suporte para solicitar a liberação.</div><a class="btn largo" href="/consultas">Ver outras consultas</a>` : falta > 0 ? (admin
     ? `<div class="aviso erro">Saldo da APIFull insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="https://app.apifull.com.br" target="_blank" rel="noopener">Recarregar na APIFull</a>`
-    : `<div class="aviso erro">Saldo insuficiente. Faltam ${reais(falta)}.</div><a class="btn largo" href="/recarregar">Recarregar agora</a>`) : `
+    : `<form method="post" action="/recarregar" style="margin:0 0 14px">
+    <input type="hidden" name="consulta" value="${esc(produto.slug)}">
+    <div class="campo"><label for="doc-av">${ROTULO_DOC[produto.documento]} que você quer consultar</label>
+      <input id="doc-av" name="doc_consulta" type="text" data-tipo="${esc(produto.documento)}" ${produto.documento === 'placa' ? 'autocapitalize="characters"' : 'inputmode="numeric"'} required value="${esc(v.valor)}"></div>
+    ${pedirDocumento ? '<div class="campo"><label for="doc-pg">O seu CPF ou CNPJ (de quem paga o Pix)</label><input id="doc-pg" name="documento" type="text" inputmode="numeric" required><small class="muted">Pedimos só uma vez, para emitir o Pix.</small></div>' : ''}
+    <button class="btn largo" type="submit" style="background:#1E7B4D">Pagar só esta consulta: ${reais(Math.max(500, falta))} no Pix</button>
+    <p class="muted" style="font-size:.85rem;text-align:center;margin:8px 0 0">Pague pelo app do banco e volte aqui: o documento já fica preenchido para consultar.</p>
+  </form>
+  <p style="text-align:center;margin:0"><a href="/recarregar">Prefiro recarregar mais e ganhar bônus →</a></p>`) : `
+  ${pago ? '<div class="aviso ok"><strong>Pagamento confirmado!</strong> O documento já está preenchido: confirme abaixo e consulte.</div>' : ''}
   <div id="aviso-nova-aba" class="aviso ok" hidden>Sua consulta está abrindo em uma <strong>nova aba</strong>. O PDF também fica no <a href="/historico"><strong>Histórico</strong></a> com o botão <strong>Baixar PDF</strong>.</div>
   <form method="post" action="/consultas/${esc(produto.slug)}" target="_blank" data-consulta>
     <div class="campo"><label for="valor">${ROTULO_DOC[produto.documento]}</label>
@@ -209,7 +218,7 @@ export function paginaHistorico({ consultas, busca = '', dias = 10 }) {
 }
 
 export function paginaRecarregar({ minimo, faixas, erro, primeira = null, pedirDocumento = false }) {
-  const sugestoes = [3000, 5000, 10000, 20000, 30000, 50000].filter((v) => v >= minimo);
+  const sugestoes = [...(primeira && minimo <= 1500 ? [1500] : []), 3000, 5000, 10000, 20000, 30000, 50000].filter((v) => v >= minimo);
   const bonusValor = (v) => { let p = 0; for (const f of faixas) if (v >= f.a_partir_de) p = Math.max(p, f.percentual); let b = Math.round((v * p) / 100);
     if (primeira && v >= primeira.min) { const x = Math.round((v * primeira.pct) / 100); b = Math.max(b, primeira.teto > 0 ? Math.min(x, primeira.teto) : x); } return b; };
   const marcado = primeira && sugestoes.includes(primeira.exemplo) ? primeira.exemplo : sugestoes[1];
@@ -236,8 +245,9 @@ export function paginaRecarregar({ minimo, faixas, erro, primeira = null, pedirD
 
 export function paginaPagarRecarga({ r }) {
   return `
-<div class="cartao estreito" style="max-width:520px;text-align:center" data-recarga="${r.id}">
+<div class="cartao estreito" style="max-width:520px;text-align:center" data-recarga="${r.id}" data-ic="ic-rec-${r.id}" data-valor="${(r.valor_centavos / 100).toFixed(2)}">
   <h1 style="font-size:1.5rem">Pague ${reais(r.valor_centavos)} com Pix</h1>
+  ${r.consulta_slug ? '<p class="muted" style="margin-top:-6px">Assim que o Pix cair, você volta para a consulta com o documento já preenchido.</p>' : ''}
   ${r.bonus_centavos ? `<p class="aviso ok">Você vai receber ${reais(r.valor_centavos + r.bonus_centavos)} em créditos (bônus de ${reais(r.bonus_centavos)}).</p>` : ''}
   <div id="aguardando">
     ${r.pix_imagem ? `<img src="data:image/png;base64,${esc(r.pix_imagem)}" alt="QR Code Pix" style="width:230px;height:230px;max-width:100%">
@@ -250,7 +260,7 @@ export function paginaPagarRecarga({ r }) {
     <svg class="pop" width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="#1E7B4D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>
     <h2 style="color:var(--ok)">Pagamento confirmado!</h2>
     <p class="muted">Seus créditos já estão disponíveis.</p>
-    <a class="btn" href="/consultas">Fazer uma consulta</a>
+    <a class="btn" href="${r.consulta_slug ? `/consultas/${esc(r.consulta_slug)}?doc=${encodeURIComponent(r.consulta_param || '')}` : '/consultas'}">${r.consulta_slug ? 'Fazer a consulta agora' : 'Fazer uma consulta'}</a>
   </div>
 </div>`;
 }

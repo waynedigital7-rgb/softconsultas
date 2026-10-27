@@ -34,7 +34,7 @@ function scriptRastreio() {
     try {
       if (cfg.meta && window.fbq) { if (eid) fbq('track', nome, valor ? { value: valor, currency: 'BRL' } : {}, { eventID: eid }); else fbq('track', nome, valor ? { value: valor, currency: 'BRL' } : {}); }
       if (cfg.google && window.gtag) {
-        var mapa = { CompleteRegistration: 'sign_up', Purchase: 'purchase', Lead: 'generate_lead' };
+        var mapa = { CompleteRegistration: 'sign_up', Purchase: 'purchase', Lead: 'generate_lead', InitiateCheckout: 'begin_checkout' };
         gtag('event', mapa[nome] || nome, valor ? { value: valor, currency: 'BRL' } : {});
         if (nome === 'CompleteRegistration' && cfg.convCadastro) gtag('event', 'conversion', { send_to: cfg.convCadastro });
         if (nome === 'Purchase' && cfg.convRecarga) gtag('event', 'conversion', { send_to: cfg.convRecarga, value: valor, currency: 'BRL' });
@@ -228,7 +228,7 @@ function guardarRastreio(req, chave) {
 }
 const hashMeta = (v) => createHash('sha256').update(String(v).trim().toLowerCase()).digest('hex');
 function telefoneMeta(t) { let d = String(t || '').replace(/\D/g, ''); if (!d) return null; if (d.length <= 11) d = '55' + d; return d; }
-function capiCompra({ eid, valor, email, telefone, nome, usuarioId, chave, conteudo }) {
+function capiCompra({ eid, valor, email, telefone, nome, usuarioId, chave, conteudo, evento = 'Purchase' }) {
   if (!CAPI.token || !RASTREIO.meta || !eid || !valor) return;
   const r = (chave && db.prepare('SELECT * FROM rastreio_meta WHERE chave = ?').get(chave))
     || (usuarioId && db.prepare('SELECT * FROM rastreio_meta WHERE chave = ?').get(`u-${usuarioId}`)) || {};
@@ -244,7 +244,7 @@ function capiCompra({ eid, valor, email, telefone, nome, usuarioId, chave, conte
   if (r.ua) ud.client_user_agent = r.ua;
   if (r.fbp) ud.fbp = r.fbp;
   if (r.fbc) ud.fbc = r.fbc;
-  const corpo = { data: [{ event_name: 'Purchase', event_time: Math.floor(Date.now() / 1000), event_id: eid, action_source: 'website',
+  const corpo = { data: [{ event_name: evento, event_time: Math.floor(Date.now() / 1000), event_id: eid, action_source: 'website',
     event_source_url: r.url || `${baseEmails()}/`, user_data: ud, custom_data: { currency: 'BRL', value: Number(valor) / 100, content_name: conteudo || undefined } }] };
   if (CAPI.teste) corpo.test_event_code = CAPI.teste;
   fetch(`https://graph.facebook.com/v21.0/${RASTREIO.meta}/events?access_token=${encodeURIComponent(CAPI.token)}`, {
@@ -548,12 +548,19 @@ function bonusPrimeira() {
   return { pct, min, ate, teto, dias, ativo: pct > 0 && (!ate || hoje <= ate) };
 }
 // "Primeira recarga em dobro": 1ª vez em 2026-10-21 → 100% de bônus, até R$ 30, a partir de R$ 30, 7 dias após o cadastro
+// v2 (27/10): na primeira recarga dá para começar com R$ 15 (vira R$ 30); o resto continua igual
+if (!lerConfig('promo_dobro_v2')) {
+  gravarConfig('bonus_primeira_minimo_centavos', '1500'); gravarConfig('recarga_minima_primeira_centavos', '1500'); gravarConfig('promo_dobro_v2', '1');
+  registrar(null, 'Oferta: primeira recarga a partir de R$ 15', 'R$ 15 vira R$ 30 · R$ 30 vira R$ 60');
+}
 if (!lerConfig('promo_dobro_v1')) {
   gravarConfig('bonus_primeira_percentual', '100'); gravarConfig('bonus_primeira_minimo_centavos', '3000'); gravarConfig('bonus_primeira_teto_centavos', '3000');
   gravarConfig('bonus_primeira_dias', '7'); gravarConfig('bonus_primeira_ate', ''); gravarConfig('bonus_primeira_desde', new Date().toISOString().slice(0, 19).replace('T', ' '));
   gravarConfig('promo_dobro_v1', '1');
   registrar(null, 'Oferta: primeira recarga em dobro ligada', 'R$ 30 vira R$ 60 (bônus de 100%, até R$ 30), 7 dias após o cadastro');
 }
+// Valor de exemplo da oferta (o que rende o bônus cheio): com teto, o próprio teto (ex.: R$ 30 vira R$ 60)
+const exemploOferta = (bp) => Math.max(bp.min, bp.teto > 0 ? bp.teto : 0, 500);
 const valorBonusPrimeira = (v, bp) => { const b = Math.round((v * bp.pct) / 100); return bp.teto > 0 ? Math.min(b, bp.teto) : b; };
 // Fim do prazo da oferta para o cliente (UTC, formato do SQLite). Quem se cadastrou antes da oferta conta a partir do lançamento.
 function prazoPrimeira(uid, bp = bonusPrimeira()) {
@@ -573,7 +580,7 @@ function ofertaPrimeira(uid) {
   if (prazo && prazo < sqlAgora()) return null;
   const doc = db.prepare('SELECT documento FROM usuarios WHERE id = ?').get(uid)?.documento || '';
   if (doc && db.prepare("SELECT 1 FROM recargas rc JOIN usuarios u ON u.id = rc.usuario_id WHERE u.documento = ? AND rc.status = 'paga'").get(doc)) return null;
-  const exemplo = Math.max(bp.min, 500);
+  const exemplo = exemploOferta(bp);
   return { ...bp, prazo, exemplo, bonusExemplo: valorBonusPrimeira(exemplo, bp) };
 }
 // Oferta para os e-mails: a do próprio cliente (com o prazo dele) ou a genérica (prévias)
@@ -581,7 +588,7 @@ function bonusEmail(uid) {
   const o = uid ? ofertaPrimeira(uid) : null;
   const bp = bonusPrimeira();
   if (uid && !o) return null;
-  const x = o || { ...bp, exemplo: Math.max(bp.min, 500), bonusExemplo: valorBonusPrimeira(Math.max(bp.min, 500), bp), prazo: null };
+  const x = o || { ...bp, exemplo: exemploOferta(bp), bonusExemplo: valorBonusPrimeira(exemploOferta(bp), bp), prazo: null };
   if (!x.ativo) return null;
   const fim = x.prazo ? new Date(Date.parse(x.prazo.replace(' ', 'T') + 'Z') - 3 * 3600000).toISOString().slice(0, 10).split('-').reverse().join('/') : '';
   return { ...x, prazoTexto: fim ? `até ${fim}` : x.dias ? `nos ${x.dias} dias depois do cadastro` : x.ate ? `até ${x.ate.split('-').reverse().join('/')}` : '' };
@@ -776,7 +783,9 @@ rota('GET', '/emails/sair', ({ res, url }) => {
     ok ? 'Sua conta continua ativa normalmente. Avisos importantes (como recuperação de senha) continuam chegando.' : 'Abra o link direto do e-mail que você recebeu.'), null, ok ? 200 : 400);
 });
 
-const dadosRecarga = (usuario) => ({ minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(),
+// Recarga mínima: na primeira recarga pode ser menor (config recarga_minima_primeira_centavos)
+const minimoRecarga = (uid) => { const m = Number(lerConfig('recarga_minima_centavos')); const p = Number(lerConfig('recarga_minima_primeira_centavos') || 0); return p > 0 && ehPrimeiraRecarga(uid) ? Math.min(m, Math.max(500, p)) : m; };
+const dadosRecarga = (usuario) => ({ minimo: minimoRecarga(usuario.id), faixas: faixasBonus(),
   primeira: ofertaPrimeira(usuario.id), pedirDocumento: !usuario.documento });
 rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => {
   // Funil: marca a primeira vez que o cliente abriu a página de recarga
@@ -846,7 +855,17 @@ rota('GET', '/admin/funil', exigeAdmin(({ res, usuario, url }) => {
 
 rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
-  const minimo = Number(lerConfig('recarga_minima_centavos'));
+  // "Pagar só esta consulta": Pix no valor que falta para a consulta (mínimo R$ 5), e depois volta para a consulta
+  const prodAvulsa = f.consulta ? produtosPara(usuario).find((p) => p.slug === String(f.consulta)) : null;
+  let paramAvulsa = null;
+  if (prodAvulsa) {
+    const val = validarValor(prodAvulsa.documento, f.doc_consulta);
+    if (val.erro) return redirecionar(res, `/consultas/${prodAvulsa.slug}?erro=${encodeURIComponent(val.erro)}`);
+    paramAvulsa = val.v;
+    const falta = Math.max(500, prodAvulsa.preco_centavos - saldoCentavos(usuario.id));
+    f.outro = (falta / 100).toFixed(2).replace('.', ',');
+  }
+  const minimo = prodAvulsa ? 500 : minimoRecarga(usuario.id);
   const valor = String(f.outro || '').trim() ? centavos(f.outro) : centavos(f.valor);
   const erro = (m) => pagina(res, 'Recarregar', PA.paginaRecarregar({ ...dadosRecarga(usuario), erro: m }), usuario, 400);
   // CPF/CNPJ é pedido só na primeira recarga (exigido pelo pagamento)
@@ -881,7 +900,9 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
       db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
     }
     const bonus = bonusPara(valor, usuario.id);
-    const rid = Number(db.prepare('INSERT INTO recargas (usuario_id, valor_centavos, bonus_centavos) VALUES (?, ?, ?)').run(usuario.id, valor, bonus).lastInsertRowid);
+    const rid = Number(db.prepare('INSERT INTO recargas (usuario_id, valor_centavos, bonus_centavos, consulta_slug, consulta_param) VALUES (?, ?, ?, ?, ?)').run(usuario.id, valor, bonus, prodAvulsa?.slug || null, paramAvulsa).lastInsertRowid);
+    guardarRastreio(req, `u-${usuario.id}`);
+    capiCompra({ evento: 'InitiateCheckout', eid: `ic-rec-${rid}`, valor, email: usuario.email, telefone: usuario.telefone, nome: usuario.nome, usuarioId: usuario.id, conteudo: prodAvulsa ? `Consulta ${prodAvulsa.nome}` : 'Recarga' });
     const cob = await AS.criarCobranca({ clienteId, valorCentavos: valor, recargaId: rid });
     let pix = null;
     try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); }
@@ -897,7 +918,7 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
 rota('GET', '/recarga/:id', exigeLogin(({ res, usuario, params }) => {
   const r = db.prepare('SELECT * FROM recargas WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!r) return redirecionar(res, '/recarregar');
-  if (r.status === 'paga') return redirecionar(res, '/painel');
+  if (r.status === 'paga') return redirecionar(res, r.consulta_slug ? `/consultas/${r.consulta_slug}?doc=${encodeURIComponent(r.consulta_param || '')}` : '/painel');
   if (r.status === 'expirada') return pagina(res, 'Recarregar', PA.paginaRecarregar({ ...dadosRecarga(usuario), erro: 'Esse Pix expirou sem pagamento e foi cancelado. Gere um novo abaixo.' }), usuario);
   pagina(res, 'Pagar recarga', PA.paginaPagarRecarga({ r }), usuario);
 }));
@@ -1112,10 +1133,12 @@ rota('GET', '/consultas/categoria/:cat', exigeLogin(async ({ res, usuario, url, 
   pagina(res, produtos[0].categoria, PA.paginaCategoria({ categoria: produtos[0].categoria, produtos, saldo: await saldoExibido(usuario), busca: url.searchParams.get('busca') || '' }), usuario);
 }));
 
-rota('GET', '/consultas/:slug', exigeLogin(async ({ res, usuario, params }) => {
+rota('GET', '/consultas/:slug', exigeLogin(async ({ res, usuario, params, url }) => {
   const produto = produtosPara(usuario).find((p) => p.slug === params.slug);
   if (!produto) return redirecionar(res, '/consultas');
-  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.interno, bloqueada: produto.sensivel && !podeSensivel(usuario) }), usuario);
+  const doc = String(url.searchParams.get('doc') || '').slice(0, 20);
+  pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.interno, bloqueada: produto.sensivel && !podeSensivel(usuario),
+    v: { valor: doc }, erro: url.searchParams.get('erro') || '', pago: !!doc && url.searchParams.has('doc'), pedirDocumento: !usuario.documento }), usuario);
 }));
 
 rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }) => {

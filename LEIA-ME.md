@@ -80,3 +80,6 @@ Os textos em `/termos` e `/privacidade` são uma minuta. Peça para um advogado 
 - Consulta cara: quando um cliente pede uma consulta com custo na APIFull a partir do valor definido em Admin → Configurações (padrão R$ 50), chega um aviso (e-mail, Telegram e app) com o saldo atual da APIFull. Se o saldo não cobre, o aviso vem como "SALDO APIFULL INSUFICIENTE".
 - Lembrete de Pix de recarga não pago: e-mail 1 h depois e outro perto de expirar (40 h), com o código Pix e o bônus. Só para quem não pagou outra recarga depois. Desliga com a config `lembrete_pix` = 0.
 - Admin → Funil: cadastros → abriu a recarga → gerou Pix → pagou, por dia e por campanha, com o diagnóstico de onde está a perda.
+- "Pagar só esta consulta": sem saldo, o cliente paga no Pix só o que falta para a consulta (mínimo R$ 5) e volta com o documento preenchido (recargas.consulta_slug / consulta_param).
+- Primeira recarga a partir de R$ 15 (config recarga_minima_primeira_centavos; bônus: R$ 15 vira R$ 30, R$ 30 vira R$ 60).
+- Evento "InitiateCheckout" (Pix gerado) enviado à Meta pelo navegador e pelo servidor, com o mesmo id (ic-rec-ID).

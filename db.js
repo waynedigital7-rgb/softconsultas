@@ -460,6 +460,9 @@ for (const [c, def] of [['marca_ativa', 'INTEGER NOT NULL DEFAULT 0'], ['marca_n
 for (const [c, def] of [['lembrete1_em', 'TEXT'], ['lembrete2_em', 'TEXT']]) {
   if (!colunas('recargas').includes(c)) db.exec(`ALTER TABLE recargas ADD COLUMN ${c} ${def}`);
 }
+for (const [c, def] of [['consulta_slug', 'TEXT'], ['consulta_param', 'TEXT']]) {
+  if (!colunas('recargas').includes(c)) db.exec(`ALTER TABLE recargas ADD COLUMN ${c} ${def}`);
+}
 if (!colunas('usuarios').includes('viu_recarga_em')) db.exec('ALTER TABLE usuarios ADD COLUMN viu_recarga_em TEXT');
 // Vendedor que aparece para o cliente: nome da empresa e CNPJ (opcional)
 for (const [c, def] of [['vendedor_nome', 'TEXT'], ['vendedor_cnpj', 'TEXT'], ['mostrar_cnpj', 'INTEGER NOT NULL DEFAULT 0']]) {

@@ -227,7 +227,7 @@ export function bannerAnuncios(anuncios = [], contato = '#') {
 }
 
 export const paginaInicial = ({ anuncios = [], contato = '#', oferta = null } = {}) => `
-${oferta?.ativo ? `<div class="faixa-gratis" role="note" style="background:#EFFAF3;border-color:#1E7B4D;color:#14532D">🎁 <strong>${oferta.pct >= 100 ? 'Primeira recarga em dobro' : `+${oferta.pct}% na primeira recarga`}:</strong>&nbsp;recarregue ${reais(Math.max(oferta.min, 500))} e receba ${reais(Math.max(oferta.min, 500) + (oferta.teto ? Math.min(oferta.teto, Math.round(Math.max(oferta.min, 500) * oferta.pct / 100)) : Math.round(Math.max(oferta.min, 500) * oferta.pct / 100)))} em consultas${oferta.dias ? ` (nos ${oferta.dias} dias depois do cadastro)` : ''}. <a href="/cadastro" style="margin-left:6px;font-weight:700">Criar conta grátis</a></div>` : ''}
+${oferta?.ativo ? `<div class="faixa-gratis" role="note" style="background:#EFFAF3;border-color:#1E7B4D;color:#14532D">🎁 <strong>${oferta.pct >= 100 ? 'Primeira recarga em dobro' : `+${oferta.pct}% na primeira recarga`}:</strong>&nbsp;recarregue ${reais(Math.max(oferta.min, oferta.teto || 0, 500))} e receba ${reais(Math.max(oferta.min, oferta.teto || 0, 500) + (oferta.teto ? Math.min(oferta.teto, Math.round(Math.max(oferta.min, oferta.teto || 0, 500) * oferta.pct / 100)) : Math.round(Math.max(oferta.min, 500) * oferta.pct / 100)))} em consultas${oferta.min && oferta.teto && oferta.min < oferta.teto ? ` (ou comece com ${reais(oferta.min)})` : ''}${oferta.dias ? ` (nos ${oferta.dias} dias depois do cadastro)` : ''}. <a href="/cadastro" style="margin-left:6px;font-weight:700">Criar conta grátis</a></div>` : ''}
 <section class="hero">
   <div>
     <span class="tag">Consultas para o seu negócio</span>
@@ -330,7 +330,7 @@ export function ofertaPrimeiraHtml(o, comBotao = true) {
   } else if (o.ate) prazo = `Válida até ${o.ate.split('-').reverse().join('/')}.`;
   return `<div class="cartao" style="border:2px solid #1E7B4D;background:#EFFAF3;margin:0 0 18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
   <div style="flex:1 1 280px"><div style="font-family:Montserrat,sans-serif;font-weight:800;font-size:1.15rem;color:#14532D">🎁 ${titulo}</div>
-  <div style="margin-top:4px">Só na sua primeira recarga${o.teto ? ` (bônus de até ${reais(o.teto)})` : ''}, por Pix. O bônus entra junto com o saldo. ${prazo ? `<strong>${prazo}</strong>` : ''}</div></div>
+  <div style="margin-top:4px">Só na sua primeira recarga${o.teto ? ` (bônus de até ${reais(o.teto)})` : ''}, por Pix. ${o.min && o.min < o.exemplo ? `Dá para começar com ${reais(o.min)}, que vira ${reais(o.min + Math.min(o.teto || Infinity, Math.round(o.min * o.pct / 100)))}. ` : ''}O bônus entra junto com o saldo. ${prazo ? `<strong>${prazo}</strong>` : ''}</div></div>
   ${comBotao ? `<a class="btn" href="/recarregar" style="background:#1E7B4D">Recarregar ${reais(o.exemplo)} e ganhar ${reais(o.bonusExemplo)}</a>` : ''}</div>`;
 }
 

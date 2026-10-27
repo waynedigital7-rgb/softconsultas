@@ -158,6 +158,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Acompanhar pagamento da recarga
   const box = document.querySelector('[data-recarga]');
   if (box) {
+    // Pix gerado = início do pagamento (uma vez por recarga; o servidor manda o mesmo evento com o mesmo id)
+    const ic = box.getAttribute('data-ic');
+    try { if (ic && !localStorage.getItem(ic)) { localStorage.setItem(ic, '1'); setTimeout(() => window.scEvento && window.scEvento('InitiateCheckout', Number(box.getAttribute('data-valor')) || 0, ic), 1500); } } catch {}
     const id = box.getAttribute('data-recarga');
     const verificar = async () => {
       try {
