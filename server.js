@@ -444,7 +444,8 @@ rota('POST', '/redefinir-senha', async ({ req, res }) => {
 rota('GET', '/painel', exigeLogin(async ({ res, usuario }) => {
   const transacoes = db.prepare('SELECT * FROM transacoes WHERE usuario_id = ? ORDER BY id DESC LIMIT 20').all(usuario.id);
   const consultas = db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 10').all(usuario.id);
-  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas, anuncios: anunciosParaExibir(), contato: contatoAnuncie(), oferta: usuario.admin || usuario.interno ? null : ofertaPrimeira(usuario.id) }), usuario);
+  pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas, anuncios: anunciosParaExibir(), contato: contatoAnuncie(), oferta: usuario.admin || usuario.interno ? null : ofertaPrimeira(usuario.id),
+    entrada: usuario.interno || db.prepare("SELECT 1 FROM consultas WHERE usuario_id = ? AND status = 'concluida'").get(usuario.id) ? null : db.prepare('SELECT * FROM produtos WHERE slug = ? AND ativo = 1').get(slugEntrada()) }), usuario);
 }));
 
 rota('GET', '/conta', exigeLogin(({ res, usuario, url }) => pagina(res, 'Minha conta',
@@ -548,6 +549,16 @@ function bonusPrimeira() {
   return { pct, min, ate, teto, dias, ativo: pct > 0 && (!ate || hoje <= ate) };
 }
 // "Primeira recarga em dobro": 1ª vez em 2026-10-21 → 100% de bônus, até R$ 30, a partir de R$ 30, 7 dias após o cadastro
+// Consulta de entrada (31/10): Cred Completa Plus a R$ 19,90 fixo, em destaque no painel de quem ainda não consultou
+const slugEntrada = () => lerConfig('consulta_entrada_slug') || 'cred-completa-plus';
+if (!lerConfig('entrada_1990_v1')) {
+  const pe = db.prepare('SELECT * FROM produtos WHERE slug = ?').get(slugEntrada());
+  if (pe && pe.custo_centavos > 0 && pe.custo_centavos <= 1990) {
+    db.prepare('UPDATE produtos SET preco_fixo_centavos = 1990, preco_centavos = 1990 WHERE id = ?').run(pe.id);
+    registrar(null, 'Consulta de entrada: preço fixo', `${pe.nome} a R$ 19,90 (custo ${P.reais(pe.custo_centavos)})`);
+  } else registrar(null, 'Consulta de entrada: preço fixo NÃO aplicado', pe ? `${pe.nome}: custo ${P.reais(pe.custo_centavos)} acima de R$ 19,90` : 'consulta não encontrada');
+  gravarConfig('entrada_1990_v1', '1');
+}
 // v2 (27/10): na primeira recarga dá para começar com R$ 15 (vira R$ 30); o resto continua igual
 if (!lerConfig('promo_dobro_v2')) {
   gravarConfig('bonus_primeira_minimo_centavos', '1500'); gravarConfig('recarga_minima_primeira_centavos', '1500'); gravarConfig('promo_dobro_v2', '1');
@@ -785,8 +796,9 @@ rota('GET', '/emails/sair', ({ res, url }) => {
 
 // Recarga mínima: na primeira recarga pode ser menor (config recarga_minima_primeira_centavos)
 const minimoRecarga = (uid) => { const m = Number(lerConfig('recarga_minima_centavos')); const p = Number(lerConfig('recarga_minima_primeira_centavos') || 0); return p > 0 && ehPrimeiraRecarga(uid) ? Math.min(m, Math.max(500, p)) : m; };
+const cartaoRecarga = () => (lerConfig('recarga_cartao') === '0' ? null : { max: Number(lerConfig('recarga_cartao_max_centavos') || 20000) });
 const dadosRecarga = (usuario) => ({ minimo: minimoRecarga(usuario.id), faixas: faixasBonus(),
-  primeira: ofertaPrimeira(usuario.id), pedirDocumento: !usuario.documento });
+  primeira: ofertaPrimeira(usuario.id), pedirDocumento: !usuario.documento, cartao: cartaoRecarga() });
 rota('GET', '/recarregar', exigeLogin(({ res, usuario }) => {
   // Funil: marca a primeira vez que o cliente abriu a página de recarga
   db.prepare("UPDATE usuarios SET viu_recarga_em = datetime('now') WHERE id = ? AND viu_recarga_em IS NULL").run(usuario.id);
@@ -806,7 +818,7 @@ async function lembrarPixAbertos() {
     ];
     for (const [col, janela] of etapas) {
       const lista = db.prepare(`SELECT r.*, u.nome, u.email FROM recargas r JOIN usuarios u ON u.id = r.usuario_id
-        WHERE r.status = 'pendente' AND r.asaas_id IS NOT NULL AND r.${col} IS NULL AND ${janela} AND u.ativo = 1
+        WHERE r.status = 'pendente' AND r.forma = 'pix' AND r.asaas_id IS NOT NULL AND r.${col} IS NULL AND ${janela} AND u.ativo = 1
           AND NOT EXISTS (SELECT 1 FROM recargas r2 WHERE r2.usuario_id = r.usuario_id AND r2.status = 'paga' AND r2.criado_em >= r.criado_em)
           AND NOT EXISTS (SELECT 1 FROM recargas r3 WHERE r3.usuario_id = r.usuario_id AND r3.id > r.id)
         ORDER BY r.id LIMIT 40`).all();
@@ -867,6 +879,9 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
   }
   const minimo = prodAvulsa ? 500 : minimoRecarga(usuario.id);
   const valor = String(f.outro || '').trim() ? centavos(f.outro) : centavos(f.valor);
+  // Cartão (crédito, à vista) na página segura do Asaas, com limite por recarga (consultas atraem fraude com cartão roubado)
+  const forma = f.forma === 'cartao' ? 'cartao' : 'pix';
+  const maxCartao = Number(lerConfig('recarga_cartao_max_centavos') || 20000);
   const erro = (m) => pagina(res, 'Recarregar', PA.paginaRecarregar({ ...dadosRecarga(usuario), erro: m }), usuario, 400);
   // CPF/CNPJ é pedido só na primeira recarga (exigido pelo pagamento)
   if (!usuario.documento) {
@@ -878,6 +893,8 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
   if (!Number.isFinite(valor)) return erro('Valor inválido. Digite só o valor em reais, por exemplo: 50 ou 50,00.');
   if (valor < minimo) return erro(`O valor mínimo de recarga é ${P.reais(minimo)}.`);
   if (valor > valorMaximo()) return erro(`O valor máximo por recarga é ${P.reais(valorMaximo())}. Confira se digitou o valor certo.`);
+  if (forma === 'cartao' && lerConfig('recarga_cartao') === '0') return erro('O pagamento com cartão está indisponível no momento. Use o Pix.');
+  if (forma === 'cartao' && valor > maxCartao) return erro(`No cartão, o máximo por recarga é ${P.reais(maxCartao)}. Para valores maiores, use o Pix.`);
   // Valor alto: o cliente confirma antes de gerar o Pix (evita erro de digitação)
   if (valor > VALOR_CONFIRMAR && f.confirmado !== String(valor)) {
     return pagina(res, 'Confirmar recarga', `<div class="cartao estreito" style="max-width:520px;text-align:center">
@@ -888,8 +905,8 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
       <p style="margin-top:14px"><a href="/recarregar">Não, quero mudar o valor</a></p></div>`, usuario);
   }
   // Já existe um Pix em aberto com o mesmo valor (últimas 2 h): reaproveita em vez de criar outra cobrança
-  const aberta = db.prepare("SELECT id FROM recargas WHERE usuario_id = ? AND status = 'pendente' AND valor_centavos = ? AND asaas_id IS NOT NULL AND criado_em > datetime('now', '-2 hours') ORDER BY id DESC").get(usuario.id, valor);
-  if (aberta) return redirecionar(res, `/recarga/${aberta.id}`);
+  const aberta = db.prepare("SELECT id, link_pagamento FROM recargas WHERE usuario_id = ? AND status = 'pendente' AND valor_centavos = ? AND forma = ? AND COALESCE(consulta_slug, '') = ? AND asaas_id IS NOT NULL AND criado_em > datetime('now', '-2 hours') ORDER BY id DESC").get(usuario.id, valor, forma, prodAvulsa?.slug || '');
+  if (aberta) return redirecionar(res, forma === 'cartao' && aberta.link_pagamento ? aberta.link_pagamento : `/recarga/${aberta.id}`);
   if (db.prepare("SELECT COUNT(*) n FROM recargas WHERE usuario_id = ? AND status = 'pendente' AND criado_em > datetime('now', '-24 hours')").get(usuario.id).n >= 3)
     return erro('Você já tem 3 Pix em aberto. Pague um deles (veja no Painel) ou aguarde: Pix não pagos expiram em 48 horas.');
   if (!A.limitar(`rec:${usuario.id}`, 10, 60)) return erro('Muitas recargas geradas em pouco tempo. Aguarde alguns minutos.');
@@ -900,14 +917,17 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
       db.prepare('UPDATE usuarios SET asaas_cliente_id = ? WHERE id = ?').run(clienteId, usuario.id);
     }
     const bonus = bonusPara(valor, usuario.id);
-    const rid = Number(db.prepare('INSERT INTO recargas (usuario_id, valor_centavos, bonus_centavos, consulta_slug, consulta_param) VALUES (?, ?, ?, ?, ?)').run(usuario.id, valor, bonus, prodAvulsa?.slug || null, paramAvulsa).lastInsertRowid);
+    const rid = Number(db.prepare('INSERT INTO recargas (usuario_id, valor_centavos, bonus_centavos, consulta_slug, consulta_param, forma) VALUES (?, ?, ?, ?, ?, ?)').run(usuario.id, valor, bonus, prodAvulsa?.slug || null, paramAvulsa, forma).lastInsertRowid);
     guardarRastreio(req, `u-${usuario.id}`);
     capiCompra({ evento: 'InitiateCheckout', eid: `ic-rec-${rid}`, valor, email: usuario.email, telefone: usuario.telefone, nome: usuario.nome, usuarioId: usuario.id, conteudo: prodAvulsa ? `Consulta ${prodAvulsa.nome}` : 'Recarga' });
-    const cob = await AS.criarCobranca({ clienteId, valorCentavos: valor, recargaId: rid });
+    const cob = await AS.criarCobranca({ clienteId, valorCentavos: valor, recargaId: rid, forma, voltar: `${baseEmails()}/recarga/${rid}`,
+      descricao: prodAvulsa ? `Consulta ${prodAvulsa.nome} - Soft Consultas #${rid}` : undefined });
     let pix = null;
-    try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); }
+    if (forma === 'pix') { try { pix = await AS.pixQrCode(cob.id); } catch (e) { console.warn('Pix indisponível:', e.message); } }
     db.prepare('UPDATE recargas SET asaas_id = ?, pix_codigo = ?, pix_imagem = ?, link_pagamento = ? WHERE id = ?')
       .run(cob.id, pix?.payload || null, pix?.encodedImage || null, cob.invoiceUrl || null, rid);
+    // Cartão: vai direto para a página segura do Asaas (nada de cartão passa pelo nosso site)
+    if (forma === 'cartao' && cob.invoiceUrl) return redirecionar(res, cob.invoiceUrl);
     redirecionar(res, `/recarga/${rid}`);
   } catch (e) {
     console.error('recarga:', e.message);
@@ -1138,7 +1158,7 @@ rota('GET', '/consultas/:slug', exigeLogin(async ({ res, usuario, params, url })
   if (!produto) return redirecionar(res, '/consultas');
   const doc = String(url.searchParams.get('doc') || '').slice(0, 20);
   pagina(res, produto.nome, PA.paginaConsultar({ produto, saldo: await saldoExibido(usuario), admin: !!usuario.interno, bloqueada: produto.sensivel && !podeSensivel(usuario),
-    v: { valor: doc }, erro: url.searchParams.get('erro') || '', pago: !!doc && url.searchParams.has('doc'), pedirDocumento: !usuario.documento }), usuario);
+    v: { valor: doc }, erro: url.searchParams.get('erro') || '', pago: !!doc && url.searchParams.has('doc'), pedirDocumento: !usuario.documento, cartao: !!cartaoRecarga() }), usuario);
 }));
 
 rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }) => {
@@ -1686,19 +1706,22 @@ rota('POST', '/admin/produtos/salvar', exigeAdmin(async ({ req, res, usuario }) 
     custo_centavos: custo, ordem: Number(f.ordem) || 100, ativo: f.ativo === '1' ? 1 : 0, sensivel: f.sensivel === '1' ? 1 : 0,
     destaque_limpa_nome: ['economica', 'completa'].includes(f.destaque_limpa_nome) ? f.destaque_limpa_nome : '',
     markup_percentual: String(f.markup_proprio ?? '').trim() === '' ? null : Number(String(f.markup_proprio).replace(',', '.')),
+    preco_fixo_centavos: String(f.preco_fixo ?? '').trim() === '' ? null : centavos(f.preco_fixo),
   };
   const erro = (m) => pagina(res, 'Admin · Editar consulta', PD.adminProdutoForm({ p, markup: lerConfig('markup_percentual'), erro: m }), usuario, 400);
   if (!p.nome || !p.categoria) return erro('Preencha o nome e a categoria.');
   if (!Number.isFinite(custo) || custo <= 0) return erro('Informe o custo da consulta na APIFull.');
   if (p.endpoint && !/^[\w.-]+$/.test(p.endpoint)) return erro('Endpoint inválido: use só letras, números, ponto, hífen ou sublinhado.');
   if (p.markup_percentual !== null && (!Number.isFinite(p.markup_percentual) || p.markup_percentual < 0 || p.markup_percentual > 1000)) return erro('Margem própria inválida (0 a 1000%).');
-  const preco = p.markup_percentual !== null ? precoDe(custo, p.markup_percentual) : precoDe(custo);
+  if (p.preco_fixo_centavos !== null && (!Number.isFinite(p.preco_fixo_centavos) || p.preco_fixo_centavos < 100)) return erro('Preço fixo inválido.');
+  if (p.preco_fixo_centavos !== null && p.preco_fixo_centavos < custo) return erro(`O preço fixo (${P.reais(p.preco_fixo_centavos)}) ficaria abaixo do custo na APIFull (${P.reais(custo)}).`);
+  const preco = p.preco_fixo_centavos > 0 ? p.preco_fixo_centavos : p.markup_percentual !== null ? precoDe(custo, p.markup_percentual) : precoDe(custo);
   const antes = p.id ? db.prepare('SELECT nome, custo_centavos, ativo, endpoint FROM produtos WHERE id = ?').get(p.id) : null;
   registrar(usuario, p.id ? 'Editou consulta' : 'Criou consulta',
     `${p.nome}: custo ${P.reais(antes?.custo_centavos ?? 0)} → ${P.reais(custo)}, preço ${P.reais(preco)}, ${p.ativo ? 'ativa' : 'inativa'}${antes && antes.endpoint !== p.endpoint ? `, endpoint ${antes.endpoint || '—'} → ${p.endpoint}` : ''}`);
   if (p.id) {
-    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=?, sensivel=?, destaque_limpa_nome=?, markup_percentual=? WHERE id=?`)
-      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome, p.markup_percentual, p.id);
+    db.prepare(`UPDATE produtos SET nome=?, categoria=?, descricao=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ordem=?, ativo=?, sensivel=?, destaque_limpa_nome=?, markup_percentual=?, preco_fixo_centavos=? WHERE id=?`)
+      .run(p.nome, p.categoria, p.descricao, p.documento, p.endpoint, p.link, p.campo, custo, preco, p.ordem, p.ativo, p.sensivel, p.destaque_limpa_nome, p.markup_percentual, p.preco_fixo_centavos, p.id);
   } else {
     let slug = p.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'consulta';
     while (db.prepare('SELECT 1 FROM produtos WHERE slug = ?').get(slug)) slug += '-2';
@@ -1737,7 +1760,7 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
         const mkp = existente.markup_percentual;
         db.prepare(`UPDATE produtos SET nome=?, categoria=?, documento=?, endpoint=?, link=?, campo=?, custo_centavos=?, preco_centavos=?, ativo=?,
           descricao=COALESCE(NULLIF(?, ''), descricao) WHERE id=?`)
-          .run(nome, cat, doc, endpoint, endpoint, campo, c, mkp !== null && mkp !== undefined ? precoDe(c, mkp) : precoDe(c), ativo, descricao || '', existente.id);
+          .run(nome, cat, doc, endpoint, endpoint, campo, c, existente.preco_fixo_centavos > 0 ? existente.preco_fixo_centavos : mkp !== null && mkp !== undefined ? precoDe(c, mkp) : precoDe(c), ativo, descricao || '', existente.id);
         atualizadas++;
         if (!ativo) inativas++;
       } else {

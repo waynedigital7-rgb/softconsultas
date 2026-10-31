@@ -312,6 +312,8 @@ if (!colunas('usuarios').includes('pagina_entrada')) db.exec("ALTER TABLE usuari
 // Conta interna: usa o saldo da APIFull e consulta a preço de custo (como o admin), sem acesso ao painel administrativo
 // Margem própria por consulta (vazia = usa a margem geral)
 if (!colunas('produtos').includes('markup_percentual')) db.exec('ALTER TABLE produtos ADD COLUMN markup_percentual REAL');
+// Preço fixo ao cliente (ex.: R$ 19,90 na consulta de entrada): quando preenchido, vale no lugar da margem
+if (!colunas('produtos').includes('preco_fixo_centavos')) db.exec('ALTER TABLE produtos ADD COLUMN preco_fixo_centavos INTEGER');
 if (!colunas('usuarios').includes('interno')) db.exec('ALTER TABLE usuarios ADD COLUMN interno INTEGER NOT NULL DEFAULT 0');
 if (!colunas('usuarios').includes('liberado_sensivel')) db.exec('ALTER TABLE usuarios ADD COLUMN liberado_sensivel INTEGER NOT NULL DEFAULT 0');
 // Programa de indicação
@@ -460,7 +462,7 @@ for (const [c, def] of [['marca_ativa', 'INTEGER NOT NULL DEFAULT 0'], ['marca_n
 for (const [c, def] of [['lembrete1_em', 'TEXT'], ['lembrete2_em', 'TEXT']]) {
   if (!colunas('recargas').includes(c)) db.exec(`ALTER TABLE recargas ADD COLUMN ${c} ${def}`);
 }
-for (const [c, def] of [['consulta_slug', 'TEXT'], ['consulta_param', 'TEXT']]) {
+for (const [c, def] of [['consulta_slug', 'TEXT'], ['consulta_param', 'TEXT'], ['forma', "TEXT NOT NULL DEFAULT 'pix'"]]) {
   if (!colunas('recargas').includes(c)) db.exec(`ALTER TABLE recargas ADD COLUMN ${c} ${def}`);
 }
 if (!colunas('usuarios').includes('viu_recarga_em')) db.exec('ALTER TABLE usuarios ADD COLUMN viu_recarga_em TEXT');
@@ -628,9 +630,10 @@ export const precoDe = (custoCentavos, markup = Number(db.prepare("SELECT valor 
 export function recalcularPrecos() {
   const m = Number(lerConfig('markup_percentual') ?? 150);
   const temColuna = db.prepare('PRAGMA table_info(produtos)').all().some((c) => c.name === 'markup_percentual');
-  for (const p of db.prepare(`SELECT id, custo_centavos${temColuna ? ', markup_percentual' : ''} FROM produtos`).all()) {
+  const temFixo = db.prepare('PRAGMA table_info(produtos)').all().some((c) => c.name === 'preco_fixo_centavos');
+  for (const p of db.prepare(`SELECT id, custo_centavos${temColuna ? ', markup_percentual' : ''}${temFixo ? ', preco_fixo_centavos' : ''} FROM produtos`).all()) {
     const mk = p.markup_percentual !== null && p.markup_percentual !== undefined ? Number(p.markup_percentual) : m;
-    db.prepare('UPDATE produtos SET preco_centavos = ? WHERE id = ?').run(precoDe(p.custo_centavos, mk), p.id);
+    db.prepare('UPDATE produtos SET preco_centavos = ? WHERE id = ?').run(p.preco_fixo_centavos > 0 ? p.preco_fixo_centavos : precoDe(p.custo_centavos, mk), p.id);
   }
 }
 

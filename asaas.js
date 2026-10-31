@@ -18,19 +18,23 @@ export const PREFIXO = 'screc_'; // identifica recargas da Soft Consultas (o sit
 export const criarCliente = ({ nome, documento, email, telefone }, chave) =>
   asaas('/customers', { method: 'POST', chave, body: JSON.stringify({ name: nome, cpfCnpj: documento, email, mobilePhone: telefone, notificationDisabled: true }) });
 
-export function criarCobranca({ clienteId, valorCentavos, recargaId }) {
+// forma 'cartao': o cliente digita o cartão na página segura do Asaas (invoiceUrl); voltar: URL para onde o Asaas manda depois de pagar
+export async function criarCobranca({ clienteId, valorCentavos, recargaId, forma = 'pix', voltar, descricao }) {
   const venc = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
-  return asaas('/payments', {
-    method: 'POST',
-    body: JSON.stringify({
-      customer: clienteId,
-      billingType: 'PIX',
-      value: valorCentavos / 100,
-      dueDate: venc,
-      description: `Recarga de créditos - Soft Consultas #${recargaId}`,
-      externalReference: `${PREFIXO}${recargaId}`,
-    }),
-  });
+  const corpo = {
+    customer: clienteId,
+    billingType: forma === 'cartao' ? 'CREDIT_CARD' : 'PIX',
+    value: valorCentavos / 100,
+    dueDate: venc,
+    description: descricao || `Recarga de créditos - Soft Consultas #${recargaId}`,
+    externalReference: `${PREFIXO}${recargaId}`,
+  };
+  if (forma === 'cartao' && voltar) {
+    // O retorno automático só funciona se o domínio estiver cadastrado na conta Asaas; se recusar, cria sem ele
+    try { return await asaas('/payments', { method: 'POST', body: JSON.stringify({ ...corpo, callback: { successUrl: voltar, autoRedirect: true } }) }); }
+    catch (e) { console.warn('Asaas recusou o retorno automático:', e.message); }
+  }
+  return asaas('/payments', { method: 'POST', body: JSON.stringify(corpo) });
 }
 
 export const pixQrCode = (id, chave) => asaas(`/payments/${id}/pixQrCode`, { chave });

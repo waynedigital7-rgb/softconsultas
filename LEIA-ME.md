@@ -83,3 +83,4 @@ Os textos em `/termos` e `/privacidade` são uma minuta. Peça para um advogado 
 - "Pagar só esta consulta": sem saldo, o cliente paga no Pix só o que falta para a consulta (mínimo R$ 5) e volta com o documento preenchido (recargas.consulta_slug / consulta_param).
 - Primeira recarga a partir de R$ 15 (config recarga_minima_primeira_centavos; bônus: R$ 15 vira R$ 30, R$ 30 vira R$ 60).
 - Evento "InitiateCheckout" (Pix gerado) enviado à Meta pelo navegador e pelo servidor, com o mesmo id (ic-rec-ID).
+- Consulta de entrada: Cred Completa Plus com preço fixo de R$ 19,90 (campo "Preço fixo ao cliente" na edição da consulta) e cartão "Comece por aqui" no painel de quem ainda não fez nenhuma consulta. Trocar a consulta: config consulta_entrada_slug.

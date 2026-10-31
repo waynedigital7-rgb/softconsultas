@@ -334,8 +334,13 @@ export function ofertaPrimeiraHtml(o, comBotao = true) {
   ${comBotao ? `<a class="btn" href="/recarregar" style="background:#1E7B4D">Recarregar ${reais(o.exemplo)} e ganhar ${reais(o.bonusExemplo)}</a>` : ''}</div>`;
 }
 
-export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#', oferta = null }) => `
+export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#', oferta = null, entrada = null }) => `
 <h1 style="font-size:1.8rem">Olá, ${esc(usuario.nome.split(' ')[0])}</h1>
+${entrada ? `<div class="cartao" style="border:2px solid var(--roxo);margin:0 0 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+  <div style="flex:1 1 300px"><span class="tag">Comece por aqui</span>
+    <div style="font-family:Montserrat,sans-serif;font-weight:800;font-size:1.25rem;margin:8px 0 6px">Veja o seu CPF como os bancos veem: ${reais(entrada.preco_centavos)}</div>
+    <div class="muted" style="font-size:.95rem">${esc(entrada.nome)}: score, negativações, protestos, cheques sem fundo e quem consultou o seu CPF, num relatório em PDF na hora. Pague só esta consulta no Pix, sem precisar recarregar.</div></div>
+  <a class="btn" href="/consultas/${esc(entrada.slug)}">Consultar meu CPF por ${reais(entrada.preco_centavos)}</a></div>` : ''}
 ${oferta ? ofertaPrimeiraHtml(oferta) : ''}
 ${!usuario.admin && !usuario.interno && !transacoes.length ? faixaGratis() : ''}
 <p class="muted" style="margin-top:-4px">Bem-vindo ao seu painel.</p>

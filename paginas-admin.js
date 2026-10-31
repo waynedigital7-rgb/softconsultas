@@ -67,6 +67,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
   ${campo('campo', 'Nome do campo enviado (padrão: document; para placa geralmente: placa)', p.campo || 'document')}
   ${campo('custo', 'Custo na APIFull (R$)', p.custo_centavos != null ? (p.custo_centavos / 100).toFixed(2).replace('.', ',') : '', 'inputmode="decimal" required')}
   ${campo('markup_proprio', `Margem própria desta consulta (%) · deixe vazio para usar a geral (${markup}%)`, p.markup_percentual ?? '', 'inputmode="decimal"')}
+  ${campo('preco_fixo', 'Preço fixo ao cliente (R$) · vale no lugar da margem; vazio = calcula pela margem', p.preco_fixo_centavos ? (p.preco_fixo_centavos / 100).toFixed(2).replace('.', ',') : '', 'inputmode="decimal"')}
   <p class="muted" style="margin-top:-8px">Preço de venda = custo + margem. Use uma margem própria para deixar consultas específicas mais competitivas (ex.: veículos com 80%).</p>
   ${campo('ordem', 'Ordem no catálogo (menor aparece primeiro)', p.ordem ?? 100, 'inputmode="numeric"')}
   <label class="check"><input type="checkbox" name="ativo" value="1" ${p.ativo ? 'checked' : ''}><span>Ativa (visível para os clientes)</span></label>
