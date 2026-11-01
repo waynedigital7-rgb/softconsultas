@@ -80,7 +80,7 @@ export function adminProdutoForm({ p = {}, markup, erro }) {
 </form>`;
 }
 
-export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, alertaCara = 5000, primeira = { pct: 0, min: 0, ate: '' }, notif = { vendas: true, email: true, telegram: false }, ok, erro }) {
+export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10, comissaoMax = 100, saqueMin = 5000, taxaSaque = 5, alerta = 5000, alertaCara = 5000, primeira = { pct: 0, min: 0, ate: '' }, notif = { vendas: true, email: true, telegram: false }, gratis = { ativo: true, limite: 20, usadosHoje: 0 }, ok, erro }) {
   return `<h1 style="font-size:1.7rem">Configurações</h1>${menu('/admin/config')}${aviso(ok, erro)}
 <form class="cartao" method="post" action="/admin/config" style="max-width:640px">
   <div class="campo"><label for="markup">Margem sobre o custo APIFull (%)</label><input id="markup" name="markup" type="text" inputmode="numeric" value="${markup}">
@@ -110,6 +110,11 @@ export function adminConfig({ maximo = 100000, minimo, faixas, markup, dias = 10
   <div class="campo"><label for="alerta_apifull">Avisar quando o saldo da APIFull ficar abaixo de (R$)</label><input id="alerta_apifull" name="alerta_apifull" type="text" inputmode="decimal" value="${(alerta / 100).toFixed(2).replace('.', ',')}"></div>
   <div class="campo"><label for="alerta_cara">Avisar quando um cliente pedir uma consulta com custo na APIFull a partir de (R$, 0 = não avisar)</label><input id="alerta_cara" name="alerta_cara" type="text" inputmode="decimal" value="${(alertaCara / 100).toFixed(2).replace('.', ',')}">
     <small class="muted">Chega por e-mail, Telegram e no app (como o aviso de vendas), com o saldo atual da APIFull.</small></div>
+  <div class="campo"><label class="check"><input type="checkbox" name="gratis_ativo" value="1" ${gratis.ativo ? 'checked' : ''}><span><strong>Diagnóstico grátis do CPF</strong> para quem acabou de se cadastrar (mostra só o resumo; o relatório completo libera pelo preço da consulta de entrada)</span></label></div>
+  <div class="campo"><label for="gratis_slug">Consulta usada no diagnóstico grátis</label><select id="gratis_slug" name="gratis_slug">${(gratis.opcoes || []).map((p) => `<option value="${esc(p.slug)}" ${p.slug === gratis.slug ? 'selected' : ''}>${esc(p.nome)} · custo ${(p.custo_centavos / 100).toFixed(2).replace('.', ',')}</option>`).join('')}</select>
+    <small class="muted">Use uma barata que traga score e restrições (ex.: Acerta Essencial). Se for a mesma da consulta de entrada, o relatório completo libera sem custo novo; se for outra, a consulta de entrada roda quando o cliente paga.</small></div>
+  <div class="campo"><label for="gratis_limite">Máximo de diagnósticos grátis por dia</label><input id="gratis_limite" name="gratis_limite" type="text" inputmode="numeric" value="${gratis.limite}">
+    <small class="muted">Hoje: ${gratis.usadosHoje} usados. Cada um custa o preço de custo da consulta de entrada na APIFull. Ao bater o limite, o cliente vai direto para a consulta paga.</small></div>
   <div class="campo"><label for="saque_minimo">Saque mínimo de comissões (R$)</label><input id="saque_minimo" name="saque_minimo" type="text" inputmode="decimal" value="${(saqueMin / 100).toFixed(2).replace('.', ',')}"></div>
   <div class="campo"><label for="saque_taxa">Taxa sobre saque de comissões (%)</label><input id="saque_taxa" name="saque_taxa" type="text" inputmode="decimal" value="${taxaSaque}">
     <small class="muted">Descontada do valor sacado: num saque de R$ 100 com 5%, o Pix enviado é de R$ 95. Recargas (depósitos) nunca podem ser sacadas, só comissões.</small></div>

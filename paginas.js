@@ -334,9 +334,16 @@ export function ofertaPrimeiraHtml(o, comBotao = true) {
   ${comBotao ? `<a class="btn" href="/recarregar" style="background:#1E7B4D">Recarregar ${reais(o.exemplo)} e ganhar ${reais(o.bonusExemplo)}</a>` : ''}</div>`;
 }
 
-export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#', oferta = null, entrada = null }) => `
+export const paginaPainel = ({ usuario, saldo, transacoes, consultas, anuncios = [], contato = '#', oferta = null, entrada = null, gratis = false }) => `
 <h1 style="font-size:1.8rem">Olá, ${esc(usuario.nome.split(' ')[0])}</h1>
-${entrada ? `<div class="cartao" style="border:2px solid var(--roxo);margin:0 0 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+${gratis === true ? `<div class="cartao" style="border:2px solid #1E7B4D;margin:0 0 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+  <div style="flex:1 1 300px"><span class="tag" style="background:#E3F4EA;color:#1E7B4D">Grátis para você</span>
+    <div style="font-family:Montserrat,sans-serif;font-weight:800;font-size:1.25rem;margin:8px 0 6px">Descubra agora se o seu CPF tem restrições</div>
+    <div class="muted" style="font-size:.95rem">Diagnóstico grátis: score, quantas restrições existem no seu nome e quanto elas somam. Leva menos de 1 minuto.</div></div>
+  <a class="btn" href="/diagnostico" style="background:#1E7B4D">Fazer meu diagnóstico grátis</a></div>` : gratis === 'previa' ? `<div class="cartao" style="border:2px solid var(--roxo);margin:0 0 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+  <div style="flex:1 1 300px"><span class="tag">Seu diagnóstico</span>
+    <div style="font-family:Montserrat,sans-serif;font-weight:800;font-size:1.2rem;margin:8px 0 6px">Seu diagnóstico está pronto. Veja quem cobra, quanto e como resolver.</div></div>
+  <a class="btn" href="/diagnostico">Ver meu diagnóstico</a></div>` : entrada ? `<div class="cartao" style="border:2px solid var(--roxo);margin:0 0 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
   <div style="flex:1 1 300px"><span class="tag">Comece por aqui</span>
     <div style="font-family:Montserrat,sans-serif;font-weight:800;font-size:1.25rem;margin:8px 0 6px">Veja o seu CPF como os bancos veem: ${reais(entrada.preco_centavos)}</div>
     <div class="muted" style="font-size:.95rem">${esc(entrada.nome)}: score, negativações, protestos, cheques sem fundo e quem consultou o seu CPF, num relatório em PDF na hora. Pague só esta consulta no Pix, sem precisar recarregar.</div></div>

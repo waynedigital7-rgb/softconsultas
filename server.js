@@ -377,7 +377,7 @@ rota('POST', '/cadastro', async ({ req, res }) => {
   const docConsulta = placaConsulta ? '' : A.soNumeros(f.consulta || '').slice(0, 14);
   const voltarCad = String(cookies(req).sc_voltar || '');
   const destinoCad = /^\/(ebook|monitoramento|limpa-nome|raio-x|rating)[\w\/?=&%.-]*$/.test(voltarCad) ? voltarCad : null;
-  redirecionar(res, destinoCad || (placaConsulta ? `/consultas/categoria/veiculos?bemvindo=1&placa=${placaConsulta}` : docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : '/painel?bemvindo=1'), { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0', 'sc_voltar=; Path=/; Max-Age=0'] });
+  redirecionar(res, destinoCad || (placaConsulta ? `/consultas/categoria/veiculos?bemvindo=1&placa=${placaConsulta}` : docConsulta ? `/consultas?bemvindo=1&doc=${docConsulta}` : gratisVagas() > 0 ? '/diagnostico?bemvindo=1' : '/painel?bemvindo=1'), { 'Set-Cookie': [A.cookieSessao(token, ehHttps(req)), 'sc_ref=; Path=/; Max-Age=0', 'sc_origem=; Path=/; Max-Age=0', 'sc_voltar=; Path=/; Max-Age=0'] });
 });
 
 // Login
@@ -445,7 +445,8 @@ rota('GET', '/painel', exigeLogin(async ({ res, usuario }) => {
   const transacoes = db.prepare('SELECT * FROM transacoes WHERE usuario_id = ? ORDER BY id DESC LIMIT 20').all(usuario.id);
   const consultas = db.prepare('SELECT * FROM consultas WHERE usuario_id = ? ORDER BY id DESC LIMIT 10').all(usuario.id);
   pagina(res, 'Painel', P.paginaPainel({ usuario, saldo: await saldoExibido(usuario), transacoes, consultas, anuncios: anunciosParaExibir(), contato: contatoAnuncie(), oferta: usuario.admin || usuario.interno ? null : ofertaPrimeira(usuario.id),
-    entrada: usuario.interno || db.prepare("SELECT 1 FROM consultas WHERE usuario_id = ? AND status = 'concluida'").get(usuario.id) ? null : db.prepare('SELECT * FROM produtos WHERE slug = ? AND ativo = 1').get(slugEntrada()) }), usuario);
+    entrada: usuario.interno || db.prepare("SELECT 1 FROM consultas WHERE usuario_id = ? AND status = 'concluida'").get(usuario.id) ? null : db.prepare('SELECT * FROM produtos WHERE slug = ? AND ativo = 1').get(slugEntrada()),
+    gratis: gratisPodeUsar(usuario) ? true : diagnosticoDo(usuario)?.status === 'previa' && !db.prepare("SELECT 1 FROM consultas WHERE usuario_id = ? AND status = 'concluida'").get(usuario.id) ? 'previa' : false }), usuario);
 }));
 
 rota('GET', '/conta', exigeLogin(({ res, usuario, url }) => pagina(res, 'Minha conta',
@@ -938,6 +939,7 @@ rota('POST', '/recarregar', exigeLogin(async ({ req, res, usuario }) => {
 rota('GET', '/recarga/:id', exigeLogin(({ res, usuario, params }) => {
   const r = db.prepare('SELECT * FROM recargas WHERE id = ? AND usuario_id = ?').get(Number(params.id), usuario.id);
   if (!r) return redirecionar(res, '/recarregar');
+  if (r.status === 'paga' && r.consulta_slug && diagnosticoDo(usuario)?.status === 'previa' && diagnosticoDo(usuario).parametro === r.consulta_param && diagnosticoDo(usuario).produto_id === precoLiberar(usuario)?.id) return redirecionar(res, '/diagnostico?pago=1');
   if (r.status === 'paga') return redirecionar(res, r.consulta_slug ? `/consultas/${r.consulta_slug}?doc=${encodeURIComponent(r.consulta_param || '')}` : '/painel');
   if (r.status === 'expirada') return pagina(res, 'Recarregar', PA.paginaRecarregar({ ...dadosRecarga(usuario), erro: 'Esse Pix expirou sem pagamento e foi cancelado. Gere um novo abaixo.' }), usuario);
   pagina(res, 'Pagar recarga', PA.paginaPagarRecarga({ r }), usuario);
@@ -1174,6 +1176,13 @@ rota('POST', '/consultas/:slug', exigeLogin(async ({ req, res, usuario, params }
   if (f.aceite !== '1') return erro('Marque a confirmação da LGPD e dos Termos de Uso para continuar.');
   // Finalidade: agora uma única declaração (o histórico guarda o aceite)
   f.finalidade = 'Declaração LGPD e Termos aceitos';
+  // Já existe o diagnóstico grátis desta mesma consulta e documento: libera o relatório guardado (sem pagar a APIFull de novo)
+  const prev = diagnosticoDo(usuario);
+  if (prev && prev.status === 'previa' && prev.produto_id === produto.id && prev.parametro === val.v && !expirou(prev)) {
+    const r = liberarDiagnostico(usuario, prev, produto);
+    if (r.erro) return erro(r.erro);
+    return redirecionar(res, `/consulta/${prev.id}/pdf`);
+  }
   if (!A.limitar(`con:${usuario.id}`, 30, 10)) return erro('Muitas consultas em pouco tempo. Aguarde alguns minutos.');
 
   // Reserva o valor (bloco síncrono: sem risco de gastar o mesmo saldo duas vezes)
@@ -1231,6 +1240,7 @@ const consultaDo = (id, usuario) => db.prepare(`SELECT * FROM consultas WHERE id
 rota('GET', '/consulta/:id', exigeLogin(({ res, usuario, params }) => {
   const c = consultaDo(params.id, usuario);
   if (!c) return redirecionar(res, '/historico');
+  if (c.status === 'previa' && !usuario.admin) return redirecionar(res, '/diagnostico');
   if (expirou(c)) return pagina(res, `Consulta #${c.id}`, P.paginaEmBreve('Consulta expirada', `O resultado desta consulta ficou disponível por ${diasHistorico()} dias e já foi removido, conforme nossa política de privacidade. Se precisar, faça uma nova consulta.`), usuario);
   const dados = c.resultado ? JSON.parse(c.resultado) : {};
   const a = analisar(dados);
@@ -1256,6 +1266,119 @@ rota('GET', '/consulta/:id/pdf', exigeLogin(async ({ res, usuario, params, url }
   const modo = url.searchParams.get('baixar') ? 'attachment' : 'inline';
   res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `${modo}; filename="${nome}"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(bytes);
+}));
+
+// ======================= DIAGNÓSTICO GRÁTIS (01/11) =======================
+// O cliente faz grátis a consulta de entrada do próprio CPF e vê só o resumo (score, quantas restrições, quanto soma).
+// O relatório completo (credores, datas, PDF oficial) libera por R$ 19,90, reaproveitando a mesma consulta (sem custo novo na APIFull).
+const MARCA_GRATIS = 'Diagnóstico grátis';
+const gratisCfg = () => ({ ativo: lerConfig('gratis_ativo') !== '0', limite: Number(lerConfig('gratis_limite_dia') ?? 5), usadosHoje: gratisUsadosHoje(), slug: gratisProduto()?.slug || '',
+  opcoes: db.prepare("SELECT slug, nome, custo_centavos FROM produtos WHERE ativo = 1 AND endpoint <> '' AND sensivel = 0 AND documento IN ('cpf','cpf_cnpj') ORDER BY custo_centavos, nome").all() });
+const gratisUsadosHoje = () => db.prepare("SELECT COUNT(*) n FROM consultas WHERE finalidade = ? AND status <> 'falhou' AND date(criado_em, '-3 hours') = date('now', '-3 hours')").get(MARCA_GRATIS).n;
+const gratisProduto = () => db.prepare("SELECT * FROM produtos WHERE slug = ? AND ativo = 1 AND endpoint <> ''").get(lerConfig('gratis_slug') || slugEntrada());
+function gratisVagas() {
+  const c = gratisCfg();
+  if (!c.ativo || lerConfig('consultas_pausadas') === '1' || !gratisProduto()) return 0;
+  return Math.max(0, c.limite - c.usadosHoje);
+}
+const diagnosticoDo = (usuario) => (usuario ? db.prepare("SELECT * FROM consultas WHERE usuario_id = ? AND finalidade = ? AND status <> 'falhou' ORDER BY id DESC").get(usuario.id, MARCA_GRATIS) : null);
+// Só para quem ainda não fez nenhuma consulta (nem paga, nem grátis)
+const gratisPodeUsar = (usuario) => !!usuario && !usuario.interno && !usuario.admin && gratisVagas() > 0
+  && !db.prepare("SELECT 1 FROM consultas WHERE usuario_id = ? AND (status = 'concluida' OR finalidade = ? AND status <> 'falhou')").get(usuario.id, MARCA_GRATIS);
+// O que se vende para ver o relatório completo: sempre a consulta de entrada (Cred Completa Plus a R$ 19,90).
+// Se o grátis usa a mesma consulta, libera o relatório guardado; se usa uma mais barata, roda a consulta de entrada ao pagar.
+const precoLiberar = (usuario) => produtosPara(usuario).find((p) => p.slug === slugEntrada()) || null;
+const completoDoDiagnostico = (usuario, c, produto) => (produto ? db.prepare("SELECT id FROM consultas WHERE usuario_id = ? AND parametro = ? AND produto_id = ? AND status = 'concluida' ORDER BY id DESC").get(usuario.id, c.parametro, produto.id) : null);
+
+// Cobra o preço da consulta no saldo e libera o relatório já guardado
+function liberarDiagnostico(usuario, c, produto) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (saldoCentavos(usuario.id) < produto.preco_centavos) { db.exec('ROLLBACK'); return { erro: 'Saldo insuficiente.' }; }
+    if (db.prepare("UPDATE consultas SET status = 'concluida', preco_centavos = ?, indicador_id = ?, comissao_centavos = ?, finalidade = ? WHERE id = ? AND status = 'previa'")
+      .run(produto.preco_centavos, produto.indicador_id, produto.comissao_centavos, `${MARCA_GRATIS} · liberado`, c.id).changes !== 1) { db.exec('ROLLBACK'); return { erro: 'Este relatório já foi liberado.' }; }
+    db.prepare("INSERT INTO transacoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'consulta', ?, ?, ?)")
+      .run(usuario.id, -produto.preco_centavos, `Consulta: ${produto.nome} (diagnóstico liberado)`, `con_${c.id}`);
+    if (produto.indicador_id && produto.comissao_centavos > 0) {
+      db.prepare("INSERT OR IGNORE INTO comissoes (usuario_id, tipo, valor_centavos, descricao, referencia) VALUES (?, 'comissao', ?, ?, ?)")
+        .run(produto.indicador_id, produto.comissao_centavos, `Comissão: ${produto.nome}`, `com_${c.id}`);
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  registrar(usuario, 'Diagnóstico grátis: relatório liberado', `consulta #${c.id} · ${P.reais(produto.preco_centavos)}`);
+  notificarVenda({ produto: `${produto.nome} (diagnóstico grátis)`, valor: produto.preco_centavos, cliente: usuario.nome, detalhe: usuario.email, link: '/admin/consultas' });
+  return { ok: true };
+}
+
+function telaDiagnostico(res, usuario, { erro = '', v = {}, url = null } = {}, status = 200) {
+  const c = diagnosticoDo(usuario);
+  if (c && (c.status === 'previa' || c.status === 'concluida') && !expirou(c)) {
+    const produto = precoLiberar(usuario);
+    const a = analisar(c.resultado ? JSON.parse(c.resultado) : {});
+    const completo = c.status === 'concluida' ? { id: c.id } : completoDoDiagnostico(usuario, c, produto);
+    return pagina(res, 'Seu diagnóstico', PA.paginaDiagnostico({ c, a, produto, saldo: saldoCentavos(usuario.id), completo, mesma: !!produto && produto.id === c.produto_id,
+      pedirDocumento: !usuario.documento, cartao: !!cartaoRecarga(), erro, pago: url?.searchParams.get('pago') === '1' }), usuario, status);
+  }
+  if (c && c.status === 'processando') return pagina(res, 'Seu diagnóstico', P.paginaEmBreve('Consultando…', 'Seu diagnóstico está sendo gerado. Atualize a página em alguns segundos.'), usuario);
+  if (!gratisPodeUsar(usuario)) return redirecionar(res, `/consultas/${slugEntrada()}`);
+  const doc = String(usuario.documento || '').length === 11 ? usuario.documento : '';
+  pagina(res, 'Diagnóstico grátis', PA.paginaDiagnosticoForm({ v: { cpf: v.cpf ?? doc }, erro, bemvindo: url?.searchParams.get('bemvindo') === '1' }), usuario, status);
+}
+
+rota('GET', '/diagnostico', exigeLogin(({ res, usuario, url }) => telaDiagnostico(res, usuario, { url })));
+
+rota('POST', '/diagnostico', exigeLogin(async ({ req, res, usuario }) => {
+  const f = await corpoForm(req);
+  const erro = (m) => telaDiagnostico(res, usuario, { erro: m, v: { cpf: f.cpf } }, 400);
+  if (!gratisPodeUsar(usuario)) return redirecionar(res, '/diagnostico');
+  const val = validarValor('cpf', f.cpf);
+  if (val.erro) return erro('CPF inválido. Confira os 11 números.');
+  if (f.aceite !== '1') return erro('Marque a confirmação para continuar.');
+  if (!A.limitar(`diag-ip:${ipDe(req)}`, 3, 1440) || !A.limitar(`diag:${usuario.id}`, 3, 60)) return erro('Limite de diagnósticos grátis atingido. Você pode consultar pagando só a consulta.');
+  // Um diagnóstico grátis por CPF (em qualquer conta)
+  if (db.prepare("SELECT 1 FROM consultas WHERE finalidade LIKE ? AND parametro = ? AND status <> 'falhou'").get(`${MARCA_GRATIS}%`, val.v)) return erro('Este CPF já usou o diagnóstico grátis. Faça a consulta completa por R$ 19,90.');
+  const produto = gratisProduto();
+  let cid;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    if (gratisVagas() <= 0) { db.exec('ROLLBACK'); return redirecionar(res, `/consultas/${slugEntrada()}`); }
+    cid = Number(db.prepare(`INSERT INTO consultas (usuario_id, produto_id, produto, parametro, finalidade, status, preco_centavos, custo_centavos, indicador_id, comissao_centavos)
+      VALUES (?, ?, ?, ?, ?, 'processando', 0, ?, NULL, 0)`).run(usuario.id, produto.id, produto.nome, val.v, MARCA_GRATIS, produto.custo_centavos).lastInsertRowid);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  try {
+    const dados = await consultarApiFull(produto, val.v);
+    const a = analisar(dados);
+    const origemBanco = a.pdfOrigem && !a.pdfOrigem.startsWith('base64:') ? a.pdfOrigem : null;
+    if (dados?.aux && a.pdfOrigem?.startsWith('base64:')) dados.aux = { type: 'pdf', data: '(salvo em arquivo)' };
+    db.prepare("UPDATE consultas SET status = 'previa', resultado = ?, pdf_origem = ? WHERE id = ?").run(JSON.stringify(dados), origemBanco, cid);
+    const bytes = await obterPdf(a.pdfOrigem);
+    if (bytes) await writeFile(path.join(pastaPdfs, `${cid}.pdf`), bytes).catch((e) => console.warn('salvar pdf:', e.message));
+    registrar(usuario, 'Diagnóstico grátis gerado', `consulta #${cid} · custo ${P.reais(produto.custo_centavos)} · ${a.qtdRestricoes} restrições`);
+  } catch (e) {
+    console.error('diagnóstico grátis falhou', cid, e.message);
+    db.prepare("UPDATE consultas SET status = 'falhou', erro = ?, custo_centavos = 0 WHERE id = ?").run(String(e.message).slice(0, 500), cid);
+    if (lerConfig('notif_falhas') !== '0') avisarAdmin({ titulo: `❌ Diagnóstico grátis falhou: ${produto.nome}`, texto: `Motivo: ${String(e.message).slice(0, 300)}\nCliente: ${usuario.nome} (${usuario.email})`, link: '/admin/consultas?falhas=1' });
+    limparCacheSaldo();
+    return erro('Não conseguimos consultar agora. Tente de novo em alguns minutos.');
+  }
+  limparCacheSaldo();
+  redirecionar(res, '/diagnostico');
+}));
+
+// Libera o relatório completo com o saldo (depois do Pix/cartão da consulta avulsa, ou se já tem saldo)
+rota('POST', '/diagnostico/liberar', exigeLogin(async ({ req, res, usuario }) => {
+  await corpoForm(req);
+  const c = diagnosticoDo(usuario);
+  if (!c) return redirecionar(res, '/painel');
+  if (c.status === 'concluida') return redirecionar(res, `/consulta/${c.id}/pdf`);
+  if (c.status !== 'previa' || expirou(c)) return redirecionar(res, '/diagnostico');
+  const produto = precoLiberar(usuario);
+  if (!produto) return telaDiagnostico(res, usuario, { erro: 'Esta consulta não está disponível agora. Fale com o suporte.' }, 400);
+  if (produto.id !== c.produto_id) { const k = completoDoDiagnostico(usuario, c, produto); return redirecionar(res, k ? `/consulta/${k.id}/pdf` : `/consultas/${produto.slug}?doc=${c.parametro}`); }
+  const r = liberarDiagnostico(usuario, c, produto);
+  if (r.erro) return telaDiagnostico(res, usuario, { erro: r.erro === 'Saldo insuficiente.' ? 'Ainda não recebemos o pagamento. Se já pagou, aguarde alguns segundos e tente de novo.' : r.erro }, 400);
+  redirecionar(res, `/consulta/${c.id}/pdf`);
 }));
 
 rota('GET', '/historico', exigeLogin(({ res, usuario, url }) => {
@@ -1781,13 +1904,13 @@ rota('POST', '/admin/produtos/importar', exigeAdmin(async ({ req, res, usuario }
 }));
 
 rota('GET', '/admin/config', exigeAdmin(({ res, usuario, url }) => pagina(res, 'Admin · Configurações', PD.adminConfig({
-  maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), alertaCara: limiteConsultaCara(), primeira: bonusPrimeira(), notif: notifCfg(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
+  maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), alertaCara: limiteConsultaCara(), primeira: bonusPrimeira(), notif: notifCfg(), gratis: gratisCfg(), ok: url.searchParams.get('ok') ? 'Configurações salvas e preços recalculados.' : '',
 }), usuario)));
 
 rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   const f = await corpoForm(req);
   const minimo = centavos(f.minimo), markup = Number(String(f.markup || '').replace(',', '.'));
-  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), alertaCara: limiteConsultaCara(), primeira: bonusPrimeira(), notif: notifCfg(), erro: m }), usuario, 400);
+  const erro = (m) => pagina(res, 'Admin · Configurações', PD.adminConfig({ maximo: valorMaximo(), minimo: Number(lerConfig('recarga_minima_centavos')), faixas: faixasBonus(), markup: lerConfig('markup_percentual'), dias: diasHistorico(), comissaoMax: lerConfig('comissao_maxima'), saqueMin: Number(lerConfig('saque_minimo_centavos')), taxaSaque: taxaSaque(), alerta: Number(lerConfig('alerta_saldo_apifull_centavos')), alertaCara: limiteConsultaCara(), primeira: bonusPrimeira(), notif: notifCfg(), gratis: gratisCfg(), erro: m }), usuario, 400);
   const dias = Number(f.dias);
   if (!Number.isInteger(dias) || dias < 1 || dias > 365) return erro('O prazo do histórico precisa ser entre 1 e 365 dias.');
   const comissaoMax = Number(f.comissao_maxima), saqueMin = centavos(f.saque_minimo);
@@ -1823,6 +1946,7 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('saque_taxa_percentual', taxaS);
   gravarConfig('alerta_saldo_apifull_centavos', alerta);
   gravarConfig('alerta_consulta_cara_centavos', alertaCara);
+  { const lim = Math.floor(Number(f.gratis_limite || 0)); gravarConfig('gratis_ativo', f.gratis_ativo === '1' ? '1' : '0'); if (f.gratis_slug && db.prepare("SELECT 1 FROM produtos WHERE slug = ? AND ativo = 1 AND endpoint <> ''").get(String(f.gratis_slug))) gravarConfig('gratis_slug', String(f.gratis_slug)); if (Number.isFinite(lim) && lim >= 0 && lim <= 5000) gravarConfig('gratis_limite_dia', lim); }
   gravarConfig('bonus_primeira_percentual', bpPct);
   gravarConfig('bonus_primeira_minimo_centavos', bpMin);
   gravarConfig('bonus_primeira_ate', bpAte);
@@ -1832,7 +1956,7 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('bonus_primeira_dias', bpDias);
   gravarConfig('bonus_faixas', JSON.stringify(faixas.sort((a, b) => a.a_partir_de - b.a_partir_de)));
   recalcularPrecos();
-  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, máxima ${P.reais(valorMaximo())}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, 1ª recarga ${bpPct}% a partir de ${P.reais(bpMin)} até ${P.reais(bpTeto)} em ${bpDias} dias, aviso de vendas ${f.notif_vendas === '1' ? 'ligado' : 'desligado'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
+  registrar(usuario, 'Alterou configurações', `margem ${markup}%, recarga mínima ${P.reais(minimo)}, máxima ${P.reais(valorMaximo())}, bônus ${faixas.map((x) => `${P.reais(x.a_partir_de)}=${x.percentual}%`).join('; ') || 'nenhum'}, 1ª recarga ${bpPct}% a partir de ${P.reais(bpMin)} até ${P.reais(bpTeto)} em ${bpDias} dias, aviso de vendas ${f.notif_vendas === '1' ? 'ligado' : 'desligado'}, diagnóstico grátis ${f.gratis_ativo === '1' ? `ligado (até ${Math.floor(Number(f.gratis_limite || 0))}/dia, consulta ${f.gratis_slug || '-'})` : 'desligado'}, histórico ${dias} dias, comissão máx. ${comissaoMax}%, saque mín. ${P.reais(saqueMin)}, taxa de saque ${taxaS}%, alerta APIFull ${P.reais(alerta)}`);
   redirecionar(res, '/admin/config?ok=1');
 }));
 

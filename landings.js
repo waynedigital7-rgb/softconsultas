@@ -63,11 +63,11 @@ export const PUBLICOS = {
   // Consulta de entrada: o próprio CPF completo por R$ 19,90 (Cred Completa Plus), paga só ela no Pix
   'meu-cpf': {
     titulo: 'Consulte o seu CPF completo por R$ 19,90: score, negativações e protestos',
-    descricaoMeta: 'Veja o seu CPF como os bancos veem: score, negativações, protestos, cheques sem fundo e quem consultou você. R$ 19,90 no Pix, relatório em PDF na hora.',
+    descricaoMeta: 'Veja o seu CPF como os bancos veem: score, negativações, protestos, cheques sem fundo e quem consultou você. R$ 19,90 no Pix ou cartão, relatório em PDF na hora.',
     selo: 'Consulta completa do seu CPF',
     h1: 'Veja o seu CPF como os bancos veem por',
     destaque: 'R$ 19,90.',
-    sub: 'Score, negativações, protestos, cheques sem fundo, cadastro positivo e quem consultou o seu CPF, num relatório em PDF na hora. Você paga só esta consulta no Pix, sem mensalidade e sem recarga.',
+    sub: 'Score, negativações, protestos, cheques sem fundo, cadastro positivo e quem consultou o seu CPF, num relatório em PDF na hora. Você paga só esta consulta no Pix ou no cartão, sem mensalidade e sem recarga.',
     dores: [
       ['Crédito negado sem explicação', 'Veja o score e as restrições que pesam contra você antes de pedir cartão, empréstimo ou financiamento.'],
       ['Não sabe o que está no seu nome', 'Negativações, protestos e cheques sem fundo aparecem com quem cobra e o valor.'],
@@ -76,7 +76,7 @@ export const PUBLICOS = {
     consultas: ['e-boavista'],
     extra: 'Encontrou negativação? O Limpa Nome da Soft Consultas retira as restrições por ação judicial coletiva.',
     faq: [
-      ['Quanto custa? Tem mensalidade?', 'R$ 19,90 por consulta, pagos no Pix na hora. O cadastro é grátis e não tem mensalidade nem recarga obrigatória.'],
+      ['Quanto custa? Tem mensalidade?', 'R$ 19,90 por consulta, pagos no Pix ou no cartão. O cadastro é grátis e não tem mensalidade nem recarga obrigatória.'],
       ['Como recebo o resultado?', 'Assim que o Pix cai, a consulta sai na tela e o relatório em PDF fica para baixar no seu histórico.'],
       ['Posso consultar o CPF de outra pessoa?', 'Só com a autorização do titular e para uma finalidade legítima, conforme a LGPD. Consultar o próprio CPF é um direito seu.'],
     ],

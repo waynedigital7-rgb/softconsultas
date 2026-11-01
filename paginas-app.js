@@ -201,6 +201,7 @@ export function paginaHistorico({ consultas, busca = '', dias = 10 }) {
   };
   const status = (c) => {
     if (c.status === 'falhou') return '<span class="muted">Falhou (valor estornado)</span>';
+    if (c.status === 'previa') return '<a href="/diagnostico"><strong>Diagnóstico grátis</strong> · ver relatório completo</a>';
     if (c.status !== 'concluida') return 'Processando';
     if (!c.resultado) return '<span class="muted">Expirada</span>';
     return `${botoesPdf(c.id)}<br><small class="muted">Disponível até ${ate(c.criado_em)}</small>`;
@@ -355,4 +356,71 @@ ${bloco('Mais completas: diagnóstico', 'ideal para fechar o serviço', completa
 <div class="cartao"><h3>Dica de atendimento</h3>
   <p class="muted" style="margin:0">Faça a triagem antes da reunião e mostre ao cliente o resultado. Depois de fechar, rode o diagnóstico completo e guarde os PDFs (ficam no Histórico por 10 dias) para comparar antes e depois do serviço.
   Lembre-se: use as consultas apenas com a autorização do titular, conforme a LGPD.</p></div>`;
+}
+
+
+// ======================= DIAGNÓSTICO GRÁTIS =======================
+const LGPD_PROPRIO = 'Confirmo que este é o <strong>meu próprio CPF</strong> e aceito os <a href="/termos" target="_blank" rel="noopener">Termos de Uso</a> e a <a href="/privacidade" target="_blank" rel="noopener">Política de Privacidade</a>.';
+
+export function paginaDiagnosticoForm({ v = {}, erro = '', bemvindo = false }) {
+  return `
+<div class="cartao estreito" style="max-width:560px">
+  ${bemvindo ? '<div class="aviso ok"><strong>Conta criada!</strong> Seu primeiro presente: um diagnóstico grátis do seu CPF.</div>' : ''}
+  <span class="tag" style="background:#E3F4EA;color:#1E7B4D">Grátis · 1 por CPF</span>
+  <h1 style="font-size:1.6rem;margin-top:10px">Seu CPF tem restrições? Descubra grátis</h1>
+  <p class="muted">Em menos de 1 minuto você vê o seu <strong>score</strong>, <strong>quantas restrições</strong> existem no seu nome e <strong>quanto elas somam</strong>, na mesma base que bancos e lojas consultam.</p>
+  ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+  <form method="post" action="/diagnostico" data-diagnostico>
+    <div class="campo"><label for="cpf">Seu CPF</label><input id="cpf" name="cpf" type="text" inputmode="numeric" data-tipo="cpf" required value="${esc(v.cpf || '')}" autocomplete="off"></div>
+    <label class="check"><input type="checkbox" name="aceite" value="1" required><span>${LGPD_PROPRIO}</span></label>
+    <button class="btn largo" type="submit" style="background:#1E7B4D">Ver meu diagnóstico grátis</button>
+    <p class="muted" style="font-size:.85rem;text-align:center;margin:10px 0 0">Não custa nada e não pedimos cartão. Consultar o próprio CPF não diminui o score.</p>
+  </form>
+</div>
+<script>document.querySelector('[data-diagnostico]')?.addEventListener('submit', (e) => { const b = e.target.querySelector('button'); b.disabled = true; b.textContent = 'Consultando o seu CPF…'; });</script>`;
+}
+
+const mascarar = (s) => String(s || '').split(' ').map((p) => (p.length <= 2 ? p : p[0] + '•'.repeat(Math.min(6, p.length - 1)))).join(' ');
+
+export function paginaDiagnostico({ c, a, produto, saldo = 0, completo = null, mesma = true, pedirDocumento = false, cartao = false, erro = '', pago = false }) {
+  const liberado = !!completo;
+  const preco = produto?.preco_centavos || 0;
+  const falta = Math.max(0, preco - saldo);
+  const cor = COR[a.cor] || COR.neutro;
+  const tem = a.qtdRestricoes > 0;
+  const itens = a.itens.slice(0, 4);
+  const extra = Math.max(0, a.qtdRestricoes - itens.length);
+  const caixa = (rot, val, sub = '') => `<div style="flex:1 1 140px;background:var(--fundo);border-radius:14px;padding:14px 16px"><div class="muted" style="font-size:.85rem">${rot}</div><strong style="font-size:1.5rem;font-family:Montserrat">${val}</strong>${sub ? `<div class="muted" style="font-size:.8rem">${sub}</div>` : ''}</div>`;
+  const cta = liberado ? `<a class="btn largo" href="/consulta/${completo.id}/pdf" target="_blank" rel="noopener">Abrir meu relatório completo (PDF)</a>`
+    : !produto ? '' : falta === 0 && !mesma ? `${pago ? '<div class="aviso ok"><strong>Pagamento recebido!</strong></div>' : ''}<a class="btn largo" href="/consultas/${esc(produto.slug)}?doc=${esc(c.parametro)}">Ver relatório completo (${reais(preco)})</a>`
+    : falta === 0 ? `<form method="post" action="/diagnostico/liberar">${pago ? '<div class="aviso ok"><strong>Pagamento recebido!</strong> Toque abaixo para abrir o relatório completo.</div>' : ''}
+      <button class="btn largo" type="submit">${pago ? 'Abrir meu relatório completo' : `Ver relatório completo por ${reais(preco)}`}</button>
+      ${pago ? '' : `<p class="muted" style="font-size:.85rem;text-align:center;margin:8px 0 0">Será descontado do seu saldo (${reais(saldo)}).</p>`}</form>`
+    : `<form method="post" action="/recarregar">
+      <input type="hidden" name="consulta" value="${esc(produto.slug)}"><input type="hidden" name="doc_consulta" value="${esc(c.parametro)}">
+      ${pedirDocumento ? `<div class="campo"><label for="doc-pg">CPF de quem paga</label><input id="doc-pg" name="documento" type="text" inputmode="numeric" required value="${esc(c.parametro)}"><small class="muted">Exigido para emitir o pagamento.</small></div>` : ''}
+      <button class="btn largo" type="submit" name="forma" value="pix" style="background:#1E7B4D">Ver relatório completo: ${reais(Math.max(500, falta))} no Pix</button>
+      ${cartao ? `<button class="btn largo sec" type="submit" name="forma" value="cartao" style="margin-top:10px">Pagar ${reais(Math.max(500, falta))} no cartão de crédito</button>` : ''}
+      <p class="muted" style="font-size:.85rem;text-align:center;margin:8px 0 0">Pagamento único, sem mensalidade. Assim que o pagamento entrar, o relatório abre aqui.</p></form>`;
+  return `
+<div class="cartao estreito" style="max-width:600px">
+  <span class="tag">Diagnóstico do CPF ${esc(formatarDoc(c.parametro))}</span>
+  <h1 style="font-size:1.6rem;margin:10px 0 6px;color:${cor}">${esc(a.titulo)}</h1>
+  <p class="muted" style="margin:0 0 14px">Consulta feita em ${dt(c.criado_em)} na base Boa Vista (SCPC).</p>
+  ${erro ? `<div class="aviso erro" role="alert">${esc(erro)}</div>` : ''}
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 16px">
+    ${caixa('Score', a.score !== null ? a.score : '—', a.score !== null ? (a.score < 300 ? 'muito baixo' : a.score < 500 ? 'baixo' : a.score < 700 ? 'regular' : 'bom') : '')}
+    ${caixa('Restrições', a.qtdRestricoes, tem ? 'no seu nome' : 'nenhuma encontrada')}
+    ${caixa('Valor total', a.totalValor ? reais(Math.round(a.totalValor * 100)) : 'R$ 0,00', tem ? 'somando tudo' : '')}
+  </div>
+  ${a.consultasRecentes ? `<p style="margin:0 0 14px">🔎 <strong>${a.consultasRecentes} ${a.consultasRecentes === 1 ? 'empresa consultou' : 'empresas consultaram'}</strong> o seu CPF recentemente.</p>` : ''}
+  ${tem && !liberado ? `<div style="border:1px dashed var(--borda,#ddd);border-radius:14px;padding:12px 14px;margin:0 0 16px">
+    <div style="font-weight:700;margin-bottom:6px">Quem está cobrando você</div>
+    ${itens.map((i) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid #f0eaf5"><span style="filter:blur(4px);user-select:none">${esc(mascarar(i.credor))}</span><span class="muted">${esc(i.tipo)}</span><strong style="filter:blur(4px);user-select:none">${i.valor ? reais(Math.round(i.valor * 100)) : 'R$ •••'}</strong></div>`).join('')}
+    ${extra ? `<div class="muted" style="font-size:.85rem;padding-top:6px">+ ${extra} ${extra === 1 ? 'outra restrição' : 'outras restrições'}</div>` : ''}
+    <div class="muted" style="font-size:.85rem;margin-top:6px">🔒 Nomes dos credores, valores, datas e o PDF oficial ficam no relatório completo.</div></div>` : ''}
+  ${!tem && !liberado ? '<p style="margin:0 0 16px"><strong>Boa notícia!</strong> Não encontramos restrições. O relatório completo mostra o seu score em detalhe, o cadastro positivo e quem consultou o seu CPF, útil antes de pedir cartão, empréstimo ou financiamento.</p>' : ''}
+  ${cta}
+  ${tem ? `<p style="text-align:center;margin:14px 0 0"><a href="/limpa-nome">Quer limpar o nome? Conheça o nosso Limpa Nome →</a></p>` : ''}
+</div>`;
 }
