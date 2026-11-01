@@ -1275,7 +1275,10 @@ const MARCA_GRATIS = 'Diagnóstico grátis';
 const gratisCfg = () => ({ ativo: lerConfig('gratis_ativo') !== '0', limite: Number(lerConfig('gratis_limite_dia') ?? 5), usadosHoje: gratisUsadosHoje(), slug: gratisProduto()?.slug || '',
   opcoes: db.prepare("SELECT slug, nome, custo_centavos FROM produtos WHERE ativo = 1 AND endpoint <> '' AND sensivel = 0 AND documento IN ('cpf','cpf_cnpj') ORDER BY custo_centavos, nome").all() });
 const gratisUsadosHoje = () => db.prepare("SELECT COUNT(*) n FROM consultas WHERE finalidade = ? AND status <> 'falhou' AND date(criado_em, '-3 hours') = date('now', '-3 hours')").get(MARCA_GRATIS).n;
-const gratisProduto = () => db.prepare("SELECT * FROM produtos WHERE slug = ? AND ativo = 1 AND endpoint <> ''").get(lerConfig('gratis_slug') || slugEntrada());
+// Consulta do grátis: a escolhida no admin; sem escolha, a Acerta Essencial (R$ 1,87). Nunca cai sozinha na consulta cara.
+const gratisProduto = () => (lerConfig('gratis_slug')
+  ? db.prepare("SELECT * FROM produtos WHERE slug = ? AND ativo = 1 AND endpoint <> ''").get(lerConfig('gratis_slug'))
+  : db.prepare("SELECT * FROM produtos WHERE ativo = 1 AND endpoint <> '' AND nome LIKE '%Acerta Essencial%' ORDER BY custo_centavos").get());
 function gratisVagas() {
   const c = gratisCfg();
   if (!c.ativo || lerConfig('consultas_pausadas') === '1' || !gratisProduto()) return 0;
