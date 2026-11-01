@@ -1273,12 +1273,13 @@ rota('GET', '/consulta/:id/pdf', exigeLogin(async ({ res, usuario, params, url }
 // O relatório completo (credores, datas, PDF oficial) libera por R$ 19,90, reaproveitando a mesma consulta (sem custo novo na APIFull).
 const MARCA_GRATIS = 'Diagnóstico grátis';
 const gratisCfg = () => ({ ativo: lerConfig('gratis_ativo') !== '0', limite: Number(lerConfig('gratis_limite_dia') ?? 5), usadosHoje: gratisUsadosHoje(), slug: gratisProduto()?.slug || '',
-  opcoes: db.prepare("SELECT slug, nome, custo_centavos FROM produtos WHERE ativo = 1 AND endpoint <> '' AND sensivel = 0 AND documento IN ('cpf','cpf_cnpj') ORDER BY custo_centavos, nome").all() });
+  opcoes: db.prepare("SELECT slug, nome, custo_centavos, ativo FROM produtos WHERE endpoint <> '' AND sensivel = 0 AND documento IN ('cpf','cpf_cnpj') ORDER BY custo_centavos, nome").all() });
 const gratisUsadosHoje = () => db.prepare("SELECT COUNT(*) n FROM consultas WHERE finalidade = ? AND status <> 'falhou' AND date(criado_em, '-3 hours') = date('now', '-3 hours')").get(MARCA_GRATIS).n;
 // Consulta do grátis: a escolhida no admin; sem escolha, a Acerta Essencial (R$ 1,87). Nunca cai sozinha na consulta cara.
 const gratisProduto = () => (lerConfig('gratis_slug')
-  ? db.prepare("SELECT * FROM produtos WHERE slug = ? AND ativo = 1 AND endpoint <> ''").get(lerConfig('gratis_slug'))
-  : db.prepare("SELECT * FROM produtos WHERE ativo = 1 AND endpoint <> '' AND nome LIKE '%Acerta Essencial%' ORDER BY custo_centavos").get());
+  ? db.prepare("SELECT * FROM produtos WHERE slug = ? AND endpoint <> ''").get(lerConfig('gratis_slug'))
+  : db.prepare("SELECT * FROM produtos WHERE endpoint <> '' AND (nome LIKE '%Acerta Essencial%' OR link LIKE 'acerta-essencial%') ORDER BY custo_centavos").get());
+// (pode ficar inativa no catálogo: assim o cliente não compra a consulta barata avulsa e ela serve só para o grátis)
 function gratisVagas() {
   const c = gratisCfg();
   if (!c.ativo || lerConfig('consultas_pausadas') === '1' || !gratisProduto()) return 0;
@@ -1949,7 +1950,7 @@ rota('POST', '/admin/config', exigeAdmin(async ({ req, res, usuario }) => {
   gravarConfig('saque_taxa_percentual', taxaS);
   gravarConfig('alerta_saldo_apifull_centavos', alerta);
   gravarConfig('alerta_consulta_cara_centavos', alertaCara);
-  { const lim = Math.floor(Number(f.gratis_limite || 0)); gravarConfig('gratis_ativo', f.gratis_ativo === '1' ? '1' : '0'); if (f.gratis_slug && db.prepare("SELECT 1 FROM produtos WHERE slug = ? AND ativo = 1 AND endpoint <> ''").get(String(f.gratis_slug))) gravarConfig('gratis_slug', String(f.gratis_slug)); if (Number.isFinite(lim) && lim >= 0 && lim <= 5000) gravarConfig('gratis_limite_dia', lim); }
+  { const lim = Math.floor(Number(f.gratis_limite || 0)); gravarConfig('gratis_ativo', f.gratis_ativo === '1' ? '1' : '0'); if (f.gratis_slug && db.prepare("SELECT 1 FROM produtos WHERE slug = ? AND endpoint <> ''").get(String(f.gratis_slug))) gravarConfig('gratis_slug', String(f.gratis_slug)); if (Number.isFinite(lim) && lim >= 0 && lim <= 5000) gravarConfig('gratis_limite_dia', lim); }
   gravarConfig('bonus_primeira_percentual', bpPct);
   gravarConfig('bonus_primeira_minimo_centavos', bpMin);
   gravarConfig('bonus_primeira_ate', bpAte);
