@@ -29,6 +29,15 @@ const ARQUIVOS = { '/icone.png': 'image/png', '/icone-branco.png': 'image/png', 
 // Script de rastreio gerado com os IDs do Render (sem código inline, compatível com a política de segurança)
 function scriptRastreio() {
   return `(function(){
+  // LGPD: tira CPF/CNPJ da barra de endereço antes do pixel e da tag do Google lerem a URL (o valor segue no sessionStorage para preencher o campo)
+  try {
+    var u = new URL(location.href), tirou = false;
+    ['doc', 'cpf', 'documento'].forEach(function(k){
+      var v = u.searchParams.get(k);
+      if (v !== null) { try { if (v) sessionStorage.setItem('sc_doc', v.replace(/\\D/g, '').slice(0, 14)); } catch (e) {} u.searchParams.delete(k); tirou = true; }
+    });
+    if (tirou) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  } catch (e) {}
   var cfg = ${JSON.stringify(RASTREIO)};
   window.scEvento = function(nome, valor, eid){
     try {
@@ -220,7 +229,8 @@ function notificarVenda({ produto, valor, cliente = '', detalhe = '', link = '/a
 function guardarRastreio(req, chave) {
   try {
     const c = cookies(req);
-    const ref = String(req.headers.referer || '').slice(0, 300);
+    // LGPD: a URL vai para a Meta (event_source_url); nunca levar CPF/CNPJ junto
+    const ref = String(req.headers.referer || '').replace(/([?&])(doc|cpf|documento)=[^&#]*&?/gi, '$1').replace(/[?&](#|$)/, '$1').slice(0, 300);
     db.prepare(`INSERT INTO rastreio_meta (chave, fbp, fbc, ip, ua, url) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(chave) DO UPDATE SET fbp = COALESCE(excluded.fbp, fbp), fbc = COALESCE(excluded.fbc, fbc), ip = excluded.ip, ua = excluded.ua, url = COALESCE(excluded.url, url), atualizado_em = datetime('now')`)
       .run(chave, c._fbp || null, c._fbc || null, ipDe(req), String(req.headers['user-agent'] || '').slice(0, 400), ref || null);
